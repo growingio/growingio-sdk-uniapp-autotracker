@@ -177,13 +177,8 @@ export class UniMPRuntime {
   public onPageLoad(input: PageLoadInput): boolean {
     if (this.config === null || this.phase === 'disposed' || this.pageIds.size >= 50 && !this.pageIds.has(input.instanceId)) return false
     if (typeof input.route !== 'string' || typeof input.query !== 'string' || typeof input.instanceId !== 'string' || input.instanceId.length > 512) return false
-    let snapshot = input
-    if (wireBytes(JSON.stringify(input)) > 16 * 1024) {
-      this.metadataTooLarge()
-      snapshot = { instanceId: input.instanceId, route: input.route, query: '', referralPage: null }
-      if (wireBytes(JSON.stringify(snapshot)) > 16 * 1024) return false
-    }
-    if (this.pages.onLoad(snapshot, this.entryReferral) === null) return false
+    const snapshot = this.pages.onLoad(input, this.entryReferral)
+    if (snapshot === null || this.boundPageMetadata(input.instanceId, snapshot) === null) return false
     this.pageIds.add(input.instanceId)
     return true
   }
@@ -194,11 +189,8 @@ export class UniMPRuntime {
     if (timestamp === null) return this.unavailableObservation(instanceId)
     const page = this.pages.onShow(instanceId, timestamp, title, this.entryReferral)
     if (page === null) return this.unavailableObservation(instanceId)
-    let bounded = page
-    if (wireBytes(JSON.stringify(page)) > 16 * 1024) {
-      this.metadataTooLarge(); bounded = { ...page, query: '', title: null, referralPage: null }
-      if (wireBytes(JSON.stringify(bounded)) > 16 * 1024) return this.unavailableObservation(instanceId)
-    }
+    const bounded = this.boundPageMetadata(instanceId, page)
+    if (bounded === null) return this.unavailableObservation(instanceId)
     this.unavailableCurrent = null
     this.current = { instanceId, page: bounded, epoch: this.foreground ? this.epoch : -1, delivery: null }
     this.dispatcher.reset()
@@ -220,9 +212,11 @@ export class UniMPRuntime {
   public onPageTitleChanged(instanceId: string, title: string): boolean {
     if (this.config === null || this.phase === 'disposed' || typeof title !== 'string') return false
     if (wireBytes(JSON.stringify(title)) > 8 * 1024) { this.metadataTooLarge(); return false }
-    if (this.current?.instanceId === instanceId && wireBytes(JSON.stringify({ ...this.current.page, title })) > 16 * 1024) { this.metadataTooLarge(); return false }
-    this.pages.setTitle(instanceId, title)
-    if (this.current?.instanceId === instanceId) this.current.page = { ...this.current.page, title }
+    const page = this.pages.snapshot(instanceId)
+    if (page === null) return false
+    if (wireBytes(JSON.stringify({ ...page, title })) > 16 * 1024) { this.metadataTooLarge(); return false }
+    const updated = this.pages.replaceMetadata(instanceId, { query: page.query, title, referralPage: page.referralPage })!
+    if (this.current?.instanceId === instanceId) this.current.page = updated
     return true
   }
 
@@ -253,6 +247,16 @@ export class UniMPRuntime {
   private unavailableObservation(instanceId: string): false {
     this.unavailableCurrent = typeof instanceId === 'string' && instanceId.length <= 512 ? instanceId : ''
     this.current = null; this.dispatcher.reset(); return false
+  }
+  /** PageStore 已补齐自动来源后再执行预算，裁剪必须写回以保护隐藏及未显示页面。 */
+  private boundPageMetadata(instanceId: string, page: PageSnapshot): PageSnapshot | null {
+    if (wireBytes(JSON.stringify(page)) <= 16 * 1024) return page
+    this.metadataTooLarge()
+    const bounded = this.pages.replaceMetadata(instanceId, { query: '', title: null, referralPage: null })!
+    if (wireBytes(JSON.stringify(bounded)) <= 16 * 1024) return bounded
+    this.pages.onUnload(instanceId); this.pageIds.delete(instanceId)
+    if (this.current?.instanceId === instanceId) this.unavailableObservation(instanceId)
+    return null
   }
   private metadataTooLarge(): void { this.error({ code: 'metadata_too_large', phase: 'queue', outcome: 'not_sent' }) }
   private exhausted(): void {

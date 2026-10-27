@@ -65,6 +65,23 @@ export class PageStore {
     if (page !== undefined) this.pages.set(instanceId, { ...page, title })
   }
 
+  /** 按实例读取独立快照，供特定运行模式校验元信息而不暴露内部记录。 */
+  public snapshot(instanceId: string): PageSnapshot | null {
+    const page = this.pages.get(instanceId)
+    return page === undefined ? null : { ...page }
+  }
+
+  /** 仅替换可裁剪的展示元信息，保持页面身份、路径和生命周期状态。 */
+  public replaceMetadata(instanceId: string, metadata: Readonly<Pick<PageSnapshot, 'query' | 'title' | 'referralPage'>>): PageSnapshot | null {
+    const page = this.pages.get(instanceId)
+    if (page === undefined || typeof metadata.query !== 'string'
+      || typeof metadata.title !== 'string' && metadata.title !== null
+      || typeof metadata.referralPage !== 'string' && metadata.referralPage !== null) return null
+    const updated = { ...page, query: metadata.query, title: metadata.title, referralPage: metadata.referralPage }
+    this.pages.set(instanceId, updated)
+    return updated
+  }
+
   /** 页面隐藏只解除该实例的当前页关联，不推断 App 进入后台。 */
   public onHide(instanceId: string): void {
     if (this.currentInstanceId === instanceId) this.currentInstanceId = null

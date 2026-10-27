@@ -3,6 +3,7 @@ import type { PageLoadInput } from '../core/dataStore/page.js'
 import type { AutoTrackCall } from '../plugins/gioEventAutoTracking/contract.js'
 import type { MiniProgramTarget } from '../types/index.js'
 import { readHostRecord } from '../platform/resolve.js'
+import { wireBytes } from '../plugins/gioHybridAdapter/contract.js'
 
 type LifecycleTarget = AppLifecycleTarget & PageLifecycleTarget
 type PageBridge = ReturnType<typeof createPageLifecycleBridge>
@@ -65,16 +66,37 @@ function pageTitle(instance: VueInstance, appRoutes = true): string | null {
   } catch { return null }
 }
 
+/** Native 托管入口仅消费有界来源，不读取或保留本地采集才需要的启动 query。 */
+function unimpEntrySnapshot(value: unknown): AppEntrySnapshot {
+  const source = record(value)
+  const readers = [() => source?.referralPage, () => record(source?.referrerInfo)?.appId]
+  for (const read of readers) {
+    try {
+      const referralPage = read()
+      if (typeof referralPage === 'string' && referralPage.trim() !== '' && referralPage.length <= 16000
+        && wireBytes(JSON.stringify(referralPage)) <= 16000) return { path: null, query: null, referralPage }
+    } catch { /* 单个来源字段损坏时仍尝试其他明确来源。 */ }
+  }
+  return { path: null, query: null, referralPage: null }
+}
+
+/** 在 Native adapter 自有缓存及回调闭包之前执行与 Core 相同的单标题预算。 */
+function unimpTitle(value: unknown): string | null {
+  return typeof value === 'string' && value.length <= 8 * 1024 && wireBytes(JSON.stringify(value)) <= 8 * 1024 ? value : null
+}
+
 /** 安装一个全局 Vue mixin，以 WeakMap 保存宿主页面与桥接器的对应关系；核心仅接收路由、query 和标题快照。 */
 export function installUniAppLifecycle(app: UniAppVueApp, target: LifecycleTarget, options: Readonly<{ host?: unknown; miniprogram?: MiniProgramTarget; unimp?: boolean }> = {}): void {
   const host = record(options.host ?? (globalThis as Record<string, unknown>).uni)
   const miniprogram = options.miniprogram
+  const unimp = options.unimp === true
   const appBridge = createAppLifecycleBridge(target)
   let launch: AppEntrySnapshot | null = null
   let firstShow = true
-  const isApp = (instance: VueInstance) => options.miniprogram === undefined && !options.unimp ? !isPage(instance)
+  const isApp = (instance: VueInstance) => options.miniprogram === undefined && !unimp ? !isPage(instance)
     : (instance.$mpType ?? record(instance.$options)?.mpType) === 'app'
   const entry = (value: unknown, launching: boolean): AppEntrySnapshot => {
+    if (unimp) return unimpEntrySnapshot(value)
     if (options.miniprogram === undefined) return appEntrySnapshot(value)
     const supplied = record(value)
     const fallback = host === null ? {} : readHostRecord(host, launching ? 'getLaunchOptionsSync' : 'getEnterOptionsSync')
@@ -102,7 +124,7 @@ export function installUniAppLifecycle(app: UniAppVueApp, target: LifecycleTarge
     if (existing !== undefined) return existing
     const route = routeOf(instance, miniprogram !== undefined)
     if (route === null) return null
-    const instanceId = options.unimp ? `unimp-page-${nextPageId++}` : `${route}-${nextPageId++}`
+    const instanceId = unimp ? `unimp-page-${nextPageId++}` : `${route}-${nextPageId++}`
     const bridge = createPageLifecycleBridge(target, instanceId, options.miniprogram)
     pages.set(instance, bridge)
     return bridge
@@ -111,16 +133,18 @@ export function installUniAppLifecycle(app: UniAppVueApp, target: LifecycleTarge
   app.mixin({
     onLaunch: isolatedLifecycleHook(function(this: VueInstance, options: unknown) {
       if (isApp(this)) {
-        launch = entry(options, true)
+        const snapshot = entry(options, true)
+        if (!unimp) launch = snapshot
         firstShow = true
-        target.onAppLaunch(launch)
+        target.onAppLaunch(snapshot)
       }
     }),
     onShow: isolatedLifecycleHook(function(this: VueInstance, options: unknown) {
       const bridge = pageBridge(this)
       if (bridge !== null) {
         currentPage = this
-        bridge.onShow(typeof this.gioPageTitle === 'string' ? this.gioPageTitle : titles.get(this) ?? pageTitle(this, miniprogram === undefined))
+        const title = typeof this.gioPageTitle === 'string' ? this.gioPageTitle : titles.get(this) ?? pageTitle(this, miniprogram === undefined)
+        bridge.onShow(unimp ? unimpTitle(title) : title)
       }
       else if (isApp(this)) { target.onAppShow(entry(options, false)); firstShow = false }
     }),
@@ -158,15 +182,25 @@ export function installUniAppLifecycle(app: UniAppVueApp, target: LifecycleTarge
             const args = record(options)
             const page = currentPage
             if (args === null || page === null || typeof args.title !== 'string') return
-            const title = args.title
             const previous = args.success
             // 宿主参数可能重复用于多次调用；剥离自己的旧包装，避免回放过期标题及递归增长。
             const success = typeof previous === 'function' && titleCallbacks.has(previous) ? titleCallbacks.get(previous) : previous
+            const title = args.title
+            if (unimp && unimpTitle(title) === null) {
+              if (previous !== success) args.success = success
+              return
+            }
             const wrapped = function(this: unknown, ...values: unknown[]) {
               try {
                 if (pages.has(page)) {
-                  titles.set(page, title)
-                  pages.get(page)?.onTitleChanged(typeof page.gioPageTitle === 'string' ? page.gioPageTitle : title)
+                  const preferred = typeof page.gioPageTitle === 'string' ? page.gioPageTitle : title
+                  if (unimp) {
+                    const bounded = unimpTitle(preferred)
+                    if (bounded !== null && pages.get(page)?.onTitleChanged(bounded) === true) titles.set(page, title)
+                  } else {
+                    titles.set(page, title)
+                    pages.get(page)?.onTitleChanged(preferred)
+                  }
                 }
               } catch { /* 采集状态更新不得影响业务回调。 */ }
               if (typeof success === 'function') return success.apply(this, values)
@@ -346,12 +380,12 @@ export function createPageLifecycleBridge(target: PageLifecycleTarget, instanceI
   /** 规范 tabBar 点击并提交版本化探针。 */
   onTabItemTap: (options: unknown) => boolean
   /** 更新绑定页面的标题，不模拟导航。 */
-  onTitleChanged: (title: string) => void
+  onTitleChanged: (title: string) => boolean | undefined
 }> {
   const stableInstanceId = typeof instanceId === 'string' && instanceId.length > 0 ? instanceId : ''
   return {
     /** 更新绑定页面的标题，不模拟页面重新显示。 */
-    onTitleChanged: (title) => { target.onPageTitleChanged?.(stableInstanceId, title) },
+    onTitleChanged: (title) => target.onPageTitleChanged?.(stableInstanceId, title),
     /** 裁剪路由、query 和来源信息，建立当前页面实例的快照。 */
     onLoad: (route, query, referralPage = null) => {
       const normalizedRoute = routeSnapshot(route)
