@@ -22,7 +22,8 @@
     "release:prepare": "pnpm run test:release && pnpm run build:sdk && tsx scripts/prepare-release.ts && pnpm run release:check",
     "release:check": "tsx scripts/check-release.ts && tsx scripts/check-package-consumers.ts && tsc --noEmit -p test/type/tsconfig.compiled-consumer.json && tsx scripts/check-demo.ts && pnpm run test:miniprogram:compile",
     "release:publish": "pnpm run test:release && pnpm run release:check && tsx scripts/publish-release.ts",
-    "test:miniprogram:compile": "tsx scripts/check-miniprogram.ts"
+    "test:miniprogram:compile": "tsx scripts/check-miniprogram.ts",
+    "test:app:compile": "tsx scripts/check-app.ts"
   },
   "dependencies": {
     "@babel/parser": "^7.29.8",

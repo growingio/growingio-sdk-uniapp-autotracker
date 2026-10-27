@@ -19,6 +19,8 @@ pnpm run release:prepare
 
 执行顺序为：类型检查 → 全部测试与覆盖率 → 构建 SDK → 生成 npm/uni_modules 压缩包 → 验证产物完整性、隔离安装、消费者类型与 demo。任一步失败立即停止；该命令不会发布 npm 包或创建 GitHub Release。
 
+发布包消费者另外运行高级身份、原生标识与 uniMP JS 桥接；八端编译矩阵分别执行默认及迁移 / identify 消费者。具备 App 编译组件时，设置 `GIO_UNI_COMPILER_ROOT` 后运行 `pnpm run test:app:compile`，检查两渠道的独立 App 与 uniMP 客体资源编译。它不包含设备安装、wgt 宿主加载或真实 module 收数。
+
 `release:publish` 在发布既有交付包之前再次检查代码测试及交付包，且实际发布仍仅允许在 GitHub tag 工作流中进行。源码、测试、测试配置或发布流程发生变化后，旧交付包会因构建摘要不匹配而被拒绝。
 
 日常可用 `pnpm test` 快速运行所有测试，或 `pnpm exec vitest run test/unit/uploader.test.ts` 运行指定模块。单模块测试不作为发布前验收结果。
@@ -43,6 +45,9 @@ pnpm run bench:sdk
 | 公共 API、配置与插件 | 所有 gdp 命令、非法输入、未初始化调用、重复 init、注册原子性、失败 init 后重试、安装顺序及插件异常隔离 | `test/integration/sdk-public-contract.test.ts`；`test/unit/{public-api,config,plugin-registry,tracker-lifecycle}.test.ts` |
 | 启动与采集同意 | 异步恢复顺序、不可变快照、条数/UTF-8 字节上限、生命周期独立缓冲、关闭采集不读取业务值、恢复后 VISIT/PAGE | `test/unit/{bootstrap-buffer,hydration,tracker-event-gate,tracker}.test.ts` |
 | 匿名/登录身份 | deviceId 生成、旧格式迁移、加密记录、userId/userKey、切换用户后的会话、清除身份 | `test/unit/{identity,identity-codec,identity-persistence}.test.ts`；`test/integration/sdk-public-contract.test.ts` |
+| 高级身份与 H5 | forceLogin 暂存、identify 保序 / 原子失败、旧 SDK 显式迁移、重启恢复、停采与查询串 | `test/unit/advanced-identity.test.ts`；`public-hybrid.test.ts` |
+| 可选原生标识 | 默认不读、平台过滤、VISIT 白名单、超时 / 异常 / 晚到回调、停采失效 | `test/unit/native-identifiers.test.ts` |
+| uniMP JS 托管 | 单 FIFO、身份阻断、PAGE 依赖、前台代次、限额、时钟、协议验证、module 与公开入口 | `test/unit/{unimp-runtime,unimp-contract,unimp-native-module,public-hybrid}.test.ts`；`test/support/unimp-host.ts` |
 | 会话和事件序列 | 冷启动、后台 30 秒边界、身份/同意变化、序列跨会话恢复、APP_CLOSED 无序列 | `test/unit/{session,event-sequence,session-persistence,meta-persistence}.test.ts`；`test/protocol-contract/event-sequence.fixture.test.ts` |
 | App / Page 生命周期 | 入口和页面上下文、页面可见性、卸载、动态标题、方向、后台事件、宿主异常隔离 | `test/unit/{app-lifecycle,page-lifecycle,page-store,app-bridge,page-bridge,uniapp-installer,orientation}.test.ts` |
 | 事件协议、属性与位置 | 所有事件类型的字段白名单、公共上下文、属性清洗、0/false、事件名校验、经纬度及清除位置 | `test/unit/{protocol,event-composer,event-dispatcher,location-state}.test.ts`；`test/protocol-contract/*.test.ts` |

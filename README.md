@@ -2,15 +2,18 @@
 
 传统 uni-app Vue 3 数据采集 SDK，包含 Android、iOS、HarmonyOS `.vue` App，以及微信、支付宝、百度、抖音、QQ、快手、京东和小红书小程序的运行适配。小程序已完成代码与自动化验证，开发者工具交互和真机收数后补。
 
+高级身份、旧小程序身份迁移、H5 身份快照、App 可选标识及 uniMP 托管桥接已实现 JS 路径。原生宿主 module 与真机收数按约定后续联调。
+
 ## 文档
 
 - [全端 Measurement Protocol](./doc/measurement-protocol.md)：唯一的事件字段与端间口径来源。
 - [SDK 架构设计](./doc/uniapp-sdk-development.md)：目录、模块边界、依赖方向和运行时数据链。
 - [八端小程序接入](./doc/miniprogram.md)：平台映射、appId、会话、内存队列、上传策略、无埋点门控及验证命令。
+- [高级身份、H5 与原生扩展](./doc/advanced-identity-hybrid.md)：identify / forceLogin、旧身份迁移、H5 身份快照、App 标识增强及 uniMP JS 接入；原生 module 后续联调。
 - [八端扩展验证记录](./doc/miniprogram-platforms-validation-2026-10-27.md)：六端新增适配、现有平台回归、开发／生产构建及交付检查。
 - [本轮适配审查记录](./doc/miniprogram-review-2026-10-27.md)：App 兼容对照、边界修复及自动化结果。
 - [小程序平台支持调研与开发方案](./doc/miniprogram-support-development-plan.md)：八个平台的调研、分批实施与验收门槛；八端基础代码已实现，端侧验收后补。
-- [uni 小程序与原生宿主打通设计](./doc/unimp-native-hybrid-design.md)：含 [module 详细契约](./doc/unimp-native-bridge-contract.md) 和 [设计自审](./doc/unimp-native-hybrid-review.md)，覆盖运行模式、消息与恢复规则、实施验收及 uni-app x 扩展；尚未实现。
+- [uni 小程序与原生宿主打通设计](./doc/unimp-native-hybrid-design.md)：含 [module 详细契约](./doc/unimp-native-bridge-contract.md) 和 [设计自审](./doc/unimp-native-hybrid-review.md)；JS SDK 已实现，Android / iOS module 与真机验收后补。
 - [传统 uni-app 无埋点方案](./doc/uniapp-autotrack-design.md)：模板事件标识、插桩、隐私、去重和验收口径。
 - [安装与发布](./doc/release.md)：npm、uni_modules 接入、版本渠道和自动发布配置。
 - [开发计划](./doc/development-plan.md)：按依赖顺序拆分的实施、验证与发布门槛。
@@ -18,7 +21,7 @@
 
 仓库根目录就是 SDK 包根目录。`uni_modules/gio-uniapp-autotracker` 仅是使用方工程或发布压缩包中的安装位置，不在本仓库内再嵌套一层。
 
-源码集中在 `src/`，沿用 Web / 小程序 SDK 的领域组织：`core/growingIO.ts` 协调运行时，`core/userStore.ts` 管理身份与会话，`core/dataStore/` 管理事件和页面，`core/storage/` 管理持久化；`plugins/`、`adapters/`、`platform/`、`compiler/` 分别放运行时插件、框架接入、宿主能力和编译插桩。根目录的 `index.ts`、`autotrack.ts`、`vite.ts` 是三个公开入口，完整目录及依赖边界见[架构文档](./doc/uniapp-sdk-development.md#4-工程结构与依赖方向)。
+源码集中在 `src/`，沿用 Web / 小程序 SDK 的领域组织：`core/growingIO.ts` 保留稳定运行时门面，`core/localRuntime.ts` 协调 App / 小程序本地采集，`core/userStore.ts` 管理身份与会话，`core/dataStore/` 管理事件和页面，`core/storage/` 管理持久化；`plugins/`、`adapters/`、`platform/`、`compiler/` 分别放运行时插件、框架接入、宿主能力和编译插桩。根目录的 `index.ts`、`autotrack.ts`、`vite.ts` 是三个公开入口，完整目录及依赖边界见[架构文档](./doc/uniapp-sdk-development.md#4-工程结构与依赖方向)。
 
 ## Vue 3 / App 接入
 
@@ -66,7 +69,7 @@ gdp('init', 'account-id', 'data-source-id', options)
 gdp('track', 'purchase_completed', attributes)
 ```
 
-支持的业务命令为 `track`、`setUserId`、`clearUserId`、`setUserAttributes`、`setOptions({ dataCollect })`、`setLocation` 和 `clearLocation`；`registerPlugins` 与 `init` 是入口命令。未知命令、错误参数个数、嵌套属性或非布尔 `dataCollect` 均会在 TypeScript 编译期报错。`GioPluginRuntime` 只会作为显式注册插件的 `install(growingio)` 参数出现，页面代码仍只能调用 `gdp()`。
+支持的业务命令为 `track`、`setUserId`、`clearUserId`、`setUserAttributes`、`identify`、`getGioInfo`、`setOptions({ dataCollect })`、`setLocation` 和 `clearLocation`；`registerPlugins` 与 `init` 是入口命令。除 `getGioInfo` 返回 `string | null` 外，其余命令返回本地接纳结果。高级能力的启用方式及 uniMP 限制见[接入说明](./doc/advanced-identity-hybrid.md)。未知命令、错误参数个数、嵌套属性或非布尔 `dataCollect` 均会在 TypeScript 编译期报错。`GioPluginRuntime` 只会作为显式注册插件的 `install(growingio)` 参数出现，页面代码仍只能调用 `gdp()`。
 
 无埋点的模板插桩是一个构建期能力，因此 Vue 3/Vite 项目仍需在 `vite.config.ts` 增加一次插件（且必须排在 `uni()` 前）。这项配置不能放在运行时 `main.ts`，因为模板在应用代码执行前就已编译：
 

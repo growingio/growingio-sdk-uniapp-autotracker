@@ -1,14 +1,14 @@
 # uni 小程序与原生宿主打通设计
 
-> 状态：待评审设计，2026-09-11。本文中的新增配置、接口、目录和协议均未实现。
+> 状态更新：2026-10-27 已完成 JS SDK 与自动化实现，接入见[高级身份与混合扩展](./advanced-identity-hybrid.md)。本文保留设计依据与原生侧实施要求。
 >
 > 本期目标：传统 uni-app Vue 3 `.vue` 项目作为 `.wgt`，运行在 Android / iOS 原生宿主中，与宿主 GrowingIO SDK 打通。
 >
-> 已确认的开发前提：Android / iOS 的桥接 module 暂未实现，当前先假设两端提供约定接口，完成 JS SDK 设计；后续 JS 实现可使用测试替身验证，原生完成后再实测对接。当前交付范围仍为设计。
+> 已确认的开发前提：先交付 JS SDK。Android / iOS 桥接 module 由原生侧后续提供；JS 使用受控宿主执行模型验证，原生完成后再实测对接。
 >
 > 后续扩展：uni-app x 宿主；本期不实现其通信适配或验收。微信等平台小程序不是本期打通的前置条件。
 
-本文负责范围、职责和工程落点；[module 详细契约](./unimp-native-bridge-contract.md) 是请求格式、状态机和失败处理的唯一详细定义；[设计自审记录](./unimp-native-hybrid-review.md) 记录本轮发现并修正的问题。三份文件均为设计，示例接口尚不可用于当前 SDK。
+本文负责范围、职责和工程落点；[module 详细契约](./unimp-native-bridge-contract.md) 定义请求格式、状态机和失败处理；[设计自审记录](./unimp-native-hybrid-review.md) 保留设计阶段问题。示例接口已具备 JS 实现，真实原生打通仍需 module 与真机验收。
 
 ## 1. 结论与范围
 
@@ -36,7 +36,7 @@ DCloud 将 uni 小程序定义为运行在宿主中的 uni-app 前端资源；�
 |---|---|---|
 | 本仓库 `33257a1` | `index.ts`、`src/platform/index.ts` | 根入口只创建 App runtime，默认安装存储、网络、HTTP 请求适配器 |
 | 本仓库 | `src/platform/system.ts`、`src/types/index.ts` | 系统模型只包含 Android / iOS / HarmonyOS；`domain` 按宿主包名读取，不能区分多个 uni 小程序 |
-| 本仓库 | `src/core/dataStore/index.ts`、`src/core/growingIO.ts` | 事件依赖本地 identity、session、sequence 和 queue；只换 TransportPort 仍会创建第二套身份与访问 |
+| 本仓库 | `src/core/dataStore/index.ts`、`src/core/localRuntime.ts` | 本地事件依赖 identity、session、sequence 和 queue；托管模式由稳定门面另行装配，不创建这些本地状态 |
 | 本仓库 | `src/core/dataStore/app.ts`、`src/core/dataStore/page.ts` | App 生命周期产生 VISIT / APP_CLOSED，Page 生命周期管理页面与 PAGE，需要按运行模式分配职责 |
 | 本仓库 | `src/core/lifecycle.ts`、`src/constants/platform.ts` | 内置插件只有 `gioEventAutoTracking`；现有自动采集能力尚有真机验收门控 |
 | Web SDK `8e54d43` | `src/plugins/gioHybridAdapter/index.ts`、`payload.ts`、`src/core/uploader.ts` | 匹配的实例通过 Native 单发；原生配置、身份命令、事件发送和 DOM 圈选分别处理 |
@@ -180,7 +180,7 @@ flowchart TD
 
 ## 6. JS 接入与内部边界
 
-以下为拟议 API，当前版本不能运行：
+以下 API 已实现 JS 路径，运行时需宿主提供约定 module：
 
 ```ts
 gdp('registerPlugins', [
@@ -335,7 +335,7 @@ Android / iOS 原生侧后续交付 `GrowingIOUniMPBridge` module 或提供与�
 | `src/types/index.ts`、`src/core/dataStore/unimp.ts` | 增加内部 EventOutput / 宿主请求接口与协议校验，保留现有 HTTP TransportPort 职责 |
 | `src/core/dataStore/protocol.ts` | 复用纯属性和字段校验；新增草稿白名单，不能放松独立 App 报文必填检查 |
 | `src/core/dataStore/page.ts`、`src/core/dataStore/index.ts` | 依赖最小事件输出接口，保留共用页面与行为构建；不硬依赖 App composer |
-| `src/core/growingIO.ts`、`src/platform/index.ts` | 保持 App 生命周期、持久化和 HTTP 逻辑；抽取真正共用部分供托管 runtime 使用 |
+| `src/core/growingIO.ts`、`src/core/localRuntime.ts`、`src/platform/index.ts` | 保留插件门面；App / 小程序本地生命周期、持久化与 HTTP 留在 localRuntime，托管模式独立装配 |
 | `src/core/unimp.ts` | 装配页面 / 行为链，替换 App session 及生命周期职责，协调托管门禁 |
 | `src/platform/unimp.ts`、`src/platform/unimpNativeModule.ts` | 读取 uni 的客体元信息、加载约定 module、构造宿主端口 |
 | `src/plugins/gioHybridAdapter/index.ts` | 握手、FIFO、超时、代次隔离、页面依赖、身份阻断和诊断；沿用 src 中的插件交付目录 |
@@ -380,7 +380,7 @@ App 入口快照补足可验证的 scene / referrerInfo；限制大小并只保�
 | 4：后置端到端验收 | 多客体、前后台、隐私、登录、字段保留与故障矩阵 | Android / iOS 真机请求、Native 队列与服务端查询形成完整证据 |
 | 5：发布 | 支持版本矩阵、接入文档、JS 与 Native 版本配对 | 按项目发布门禁执行；只声明实测通过的功能 |
 
-阶段 1、2 无需等待原生交付；原生侧可独立按同一契约开发，完成后进入阶段 3、4。当前仅交付阶段 0 的设计，不因此启动 JS 或原生代码实现。后续 JS mock 通过时可记录“JS 契约验证完成、原生实测待接入”，不能标记真机打通已完成。uni-app x transport 不混入本期发布。
+阶段 1、2 的 JS 实现与自动化已完成；原生侧可独立按同一契约开发，完成后进入阶段 3、4。当前状态为“JS 契约验证完成、原生实测待接入”，不能标记真机打通已完成。uni-app x transport 不混入本期发布。
 
 ## 12. 验收矩阵
 

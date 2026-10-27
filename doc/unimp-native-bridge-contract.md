@@ -1,8 +1,8 @@
-# uniMP Native module 详细契约 v1（设计提案）
+# uniMP Native module 详细契约 v1
 
-> 2026-09-11。与 [总体设计](./unimp-native-hybrid-design.md) 配套，尚未实现。Android / iOS module 按下述能力存在的前提设计；JS 后续可先用测试替身开发，真实原生验收后置。
+> 2026-10-27 更新：与 [总体设计](./unimp-native-hybrid-design.md) 配套，JS SDK 已实现并完成自动化验证。Android / iOS module 按下述契约后续实现，真实原生验收后置；接入见[实现说明](./advanced-identity-hybrid.md)。
 >
-> 文中“必须”表示拟议契约的要求，不表示 DCloud 或当前 GrowingIO SDK 已经具备。模块名、接口、错误码和限额均是本项目提案。
+> 文中“必须”表示本项目桥接契约要求，不表示 DCloud 或现有 GrowingIO Native SDK 自动具备。模块名、接口、错误码和限额需要原生 module 实现，JS 测试替身通过不代表原生已接入。
 
 ## 1. 不变量与可观察结果
 
@@ -398,7 +398,7 @@ duplicate_request 对本 SDK 是异常：从不重投业务请求，正常不应
 
 ## 10. 后续实现的测试向量
 
-这些是待编写的用例和断言，本次未编写或执行测试。JS 组使用可控制异步回调、调度器和原生串行执行器的契约替身；不能只使用“所有请求立即成功”的 mock。Native 实现仍需独立跑同一 fixture，JS mock 通过不证明真实原生已满足契约。
+以下向量的 JS 部分已在 `test/unit/unimp-runtime.test.ts`、`unimp-contract.test.ts`、`unimp-native-module.test.ts`、`public-hybrid.test.ts` 与发布包消费者中实现。受控宿主可独立执行副作用、丢弃 / 延迟回调并维护身份和页面状态。Native 组及向量中标注的真实执行、进程、容器和服务端断言仍需原生实现后验证，JS 测试通过不证明真实原生已满足契约。
 
 | ID | 输入 / 故障注入 | 关键断言 | 验证阶段 |
 |---|---|---|---|

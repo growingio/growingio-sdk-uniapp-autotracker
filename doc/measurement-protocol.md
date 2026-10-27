@@ -5,7 +5,7 @@
 >
 > **传统 uni-app 1.0 请求契约：**`serverUrl` 是基础地址，未传时为 `https://napi.growingio.com`，不能传入既有接口路径或 query。每批请求为 `POST {serverUrl}/v3/projects/{accountId}/collect?stm={sendAt}&compress=0`；`sendAt` 是该批实际开始发送时的 Unix 毫秒时间。请求头固定为 `Content-Type: application/json` 与 `Accept: application/json`，Body 是已完成字段清理的 JSON 事件数组。App 与八端小程序共用该请求契约；后续平台替换请求适配器时也不改变核心契约。
 >
-> **传统 uni-app 1.0 范围：**本协议是全端目标协议，不等于一期必须实现所有可选字段。传统 uni-app 一期只发送其开发文档明确列入一期的字段；`idfa`、`idfv`、`oaid`、`googleAdvertisingId`、`androidId`、`imei` 和 `urlScheme` 等原生增强字段属于二期。下文 App 报文仅说明字段格式，不代表一期一定带上全部选填字段。
+> **传统 uni-app 范围：**本协议是全端目标协议，不等于默认开启全部可选字段。JS SDK 可通过显式 `gioNativeIdentifiers` 插件接收宿主 module 的 `idfa`、`idfv`、`oaid`、`googleAdvertisingId`、`androidId`、`imei`，仅补充后续 VISIT；原生 module 与真机验收后补。默认不读取这些标识，`urlScheme` 等其他增强仍未实现，见[扩展接入说明](./advanced-identity-hybrid.md)。
 
 ## 1. 事件类型与适用端
 

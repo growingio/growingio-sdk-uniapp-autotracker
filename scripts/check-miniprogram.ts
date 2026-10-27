@@ -110,17 +110,23 @@ require(${JSON.stringify(compilerRequire.resolve('@dcloudio/vite-plugin-uni/dist
       // 真实交付包在独立进程中运行：自动选择目标、生命周期、协议、内存队列和后台发送。
       await writeFile(join(project, 'consumer.mjs'), `
 import assert from 'node:assert/strict'; import gdp from ${JSON.stringify(nodeEntry)};
-const sent=[], hooks=[], stored=new Map(); let tracker;
+const sent=[], hooks=[], stored=new Map(); let tracker; const advanced=process.argv[2]==='advanced';
+if(advanced){stored.set('_growing_uid_','legacy-device');stored.set('_growing_userId_','legacy-user');}
 globalThis.uni={getSystemInfoSync:()=>({uniPlatform:${JSON.stringify(target)},platform:'ios',version:'10.0'}),getStorageSync:key=>stored.get(key),setStorageSync:(key,value)=>stored.set(key,value),removeStorageSync:key=>stored.delete(key),getNetworkType:options=>options.success({networkType:'wifi'}),request:options=>{sent.push(...JSON.parse(options.data));options.success({statusCode:204});}};
 gdp('registerPlugins',[{name:'consumer',install:value=>{tracker=value}}]);
-assert.equal(gdp('init','account','source',{uniVue:{mixin:value=>hooks.push(value)},appId:'fixture'}),true);
+assert.equal(gdp('init','account','source',{uniVue:{mixin:value=>hooks.push(value)},appId:'fixture',...(advanced?{forceLogin:true,legacyMiniProgramIdentity:{appId:'fixture',accountId:'account',dataSourceId:'source'}}:{})}),true);
 hooks[0].onLaunch.call({$mpType:'app'},{path:'pages/home',scene:1001}); hooks[0].onShow.call({$mpType:'app'},{path:'pages/home',scene:1001});
 const page={$mpType:'page',$scope:{route:'pages/home'}}; hooks[0].onLoad.call(page,{a:'1'});hooks[0].onShow.call(page);
-assert.equal(await tracker.whenReady(),true);assert.equal(gdp('track','mini_consumer_event'),true);hooks[0].onHide.call({$mpType:'app'});
+assert.equal(await tracker.whenReady(),true);assert.equal(gdp('track','mini_consumer_event'),true);
+if(advanced){assert.equal(sent.length,0);assert.equal(gdp('getGioInfo'),null);assert.ok(tracker.queuedEvents().every(event=>event.deviceId==='legacy-device'&&event.userId==='legacy-user'));assert.equal(gdp('identify','assigned-device'),true);assert.equal(gdp('identify','other'),false);assert.equal(new URLSearchParams(gdp('getGioInfo')).get('giou'),'assigned-device');}
+else{assert.equal(new URLSearchParams(gdp('getGioInfo')).get('gioplatform'),${JSON.stringify(MINI_PROGRAM_PROFILES[target].platform)});}
+hooks[0].onHide.call({$mpType:'app'});
 assert.deepEqual(sent.map(event=>event.eventType),['VISIT','PAGE','CUSTOM','APP_CLOSED']);assert.ok(sent.every(event=>event.platform===${JSON.stringify(MINI_PROGRAM_PROFILES[target].platform)} && event.domain==='fixture' && !('orientation' in event) && !('appState' in event)));
-assert.ok([...stored.keys()].every(key=>!key.includes(':session')&&!key.includes(':queue')));console.log('mini_consumer_passed');
+assert.ok([...stored.keys()].every(key=>!key.includes(':session')&&!key.includes(':queue')));if(advanced){assert.ok(sent.every(event=>event.deviceId==='assigned-device'));assert.equal(stored.get('_growing_uid_'),'legacy-device');}console.log('mini_consumer_passed:'+ (advanced?'advanced':'default'));
 `)
       run(process.execPath, [join(project, 'consumer.mjs')], project, process.env, `${compilerVersion}-${channel}-${target}-runtime`)
+      runtimeConsumers++
+      run(process.execPath, [join(project, 'consumer.mjs'), 'advanced'], project, process.env, `${compilerVersion}-${channel}-${target}-advanced-runtime`)
       runtimeConsumers++
     }
   }

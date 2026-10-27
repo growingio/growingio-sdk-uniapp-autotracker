@@ -1,5 +1,7 @@
 # uniMP Native 打通设计自审
 
+> 后续状态：2026-10-27 已完成 [JS SDK 实现](./advanced-identity-hybrid.md) 与自动化。下文保留 2026-09-11 的设计审查记录，原生 module / 真机结论仍待验证。
+
 > 2026-09-11。审查对象为 [总体设计](./unimp-native-hybrid-design.md) 和 [module 详细契约](./unimp-native-bridge-contract.md)。本轮只修改设计文档，未实现 SDK 或原生 module，未运行 SDK / 设备测试。
 
 ## 1. 审查结论

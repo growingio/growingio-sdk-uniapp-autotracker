@@ -9,7 +9,7 @@
 > **非一期范围：H5、小程序、Vue 2、`.nvue` 的完整无埋点、任意第三方/业务自定义组件的自动识别**
 > **UTS 定位：一期不依赖；原生增强留待二期，且不是 SDK 的主运行时。**
 
-> **新增需求设计：**原生宿主内的 uni 小程序（`.wgt`）与 GrowingIO Native 打通见 [uniMP 设计提案](./unimp-native-hybrid-design.md)。该提案单独定义托管运行模式，当前尚未实现，不表示本文的独立 App 能力已经覆盖 uniMP。
+> **扩展实现：**高级身份、内嵌 H5 与原生增强见[接入说明](./advanced-identity-hybrid.md)；原生宿主内 `.wgt` 使用独立 uniMP 托管模式。JS SDK 已实现，Android / iOS module 与真机收数后补，不把默认独立 App 模式当作 Native 打通。
 
 本文是独立的传统 uni-app SDK 实施说明，不是现有 `gio-uniappx-autotracker` 的接入文档，也不建议把其中的 UTS 实现直接复制过来。目标是以 Vue 和 `uni.*` API 为主，在 Android、iOS、HarmonyOS 三端提供一致的手动埋点、页面埋点和受控无埋点能力。
 
@@ -128,7 +128,8 @@ gio-uniapp-autotracker/
 │   │   ├── config.ts                # 初始化配置、SDK 版本
 │   │   └── platform.ts              # 平台验收能力表与验证构建配置
 │   ├── core/
-│   │   ├── growingIO.ts             # TrackerRuntime：装配与事件调度
+│   │   ├── growingIO.ts             # TrackerRuntime：稳定插件门面，按模式委派
+│   │   ├── localRuntime.ts          # App / 小程序本地装配与事件调度
 │   │   ├── lifecycle.ts             # 插件注册、初始化状态、暂存和按序回放
 │   │   ├── userStore.ts             # 设备/登录身份、会话、内存位置
 │   │   ├── dataStore/
@@ -276,7 +277,7 @@ export const gdp: GdpCommand
 
 一期每次真实 `Page:onShow` 都自动发送 `PAGE`，并始终维护页面快照供 CUSTOM / `VIEW_*` 使用；不提供 `trackPage` 开关或 `sendPage()` 手动 PAGE，避免与 uniappx 一期能力分叉。
 
-一期公开 API 与 uniappx 一样只返回 `boolean`；参数非法、未初始化、被隐私开关拒绝或已入队等原因仅写入受控 debug 日志，不另造结果对象。`identify()`、`getABTest()` 只保留二期扩展位置，若没有对应后台或产品定义，不要伪实现。
+基础事件 / 状态命令返回 `boolean`，表示本地接纳。高级身份扩展现已提供 `identify` 与返回 `string | null` 的 `getGioInfo`；uniMP 由插件 onReady / onError 报告异步状态。`getABTest()` 仍不在本次范围。完整公开类型与模式差异以[扩展接入说明](./advanced-identity-hybrid.md)为准。
 
 ### 5.3 一期内置插件入口
 
@@ -888,7 +889,7 @@ Web 和小程序适配器是后续能力，不进入 1.0 发布物；其接口�
 
 ### 11.1 何时使用
 
-本节只保留二期设计，不是 1.0 工作项。UTS 只解决标准 API 无法可靠获得、且产品确实需要的原生能力，例如：
+本节保留后续原生实现边界。当前已交付可选 module 的 JS 端口；本轮不新增 UTS 或 Android / iOS module。原生插件只解决标准 API 无法可靠获得、且产品确实需要的能力，例如：
 
 - 原生渠道或设备字段；
 - 更早/更可靠的 Android Activity 前后台通知；
@@ -899,7 +900,7 @@ Web 和小程序适配器是后续能力，不进入 1.0 发布物；其接口�
 
 ### 11.2 原生可选字段边界
 
-二期如经产品确认，原生增强只可补充 Protocol 定义的端侧可选字段：iOS 的 `idfa` / `idfv`，Android 的 `oaid` / `googleAdvertisingId` / `androidId` / `imei`。它不进入一期 `GioInitOptions`；是否启用只能由后续已定义的产品插件配置决定。SDK 不主动申请权限、不改变用户既有授权状态，也不等待这些字段才构建首个 `VISIT` 或 `PAGE`。原生层只能返回在已有授权和当前设备上可安全取得的值；字段为空、无权限、UTS 缺失或调用失败时直接省略，并留下脱敏诊断，不伪造 `UNKNOWN` 或其他端的值。
+已实现可选 `gioNativeIdentifiers` 插件的 JS 接入，只补充 Protocol 定义的端侧可选字段：iOS 的 `idfa` / `idfv`，Android 的 `oaid` / `googleAdvertisingId` / `androidId` / `imei`。默认关闭，不新增自动权限请求，也不等待这些字段才构建首个 `VISIT` 或 `PAGE`。宿主 module 只返回已有授权可安全取得的值；字段为空、无权限、module 缺失、超时或调用失败时直接省略，不伪造 `UNKNOWN` 或其他端的值。具体 module、停采失效和字段白名单见[接入说明](./advanced-identity-hybrid.md#app-原生标识增强)。
 
 设备标识仅允许写入 `VISIT`。它们都是增强而非采集前提：基础事件、隐私开关、session、队列和上传必须在没有任何可选字段时保持完全可用。
 
