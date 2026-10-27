@@ -8,6 +8,7 @@ import { AppRequestPort, type AppRequestApi, AppStoragePort, type AppStorageApi 
 import { AppNetworkPort, type AppNetworkApi } from './network.js'
 import { AppSystemContextPort, type AppSystemApi } from './system.js'
 import type { MiniProgramTarget, SystemContextPort } from '../types/index.js'
+import { AppNativeIdentifiersPort, type NativePluginHost } from './native-identifiers.js'
 
 export type AppRuntimeHost = AppStorageApi & AppRequestApi & AppSystemApi & AppNetworkApi
 export type UniRuntimeHost = AppStorageApi & AppRequestApi & AppNetworkApi & Partial<AppSystemApi>
@@ -48,6 +49,8 @@ export function createUniTracker(host: UniRuntimeHost, options: AppRuntimeOption
   const tracker = new TrackerRuntime({
     target,
     storage,
+    ...(target === undefined ? { nativeIdentifiers: new AppNativeIdentifiersPort(host as NativePluginHost) } : {}),
+    ...(target === undefined ? {} : { legacyIdentity: { read: (key: string) => host.getStorageSync(key) } }),
     /** 按当前配置创建系统读取端口，版本回退由初始化参数提供。 */
     systemContext: (config: ResolvedGioConfig) => ({
       /** 读取基础系统信息并后台刷新网络，避免慢网络回调阻塞首批事件。 */

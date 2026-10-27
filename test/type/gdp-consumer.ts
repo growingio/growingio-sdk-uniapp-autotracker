@@ -60,3 +60,10 @@ command('setOptions', { idMapping: true })
 command('setLocation', '30.2741', 120.1551)
 // @ts-expect-error init 必须接收 SDK 使用的 Vue 应用引用。
 command('init', 'account-id', 'data-source-id', { dataCollect: true })
+
+command('identify', 'assigned-device')
+command('identify', 123)
+const info: string | null = command('getGioInfo')
+void info
+command('registerPlugins', [{ name: 'gioNativeIdentifiers', options: { fields: ['oaid', 'idfv'] } }])
+command('init', 'account-id', 'data-source-id', { uniVue: app, forceLogin: true })

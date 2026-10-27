@@ -2,7 +2,7 @@ import { createAppTracker, type AppRuntimeHost, type AppRuntimeOptions } from '.
 import { SDK_VERSION, normalizeInitOptions, type GioInitOptions } from './src/constants/config.js'
 import { createMiniProgramTracker, matchesMiniProgramAppId, type MiniProgramHost } from './src/platform/miniprogram.js'
 import { resolveRuntimeTarget, type RuntimeTarget } from './src/platform/resolve.js'
-import type { GioBuiltinPlugin } from './src/core/lifecycle.js'
+import { isBuiltinPlugin, snapshotBuiltinPlugin, type GioBuiltinPlugin } from './src/core/lifecycle.js'
 import { TrackerRuntime } from './src/core/growingIO.js'
 import { installUniAppLifecycle, type UniAppVueApp } from './src/adapters/uniapp.js'
 import { guid } from './src/utils/tools.js'
@@ -25,7 +25,7 @@ function createGioTracker(host: AppRuntimeHost | MiniProgramHost, options: AppRu
 /** 生命周期安装器所需的最小 Vue 应用接口，createSSRApp(App) 的结果满足此约束。 */
 export type GioUniVueApp = UniAppVueApp
 
-export type GioGdpInitOptions = Omit<GioInitOptions, 'accountId' | 'dataSourceId'> & Readonly<{
+export type GioGdpInitOptions = Omit<GioInitOptions, 'accountId' | 'dataSourceId'> & { runtime?: 'app' } & Readonly<{
   /** 由 createSSRApp(App) 返回的 Vue 应用，SDK 通过它接管 App 和 Page 生命周期。 */
   uniVue: GioUniVueApp
 }>
@@ -61,6 +61,10 @@ export interface GdpCommand {
   (command: 'setUserId', userId: string, userKey?: string | null): boolean
   /** 清除当前登录字段，保留设备身份与内部最近登录身份。 */
   (command: 'clearUserId'): boolean
+  /** forceLogin 模式下，为本次等待上传的事件分配设备身份；每个运行期仅一次。 */
+  (command: 'identify', deviceId: string | number): boolean
+  /** 当前身份查询串，需拼入受信任的 H5 URL；未就绪或托管模式不提供身份快照。 */
+  (command: 'getGioInfo'): string | null
   /** 提交用户属性事件，使用与手动事件一致的属性归一化规则。 */
   (command: 'setUserAttributes', attributes: GioAttributes): boolean
   /** 仅允许修改 dataCollect；恢复时按生命周期建立新会话，有当前页时补发 PAGE。 */
@@ -94,14 +98,6 @@ function isUniVueApp(value: unknown): value is UniAppVueApp {
   return candidate !== null && typeof candidate.mixin === 'function'
 }
 
-/** 校验已交付的内置插件声明及其空配置约束。 */
-function isBuiltinPlugin(value: unknown): value is GioBuiltinPlugin {
-  const candidate = record(value)
-  const options = record(candidate?.options)
-  return candidate?.name === 'gioEventAutoTracking'
-    && (candidate.options === undefined || (options !== null && Object.keys(options).length === 0))
-}
-
 /** 校验客户插件的名称和安装方法，不在此执行插件代码。 */
 function isCustomerPlugin(value: unknown): value is GioPlugin {
   const candidate = record(value)
@@ -124,7 +120,7 @@ function registerGdpPlugins(value: unknown): boolean {
     if (names.has(name)) return false
     names.add(name)
   }
-  pendingGdpPlugins = [...pendingGdpPlugins, ...plugins]
+  pendingGdpPlugins = [...pendingGdpPlugins, ...plugins.map(plugin => isBuiltinPlugin(plugin) ? snapshotBuiltinPlugin(plugin) : plugin)]
   return true
 }
 
@@ -134,15 +130,18 @@ function registerGdpPlugins(value: unknown): boolean {
  *
  * @returns 命令是否被本地接纳；事件命令成功不代表采集服务已接收。
  */
-export const gdp: GdpCommand = (command: unknown, ...args: readonly unknown[]): boolean => {
+export const gdp = ((command: unknown, ...args: readonly unknown[]): boolean | string | null => {
   if (command === 'registerPlugins') return registerGdpPlugins(args[0])
   if (command === 'init') {
     if (gdpTracker !== null || typeof args[0] !== 'string' || typeof args[1] !== 'string') return false
     const input = record(args[2])
-    const runtime = runtimeHost()
-    if (input === null || runtime === null || !isUniVueApp(input.uniVue)) return false
-    const { host, target } = runtime
+    if (input === null || !isUniVueApp(input.uniVue)) return false
     const { uniVue, sdkVersion: _ignoredVersion, ...init } = input
+    if (input.runtime !== undefined && input.runtime !== 'app') return false
+    const runtime = runtimeHost()
+    if (runtime === null) return false
+    const { host, target } = runtime
+    if (target !== 'app' && pendingGdpPlugins.some(plugin => isBuiltinPlugin(plugin) && plugin.name === 'gioNativeIdentifiers')) return false
     const config = normalizeInitOptions({ ...init, accountId: args[0], dataSourceId: args[1] }, target === 'app' ? undefined : target)
     if (!config.ok || (config.config.miniprogram !== undefined && !matchesMiniProgramAppId(host, config.config.miniprogram.appId))) return false
     const tracker = createGioTracker(host, {
@@ -155,25 +154,28 @@ export const gdp: GdpCommand = (command: unknown, ...args: readonly unknown[]): 
     if (!tracker.registerPlugins(...builtinPlugins) || !tracker.init({ ...init, accountId: args[0], dataSourceId: args[1] })) return false
     installUniAppLifecycle(uniVue, tracker, { host, miniprogram: target === 'app' ? undefined : target })
     gdpTracker = tracker
-    for (const plugin of pendingGdpPlugins.filter(isCustomerPlugin)) {
-      try {
-        plugin.install(tracker)
-      } catch {
-        globalThis.console?.warn(`[GrowingIO]: custom plugin install failed (${plugin.name})`)
-      }
-    }
+    installCustomerPlugins(tracker)
     return true
   }
-  if (gdpTracker === null) return false
+  if (gdpTracker === null) return command === 'getGioInfo' ? null : false
   switch (command) {
     case 'track': return gdpTracker.track(args[0], args[1])
     case 'setUserId': return gdpTracker.setUserId(args[0], args[1])
     case 'clearUserId': return gdpTracker.clearUserId()
+    case 'identify': return gdpTracker.identify(args[0])
+    case 'getGioInfo': return gdpTracker.getGioInfo()
     case 'setUserAttributes': return gdpTracker.setUserAttributes(args[0])
     case 'setOptions': return gdpTracker.setOptions(args[0])
     case 'setLocation': return gdpTracker.setLocation(args[0], args[1])
     case 'clearLocation': return gdpTracker.clearLocation()
     default: return false
+  }
+}) as GdpCommand
+
+function installCustomerPlugins(tracker: TrackerRuntime): void {
+  for (const plugin of pendingGdpPlugins.filter(isCustomerPlugin)) {
+    try { plugin.install(tracker) }
+    catch { globalThis.console?.warn(`[GrowingIO]: custom plugin install failed (${plugin.name})`) }
   }
 }
 
@@ -187,3 +189,4 @@ declare global {
 export default gdp
 
 export type { GioBuiltinPlugin } from './src/core/lifecycle.js'
+export type { NativeIdentifierField } from './src/plugins/gioNativeIdentifiers/index.js'

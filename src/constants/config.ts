@@ -2,6 +2,16 @@ import { normalizeCollectorHost } from '../utils/tools.js'
 import metadata from '../../package.json' with { type: 'json' }
 import type { MiniProgramTarget } from '../types/index.js'
 
+/** 旧独立小程序 SDK 的主实例或子实例身份来源；调用方明确确认其归属。 */
+export type LegacyMiniProgramIdentity = Readonly<{
+  appId: string
+  accountId: string
+  dataSourceId: string
+  /** 独立 SDK 子实例的 trackingId 前缀，主实例留空。 */
+  storagePrefix?: string
+  plugin?: boolean
+}>
+
 export type GioInitOptions = Readonly<{
   accountId: string
   dataSourceId: string
@@ -18,6 +28,10 @@ export type GioInitOptions = Readonly<{
   dataCollect?: boolean
   idMapping?: boolean
   debug?: boolean
+  /** 显式开启后，本次运行期的事件等待 identify 分配设备身份后再上传。 */
+  forceLogin?: boolean
+  /** 仅小程序支持；只在新身份命名空间缺失时单向读取旧身份。 */
+  legacyMiniProgramIdentity?: LegacyMiniProgramIdentity
 }>
 
 export type SessionPolicy = Readonly<{ timeoutMs: number; activityTimeoutMs?: number }>
@@ -33,6 +47,8 @@ export type ResolvedGioConfig = Readonly<{
   idMapping: boolean
   debug: boolean
   miniprogram?: Readonly<{ target: MiniProgramTarget; appId: string; uploadIntervalMs: number }>
+  forceLogin?: true
+  legacyMiniProgramIdentity?: LegacyMiniProgramIdentity
 }>
 
 export type ConfigErrorCode =
@@ -49,6 +65,8 @@ export type ConfigErrorCode =
   | 'invalid_app_id'
   | 'invalid_keep_alive'
   | 'invalid_upload_interval'
+  | 'invalid_force_login'
+  | 'invalid_identity_migration'
 
 export type ConfigResult =
   | Readonly<{ ok: true; config: ResolvedGioConfig }>
@@ -127,6 +145,7 @@ function normalizeSessionPolicy(value: unknown): SessionPolicy | ConfigErrorCode
 /** 统一读取和校验原始初始化配置；失败不产生副作用，修正参数后可再次尝试初始化。 */
 export function normalizeInitOptions(input: unknown, target?: MiniProgramTarget): ConfigResult {
   if (!isRecord(input)) return { ok: false, code: 'invalid_options' }
+  if (input.runtime !== undefined && input.runtime !== 'app') return { ok: false, code: 'invalid_options' }
 
   const accountId = nonEmptyString(input.accountId)
   if (accountId === null) return { ok: false, code: 'invalid_account_id' }
@@ -166,6 +185,18 @@ export function normalizeInitOptions(input: unknown, target?: MiniProgramTarget)
   if (typeof idMapping === 'string') return { ok: false, code: idMapping }
   const debug = normalizeBoolean(input.debug, false, 'invalid_debug')
   if (typeof debug === 'string') return { ok: false, code: debug }
+  if (input.forceLogin !== undefined && typeof input.forceLogin !== 'boolean') return { ok: false, code: 'invalid_force_login' }
+  let migration: LegacyMiniProgramIdentity | undefined
+  if (input.legacyMiniProgramIdentity !== undefined) {
+    const source = input.legacyMiniProgramIdentity
+    if (miniprogram === undefined || !isRecord(source)
+      || Object.keys(source).some(key => !['appId', 'accountId', 'dataSourceId', 'storagePrefix', 'plugin'].includes(key))
+      || source.appId !== miniprogram.appId || source.accountId !== accountId || source.dataSourceId !== dataSourceId
+      || (source.storagePrefix !== undefined && (typeof source.storagePrefix !== 'string' || source.storagePrefix.length > 128 || !/^[A-Za-z0-9_-]*$/.test(source.storagePrefix)))
+      || (source.plugin !== undefined && typeof source.plugin !== 'boolean')) return { ok: false, code: 'invalid_identity_migration' }
+    migration = { appId: source.appId, accountId: source.accountId, dataSourceId: source.dataSourceId,
+      ...(source.storagePrefix === undefined ? {} : { storagePrefix: source.storagePrefix }), ...(source.plugin === undefined ? {} : { plugin: source.plugin }) }
+  }
 
   return {
     ok: true,
@@ -180,6 +211,8 @@ export function normalizeInitOptions(input: unknown, target?: MiniProgramTarget)
       idMapping,
       debug,
       ...(miniprogram === undefined ? {} : { miniprogram }),
+      ...(input.forceLogin === true ? { forceLogin: true as const } : {}),
+      ...(migration === undefined ? {} : { legacyMiniProgramIdentity: migration }),
     },
   }
 }

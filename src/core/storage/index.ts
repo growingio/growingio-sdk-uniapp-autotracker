@@ -89,12 +89,21 @@ export class IdentityPersistence {
     private readonly key: string,
     private readonly dataSourceId: string,
     private readonly deviceIdFactory: DeviceIdFactory,
+    private readonly legacyIdentity?: () => Identity | null,
   ) {}
 
   /** 恢复并迁移有效身份；缺失或损坏时生成新身份，损坏清理仅限当前键。 */
   public async hydrate(): Promise<IdentityHydration> {
     const read = await this.storage.read('state', this.key)
-    if (read.kind === 'missing') return this.generateAndPersist('generated')
+    if (read.kind === 'missing') {
+      let legacy: Identity | null | undefined
+      try { legacy = this.legacyIdentity?.() } catch { legacy = null }
+      if (legacy != null) {
+        await this.persist(legacy)
+        return { identity: legacy, source: 'legacy' }
+      }
+      return this.generateAndPersist('generated')
+    }
     if (read.kind === 'unavailable') return { identity: generatedIdentity(this.deviceIdFactory), source: 'unavailable' }
     if (read.kind === 'corrupt') {
       await this.storage.remove('state', this.key)
@@ -131,7 +140,7 @@ export class IdentityPersistence {
 
   /** 迁移旧明文或预览版设备标识；有效当前身份不做无意义重写。 */
   private async persistDecodedIdentity(identity: Identity, source: 'legacy' | 'restored'): Promise<IdentityHydration> {
-    if (!isLegacyAppGeneratedDeviceId(identity.deviceId)) {
+    if (identity.deviceIdAssigned === true || !isLegacyAppGeneratedDeviceId(identity.deviceId)) {
       if (source === 'legacy') await this.persist(identity)
       return { identity, source }
     }

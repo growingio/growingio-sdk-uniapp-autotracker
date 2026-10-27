@@ -9,6 +9,8 @@ export type Identity = Readonly<{
   userKey: string | null
   /** 退出登录后仍保留的内部比较身份，不能作为事件 userId 上报。 */
   lastUserId?: string | null
+  /** 显式分配或迁入的设备身份不适用早期 App 预览 ID 的替换规则。 */
+  deviceIdAssigned?: true
 }>
 
 export type IdentityRecordRead =
@@ -28,7 +30,7 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 }
 
 /** 按码点验证身份长度并拒绝未配对 UTF-16 代理项。 */
-function isWithinLimit(value: string): boolean {
+export function isWithinLimit(value: string): boolean {
   // 一个合法码点最多占两个 UTF-16 单元，明显超长时无需遍历和分配完整字符数组。
   if (value.length > IDENTITY_VALUE_MAX_LENGTH * 2) return false
   let length = 0
@@ -38,6 +40,12 @@ function isWithinLimit(value: string): boolean {
     if (character.length === 1 && character.charCodeAt(0) >= 0xd800 && character.charCodeAt(0) <= 0xdfff) return false
   }
   return true
+}
+
+/** identify 接受非空有效字符串或正有限数字，不截断或猜测设备身份。 */
+export function assignedDeviceId(value: unknown): string | null {
+  const id = typeof value === 'number' && Number.isFinite(value) && value > 0 ? String(value) : value
+  return typeof id === 'string' && id.trim() !== '' && !['-', 'null', 'undefined'].includes(id) && isWithinLimit(id) ? id : null
 }
 
 /** 校验设备标识、登录字段和最近身份，防止损坏缓存进入运行时。 */
@@ -51,11 +59,12 @@ function validIdentity(value: unknown): value is Identity {
     && (value.userId === null || isWithinLimit(value.userId))
     && (value.userKey === null || isWithinLimit(value.userKey))
     && (value.lastUserId === undefined || value.lastUserId === null || typeof value.lastUserId === 'string' && isWithinLimit(value.lastUserId))
+    && (value.deviceIdAssigned === undefined || value.deviceIdAssigned === true)
 }
 
 /** 比较出站身份与内部最近登录身份，避免无变化的状态写入。 */
 function sameIdentity(left: Identity, right: Identity): boolean {
-  return left.deviceId === right.deviceId && left.userId === right.userId && left.userKey === right.userKey && left.lastUserId === right.lastUserId
+  return left.deviceId === right.deviceId && left.userId === right.userId && left.userKey === right.userKey && left.lastUserId === right.lastUserId && left.deviceIdAssigned === right.deviceIdAssigned
 }
 
 /** 写入带版本的 JSON 信封，分别保护每个已填充的身份字段。 */
@@ -72,6 +81,7 @@ export function serializeIdentityRecord(identity: Identity, dataSourceId: string
       userId: protect(identity.userId),
       userKey: protect(identity.userKey),
       ...(identity.lastUserId === undefined ? {} : { lastUserId: protect(identity.lastUserId) }),
+      ...(identity.deviceIdAssigned === undefined ? {} : { deviceIdAssigned: identity.deviceIdAssigned }),
     },
   })
 }
@@ -102,6 +112,7 @@ export function readIdentityRecord(serialized: string, dataSourceId: string): Id
     userId: decrypt(record.value.userId),
     userKey: decrypt(record.value.userKey),
     ...(hasLastUserId ? { lastUserId } : {}),
+    ...(record.value.deviceIdAssigned === undefined ? {} : { deviceIdAssigned: record.value.deviceIdAssigned }),
   }
   return validIdentity(identity) ? { kind: 'current', identity } : { kind: 'corrupt' }
 }

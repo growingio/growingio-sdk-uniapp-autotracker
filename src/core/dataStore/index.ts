@@ -90,6 +90,7 @@ export class EventComposer {
     private readonly location: LocationState,
     private readonly network: (() => NetworkState) | undefined = undefined,
     private readonly currentPage?: () => PageSnapshot | null,
+    private readonly nativeIdentifiers?: () => Readonly<Record<string, string | undefined>>,
   ) {}
 
   /** 小程序入口由生命周期冻结，不将原始宿主对象放入事件。 */
@@ -120,6 +121,7 @@ export class EventComposer {
         title: input.eventType === 'VISIT' && input.fields?.path !== page?.route ? null : page?.title,
       }),
       ...input.fields,
+      ...(input.eventType === 'VISIT' ? this.nativeIdentifiers?.() ?? {} : {}),
       deviceId: identity.deviceId,
       userId: identity.userId,
       userKey: identity.userKey,

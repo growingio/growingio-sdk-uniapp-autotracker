@@ -1,4 +1,5 @@
 import { miniProgramProfileForPlatform } from '../../constants/miniprogram.js'
+import { NATIVE_IDENTIFIER_FIELDS, validNativeIdentifier } from '../../plugins/gioNativeIdentifiers/index.js'
 
 export const APP_EVENT_TYPES = [
   'VISIT',
@@ -69,6 +70,7 @@ const FIELD_ENUMS: Readonly<Record<string, readonly string[]>> = {
 
 /** 校验保留的出站字段，兼容缓存中已被清理的公共空字段。 */
 function validWireField(key: string, value: unknown, mini = false): boolean {
+  if (!mini && NATIVE_IDENTIFIER_FIELDS.includes(key as typeof NATIVE_IDENTIFIER_FIELDS[number])) return validNativeIdentifier(value)
   if (mini && key === 'platform') return miniProgramProfileForPlatform(value) !== undefined
   if (mini && (key === 'deviceType' || key === 'operatingSystem')) return typeof value === 'string' && value !== ''
   switch (key) {
@@ -189,7 +191,8 @@ function buildEvent(eventType: string, fields: Readonly<Record<string, unknown>>
     return { ok: false, code: 'invalid_custom_event_name' }
   }
   const common = mini ? [...COMMON_FIELDS.filter(key => key !== 'appState' && key !== 'appName'), 'operatingSystem', 'title'] : COMMON_FIELDS
-  const specific = mini ? EVENT_FIELDS[typedEventType].filter(key => key !== 'orientation' && key !== 'protocolType') : EVENT_FIELDS[typedEventType]
+  const specific = mini ? EVENT_FIELDS[typedEventType].filter(key => key !== 'orientation' && key !== 'protocolType')
+    : [...EVENT_FIELDS[typedEventType], ...(typedEventType === 'VISIT' ? NATIVE_IDENTIFIER_FIELDS : [])]
   const allowed = new Set([...common, ...specific, ...(mini && typedEventType === 'VISIT' ? ['referralPage'] : [])])
   const candidate = Object.fromEntries(
     Object.entries({ ...fields, eventType: typedEventType }).filter(([key]) => allowed.has(key)),
@@ -203,6 +206,8 @@ function buildEvent(eventType: string, fields: Readonly<Record<string, unknown>>
   const requiredSpecific = mini ? REQUIRED_EVENT_FIELDS[typedEventType].filter(key => key !== 'orientation') : REQUIRED_EVENT_FIELDS[typedEventType]
   if ([...requiredSpecific, ...(mini ? ['platform', 'domain', 'timestamp', 'deviceId', 'sessionId', 'dataSourceId', 'platformVersion', 'sdkVersion'] : [])].some((key) => !(key in event))) return { ok: false, code: 'missing_required_field' }
   if (!Object.entries(event).every(([key, value]) => validWireField(key, value, mini))) return { ok: false, code: 'invalid_field_value' }
+  if (!mini && NATIVE_IDENTIFIER_FIELDS.some(field => field in event && (event.platform === 'iOS' ? field !== 'idfa' && field !== 'idfv'
+    : event.platform === 'Android' ? field === 'idfa' || field === 'idfv' : true))) return { ok: false, code: 'invalid_field_value' }
   if (mini) {
     const profile = miniProgramProfileForPlatform(event.platform)
     const prefix = `${profile?.name}-`

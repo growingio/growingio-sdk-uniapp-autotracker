@@ -2,7 +2,10 @@ import { EventComposer, EventSequence, EventDispatcher } from './dataStore/index
 import { BootstrapBuffer, hydrateTrackerState, TrackerEventGate, type TrackerIntent, TrackerLifecycle, type DataCollectTransition } from './lifecycle.js'
 import type { GioInitOptions, ResolvedGioConfig } from '../constants/config.js'
 import { IdentityPersistence, type DeviceIdFactory, MetaPersistence, QueuePersistence, SessionPersistence, storageKeys } from './storage/index.js'
-import { updateIdentity, type Identity, LocationState, SessionManager, type SessionIdFactory } from './userStore.js'
+import { assignedDeviceId, updateIdentity, type Identity, LocationState, SessionManager, type SessionIdFactory } from './userStore.js'
+import { readLegacyMiniProgramIdentity, type LegacyIdentityPort } from './storage/legacyIdentity.js'
+import { embeddedGioInfo } from '../plugins/gioHybridAdapter/info.js'
+import { NativeIdentifierState, type NativeIdentifiersPort } from '../plugins/gioNativeIdentifiers/index.js'
 import { PageStore, type PageLoadInput, type PageOrientation, PageLifecycle } from './dataStore/page.js'
 import type { ClockPort, LoggerPort, MiniProgramTarget, NetworkPort, NetworkState, StoragePort, SystemContextPort, TimezonePort, TransportPort } from '../types/index.js'
 import { buildAppEvent, buildMiniProgramEvent, isValidCustomEventName, normalizeAttributes, type ProtocolEvent } from './dataStore/protocol.js'
@@ -30,6 +33,8 @@ export type TrackerRuntimeDependencies = Readonly<{
   autoTrackProfile?: AutoTrackCapabilityProfile
   network?: NetworkPort
   upload?: Readonly<{ transport: TransportPort; runtime: UploaderRuntime }>
+  legacyIdentity?: LegacyIdentityPort
+  nativeIdentifiers?: NativeIdentifiersPort
 }>
 
 type RuntimeState = Readonly<{
@@ -51,6 +56,10 @@ type RuntimeState = Readonly<{
   stopNetwork: (() => void) | null
   /** 合并网络刷新请求，可要求在当前查询后补一次新读取。 */
   refreshNetwork: (requireFresh?: boolean) => void
+  platform: string
+  domain: string
+  newDevice: boolean
+  nativeIdentifiers: NativeIdentifierState | null
 }>
 
 /** 将内部意图或探针识别为对象记录，拒绝空值与数组。 */
@@ -72,6 +81,10 @@ export class TrackerRuntime {
   private hydration: Promise<void> | null = null
   private userKeyIgnoredWarned = false
   private readonly autoTrackDispatcher = new AutoTrackDispatcher()
+  private awaitingIdentify = false
+  private identifyPending = false
+  private firstDeviceSession: string | null = null
+  private readonly restoredRequests = new Set<string>()
 
   /** 保存宿主依赖并创建门控组件；真正的状态恢复由 init 触发。 */
   public constructor(private readonly dependencies: TrackerRuntimeDependencies) {
@@ -100,6 +113,7 @@ export class TrackerRuntime {
       )
       return false
     }
+    this.awaitingIdentify = result.config.forceLogin === true
     this.hydration = this.hydrate(result.config).catch(() => {
       this.bootstrapFailed = true
       this.log('error', '[GrowingIO]：SDK初始化失败，运行时初始化异常!')
@@ -207,10 +221,45 @@ export class TrackerRuntime {
     return this.setUserId('')
   }
 
+  /** forceLogin 本次运行期只允许分配一次；仅改写本次等待上传的事件。 */
+  public identify(value: unknown): boolean {
+    const deviceId = assignedDeviceId(value)
+    if (!this.awaitingIdentify || this.identifyPending || deviceId === null) return false
+    const deferred = this.deferStateCommand('identify', { deviceId })
+    if (deferred !== null) { this.identifyPending = deferred; return deferred }
+    const state = this.state
+    if (state === null) return false
+    const entries = state.queue.snapshot().map(entry => this.restoredRequests.has(entry.requestId) ? entry
+      : { ...entry, event: { ...entry.event, deviceId } })
+    if (!state.queue.restore(entries)) return false
+    this.updateIdentity({ ...state.identity.value, deviceId, deviceIdAssigned: true })
+    this.awaitingIdentify = false
+    this.persistAfterEvent()
+    return true
+  }
+
+  /** 为受信任的内嵌 H5 提供当前身份，等待强制身份或会话时返回 null。 */
+  public getGioInfo(): string | null {
+    const config = this.lifecycle.config()
+    const state = this.state
+    if (!this.ready() || config === null || state === null) return null
+    if (!config.dataCollect) return 'giodatacollect=false'
+    if (this.awaitingIdentify) return null
+    const session = state.sessions.current()?.sessionId ?? null
+    return embeddedGioInfo({ collecting: true, appId: config.miniprogram?.appId ?? state.domain,
+      accountId: config.accountId, dataSourceId: config.dataSourceId, platform: state.platform,
+      sessionId: session, identity: state.identity.value, idMapping: config.idMapping,
+      newDevice: state.newDevice && session !== null && session === this.firstDeviceSession })
+  }
+
   /** 切换采集同意状态；恢复时必须接纳会话重建意图，否则保持关闭。 */
   public setDataCollect(value: unknown): boolean {
     const transition = this.lifecycle.setDataCollect(value)
     if (!transition.ok) return false
+    if (transition.changed) {
+      if (value === false) this.state?.nativeIdentifiers?.clear()
+      else this.state?.nativeIdentifiers?.refresh()
+    }
     if (!transition.sessionRenewalRequired) return true
     if (this.submitLifecycle('collection-resume', {})) return true
     // 初始化暂存区已满时，不能绕过必要的恢复边界而直接开启采集。
@@ -286,7 +335,10 @@ export class TrackerRuntime {
   private async hydrate(config: NonNullable<ReturnType<TrackerLifecycle['config']>>): Promise<void> {
     const keys = storageKeys(config.dataSourceId, config.miniprogram === undefined ? undefined : { ...config.miniprogram, accountId: config.accountId })
     const queue = new EventQueue(undefined, config.miniprogram === undefined ? buildAppEvent : buildMiniProgramEvent)
-    const identityPersistence = new IdentityPersistence(this.dependencies.storage, keys.identity, config.dataSourceId, this.dependencies.deviceIdFactory)
+    const migration = config.legacyMiniProgramIdentity
+    const identityPersistence = new IdentityPersistence(this.dependencies.storage, keys.identity, config.dataSourceId, this.dependencies.deviceIdFactory,
+      migration === undefined || this.dependencies.legacyIdentity === undefined ? undefined
+        : () => readLegacyMiniProgramIdentity(this.dependencies.legacyIdentity!, migration, config.idMapping, this.dependencies.clock.now()))
     const sessionPersistence = config.miniprogram === undefined ? new SessionPersistence(this.dependencies.storage, keys.session) : null
     const metaPersistence = new MetaPersistence(this.dependencies.storage, keys.meta)
     const queuePersistence = this.dependencies.storage.persistentQueue ? new QueuePersistence(this.dependencies.storage, keys.queue) : null
@@ -307,6 +359,7 @@ export class TrackerRuntime {
       this.log('error', '[GrowingIO]：SDK初始化失败!')
       return
     }
+    for (const entry of queue.snapshot()) this.restoredRequests.add(entry.requestId)
     if (config.miniprogram !== undefined && hydrated.state.systemContext.appVersion === '') this.log('warn', '[GrowingIO]: mini-program appVersion unavailable')
 
     const sessions = new SessionManager(config.sessionPolicy, this.dependencies.sessionIdFactory, hydrated.state.session.snapshot,
@@ -323,9 +376,12 @@ export class TrackerRuntime {
     }
     let networkState: NetworkState = hydrated.state.systemContext.networkState
     const pages = new PageStore()
+    const nativePlugin = this.lifecycle.registeredPlugins().find(plugin => plugin.name === 'gioNativeIdentifiers')
+    const nativeIdentifiers = nativePlugin?.name === 'gioNativeIdentifiers' && config.miniprogram === undefined
+      ? new NativeIdentifierState(this.dependencies.nativeIdentifiers, nativePlugin.options.fields, hydrated.state.systemContext.platform as import('../types/index.js').AppPlatform) : null
     const composer = new EventComposer(
       config, hydrated.state.systemContext, () => identity.value, sessions, sequence, queue,
-      this.dependencies.clock, this.dependencies.timezone, location, () => networkState, () => pages.current(),
+      this.dependencies.clock, this.dependencies.timezone, location, () => networkState, () => pages.current(), () => nativeIdentifiers?.current() ?? {},
     )
     const page = new PageLifecycle({
       pages,
@@ -344,9 +400,9 @@ export class TrackerRuntime {
       config.serverUrl,
       config.accountId,
       (drop) => this.log('warn', `[GrowingIO]: upload dropped (${drop.reason})`),
-      () => { void queuePersistence?.persist(queue) },
+      () => { if (!this.awaitingIdentify) void queuePersistence?.persist(queue) },
       config.debug ? (events) => this.debugEvents(events) : undefined,
-      () => this.dependencies.network?.isConnected() !== false,
+      () => !this.awaitingIdentify && this.dependencies.network?.isConnected() !== false,
       config.miniprogram?.uploadIntervalMs ?? 0,
     )
     const appWithFlush = new AppLifecycle({
@@ -406,10 +462,14 @@ export class TrackerRuntime {
     this.state = {
       identity, identityPersistence, sessionPersistence, metaPersistence, queuePersistence, queue, sequence, sessions, location,
       app: appWithFlush, page, dispatcher, pages, uploader, stopNetwork, refreshNetwork,
+      platform: hydrated.state.systemContext.platform, domain: hydrated.state.systemContext.domain,
+      newDevice: hydrated.state.identity.source === 'generated' || hydrated.state.identity.source === 'corrupt',
+      nativeIdentifiers,
       autoTrackProfile: this.dependencies.autoTrackProfile ?? (config.miniprogram === undefined
         ? appCapabilityProfile(hydrated.state.systemContext.platform, typeof __GIO_AUTOTRACK_VERIFICATION__ !== 'undefined' && __GIO_AUTOTRACK_VERIFICATION__ === true)
         : miniProgramCapabilityProfile(config.miniprogram.target, typeof __GIO_AUTOTRACK_VERIFICATION__ !== 'undefined' && __GIO_AUTOTRACK_VERIFICATION__ === true)),
     }
+    if (this.lifecycle.config()?.dataCollect === true) nativeIdentifiers?.refresh()
     this.log('success', '[GrowingIO]：Gio uni-app SDK 初始化完成！')
     this.gate.release((intent) => this.emit(intent))
   }
@@ -484,6 +544,7 @@ export class TrackerRuntime {
     let lifecycleHandled = false
     switch (intent.kind) {
       case 'user-id': return this.setUserId(payload.userId, payload.userKey)
+      case 'identify': this.identifyPending = false; return this.identify(payload.deviceId)
       case 'location': return this.setLocation(payload.latitude, payload.longitude)
       case 'clear-location': return this.clearLocation()
       case 'user-attributes': emitted = state.dispatcher.setUserAttributes(payload.properties); break
@@ -499,6 +560,7 @@ export class TrackerRuntime {
         state.refreshNetwork(this.appShown)
         this.appShown = true
         this.foreground = true
+        if (this.firstDeviceSession === null) this.firstDeviceSession = state.sessions.current()?.sessionId ?? null
         if (this.pendingPageShow !== null) {
           const pending = this.pendingPageShow
           this.pendingPageShow = null
@@ -551,7 +613,7 @@ export class TrackerRuntime {
     const state = this.state
     if (state === null) return false
     const previous = state.identity.value
-    if (previous.deviceId === identity.deviceId && previous.userId === identity.userId && previous.userKey === identity.userKey && previous.lastUserId === identity.lastUserId) return true
+    if (previous.deviceId === identity.deviceId && previous.userId === identity.userId && previous.userKey === identity.userKey && previous.lastUserId === identity.lastUserId && previous.deviceIdAssigned === identity.deviceIdAssigned) return true
     state.identity.value = identity
     void state.identityPersistence.persist(identity)
     return true
@@ -571,7 +633,7 @@ export class TrackerRuntime {
   private persistAfterEvent(): void {
     const state = this.state
     if (state === null) return
-    void state.queuePersistence?.persist(state.queue)
+    if (!this.awaitingIdentify) void state.queuePersistence?.persist(state.queue)
     void state.metaPersistence.persist(state.sequence.current())
     state.uploader?.schedule()
   }

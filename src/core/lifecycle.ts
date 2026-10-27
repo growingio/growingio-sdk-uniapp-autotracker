@@ -2,22 +2,30 @@ import { normalizeInitOptions, type GioInitOptions, type ResolvedGioConfig } fro
 import type { EventSequenceSnapshot } from './dataStore/index.js'
 import type { IdentityHydration, QueueHydration, SessionHydration } from './storage/index.js'
 import type { SystemContext } from '../types/index.js'
+import { validNativeIdentifierOptions, type NativeIdentifierOptions } from '../plugins/gioNativeIdentifiers/index.js'
 
 export type GioBuiltinPlugin = Readonly<{
   name: 'gioEventAutoTracking'
   options?: Readonly<Record<string, never>>
-}>
+}> | Readonly<{ name: 'gioNativeIdentifiers'; options: NativeIdentifierOptions }>
 
 export type PluginRegistrationCode = 'plugin_invalid' | 'plugin_duplicate' | 'plugin_registration_closed'
 export type PluginRegistrationResult = Readonly<{ ok: true } | { ok: false; code: PluginRegistrationCode }>
 
 /** 只接受已交付插件名称及空选项对象，避免虚假能力声明。 */
-function isBuiltinPlugin(value: unknown): value is GioBuiltinPlugin {
+export function isBuiltinPlugin(value: unknown): value is GioBuiltinPlugin {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const record = value as Readonly<Record<string, unknown>>
+  if (record.name === 'gioNativeIdentifiers') return validNativeIdentifierOptions(record.options)
   if (record.name !== 'gioEventAutoTracking') return false
   return record.options === undefined
     || (typeof record.options === 'object' && record.options !== null && !Array.isArray(record.options) && Object.keys(record.options).length === 0)
+}
+
+/** 注册时冻结已验证的配置副本，避免后续业务修改数组或权限选项改变运行语义。 */
+export function snapshotBuiltinPlugin(plugin: GioBuiltinPlugin): GioBuiltinPlugin {
+  if (plugin.name === 'gioNativeIdentifiers') return Object.freeze({ name: plugin.name, options: Object.freeze({ fields: Object.freeze([...plugin.options.fields]) }) })
+  return Object.freeze({ name: plugin.name, ...(plugin.options === undefined ? {} : { options: Object.freeze({ ...plugin.options }) }) }) as GioBuiltinPlugin
 }
 
 /** 只登记插件声明，实际安装由首次有效初始化后的运行时负责。 */
@@ -34,7 +42,7 @@ export class BuiltinPluginRegistry {
       if (names.has(plugin.name) || this.registered.has(plugin.name)) return { ok: false, code: 'plugin_duplicate' }
       names.add(plugin.name)
     }
-    for (const plugin of plugins as GioBuiltinPlugin[]) this.registered.set(plugin.name, plugin)
+    for (const plugin of plugins as GioBuiltinPlugin[]) this.registered.set(plugin.name, snapshotBuiltinPlugin(plugin))
     return { ok: true }
   }
 
@@ -78,6 +86,7 @@ export class TrackerLifecycle {
     if (this.statusValue !== 'new') return { ok: false, code: 'already_initialized' }
     const normalized = normalizeInitOptions(options, this.target)
     if (!normalized.ok) return { ok: false, code: 'invalid_config' }
+    if (this.target !== undefined && this.plugins.plugins().some(plugin => plugin.name === 'gioNativeIdentifiers')) return { ok: false, code: 'invalid_config' }
     this.configValue = normalized.config
     this.statusValue = 'initializing'
     this.plugins.closeRegistration()
