@@ -171,9 +171,10 @@ describe('实际 demo 页面中的修复场景', () => {
     const before = named(received, 'review_collection_before_pause')[0]!
     const resumed = named(received, 'review_collection_resumed')[0]!
     const page = received.filter(event => event.eventType === 'PAGE').at(-1)!
-    expect(resumed.pageShowTimestamp).toBe(page.timestamp)
     expect(page.timestamp).toBe(15_000)
-    expect(resumed.pageShowTimestamp).toBeGreaterThan(before.pageShowTimestamp as number)
+    expect(page.timestamp).toBeGreaterThan(before.timestamp as number)
+    expect(resumed).toMatchObject({ timestamp: 15_000, sessionId: page.sessionId, path: page.path })
+    expect(resumed).not.toHaveProperty('pageShowTimestamp')
     expect(resumed.sessionId).not.toBe(before.sessionId)
     expect(resumed.attributes).toMatchObject({ runId: (before.attributes as Record<string, string>).runId, pausedMs: '5000' })
     await nextTick()
@@ -460,8 +461,10 @@ describe('实际 demo 页面中的修复场景', () => {
     expect([state.viewClickCount, state.viewInputCount]).toEqual([2, 2])
     const views = received.filter(event => event.eventType.startsWith('VIEW_'))
     expect(views).toHaveLength(2)
-    expect(views.every(event => event.pageShowTimestamp === received.filter(event => event.eventType === 'PAGE').at(-1)?.timestamp)).toBe(true)
-    expect(views[1]).toMatchObject({ textValue: 'demo-enabled', pageShowTimestamp: 25_000 })
+    const page = received.filter(event => event.eventType === 'PAGE').at(-1)!
+    expect(views.every(event => event.sessionId === page.sessionId && event.path === page.path)).toBe(true)
+    expect(views[1]).toMatchObject({ textValue: 'demo-enabled', timestamp: 25_000 })
+    for (const event of views) expect(event).not.toHaveProperty('pageShowTimestamp')
     expect(JSON.stringify(received)).not.toContain('demo-disabled')
   })
 

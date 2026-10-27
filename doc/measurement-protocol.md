@@ -99,7 +99,6 @@ SDK 维护一份持久化的全局计数器：`VISIT`、`PAGE`、`CUSTOM`、`VIE
 |---|---|:--:|:--:|:--:|---|
 | `eventSequenceId` | long | ● | ● | ● | 事件请求编号 |
 | `eventName` | string | ● | ● | ● | 自定义事件名称 |
-| `pageShowTimestamp` | long | ● | ○ | ○ | 关联页面的显示时间戳 |
 | `attributes` | Map<string,string> | ○ | ○ | ○ | 自定义事件属性 |
 
 `eventName` 的全端写入规则为 `^[A-Za-z_][A-Za-z0-9_]{0,99}$`：首字符只能是英文字母或下划线，其余只能是英文字母、数字或下划线，且总长度不超过 100 字符。SDK 不自动转换或截断非法名称；空白、中文、空格、连字符、数字开头和超长名称均整条拒绝并记录脱敏诊断。
@@ -121,7 +120,6 @@ SDK 维护一份持久化的全局计数器：`VISIT`、`PAGE`、`CUSTOM`、`VIE
 | 字段 | 类型 | Web | 小程序 | App | 说明 |
 |---|---|:--:|:--:|:--:|---|
 | `eventSequenceId` | long | ● | ● | ● | 事件请求编号 |
-| `pageShowTimestamp` | long | ● | ● | ● | 页面显示时间 |
 | `textValue` | string | ○ | ○ | ○ | `data-title` 标记的元素文案 |
 | `xpath` | string | ● | ● | ● | 元素标识符，不要求是 DOM XPath |
 | `index` | int | ○ | ○ | ○ | `data-index` 标记的列表元素序号 |
@@ -132,7 +130,6 @@ SDK 维护一份持久化的全局计数器：`VISIT`、`PAGE`、`CUSTOM`、`VIE
 | 字段 | 类型 | Web | 小程序 | App | 说明 |
 |---|---|:--:|:--:|:--:|---|
 | `eventSequenceId` | long | ● | ● | ● | 事件请求编号 |
-| `pageShowTimestamp` | long | ● | ● | ● | 页面显示时间 |
 | `textValue` | string | ○ | ○ | ○ | 标记的组件值，或 swiper 的 `data-title` 文案 |
 | `xpath` | string | ● | ● | ● | 元素标识符，不要求是 DOM XPath |
 | `index` | int | — | — | — | `VIEW_CHANGE` 不产生该字段 |

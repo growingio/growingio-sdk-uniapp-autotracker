@@ -87,8 +87,8 @@ describe('TrackerRuntime', () => {
     expect(tracker.autoTrack(probe, { ...event, timeStamp: 101 })).toBe(true)
     expect(tracker.autoTrack(probe, event)).toBe(false)
     expect(tracker.queuedEvents().filter(event => event.eventType === 'VIEW_CLICK')).toMatchObject([
-      { sessionId: 'session-1', pageShowTimestamp: 100 },
-      { sessionId: 'session-2', pageShowTimestamp: 1_000 },
+      { sessionId: 'session-1', timestamp: 100 },
+      { sessionId: 'session-2', timestamp: 1_000 },
     ])
   })
   it('App 事件在调用时立即发送并输出事件日志，不等待聚合定时器', async () => {
@@ -438,7 +438,7 @@ describe('TrackerRuntime', () => {
     expect(events.every(event => !Object.prototype.hasOwnProperty.call(event, 'lastUserId'))).toBe(true)
   })
 
-  it('uses the replayed PAGE time for CUSTOM and VIEW events after consent resumes', async () => {
+  it('uses the new session and current page context with each event time after consent resumes', async () => {
     const { tracker, setNow } = createTracker(true, true)
     tracker.onAppShow({ path: '/home', query: '' })
     tracker.onPageLoad({ instanceId: 'home', route: 'pages/home', query: '', referralPage: null })
@@ -447,15 +447,19 @@ describe('TrackerRuntime', () => {
     tracker.setDataCollect(false)
     setNow(200)
     tracker.setDataCollect(true)
+    setNow(210)
     tracker.track('after_consent')
+    setNow(220)
     tracker.autoTrack({ schemaVersion: 2, source: 'template', kind: 'click', eventName: 'click' })
+    setNow(230)
     tracker.autoTrack({ schemaVersion: 2, source: 'template', kind: 'change', eventName: 'change', elementType: 'input' })
     expect(tracker.queuedEvents().slice(-5)).toMatchObject([
       { eventType: 'VISIT', sessionId: 'session-2' }, { eventType: 'PAGE', timestamp: 200, sessionId: 'session-2' },
-      { eventType: 'CUSTOM', pageShowTimestamp: 200, sessionId: 'session-2' },
-      { eventType: 'VIEW_CLICK', pageShowTimestamp: 200, sessionId: 'session-2' },
-      { eventType: 'VIEW_CHANGE', pageShowTimestamp: 200, sessionId: 'session-2' },
+      { eventType: 'CUSTOM', timestamp: 210, path: 'pages/home', sessionId: 'session-2' },
+      { eventType: 'VIEW_CLICK', timestamp: 220, path: 'pages/home', sessionId: 'session-2' },
+      { eventType: 'VIEW_CHANGE', timestamp: 230, path: 'pages/home', sessionId: 'session-2' },
     ])
+    for (const event of tracker.queuedEvents()) expect(event).not.toHaveProperty('pageShowTimestamp')
   })
 
   it('sends App events immediately and flushes APP_CLOSED on background', async () => {

@@ -165,7 +165,7 @@ export class PageLifecycle {
     return this.dependencies.pages.onLoad(input)
   }
 
-  /** 以同一时间戳更新当前页并生成 PAGE，保证后续行为关联一致。 */
+  /** 以同一时间戳更新当前页的显示时间并生成 PAGE。 */
   public onShow(instanceId: string, title: string | null): PageShowResult {
     const page = this.dependencies.pages.onShow(instanceId, this.dependencies.clock.now(), title)
     return { page, pageQueued: page !== null && this.emitPage(page) }

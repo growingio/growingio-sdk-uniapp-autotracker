@@ -13,13 +13,13 @@
       <text class="hint">先开启采集，点第 1 步，等待几秒再点第 2 步，期间保持在本页。控制按钮不产生自动点击事件。</text>
       <button id="collection-pause" data-growing-ignore :disabled="!collecting" @click="pauseScenario($event)">1. 发送基准事件并暂停采集</button>
       <button id="collection-resume" data-growing-ignore :disabled="!resumeRunId" @click="resumeScenario($event)">2. 恢复采集并发送核对事件</button>
-      <text class="hint">预期：review_collection_blocked 返回 false 且不进入事件流；恢复后生成 VISIT 和当前页 PAGE。review_collection_resumed 的 pageShowTimestamp 应等于新 PAGE.timestamp，并晚于暂停前的页面时间；两条标记使用同一 runId。</text>
+      <text class="hint">预期：review_collection_blocked 返回 false 且不进入事件流；恢复后生成 VISIT 和当前页 PAGE。新 PAGE.timestamp 为恢复时刻，review_collection_resumed 使用新 sessionId 和当前页 path；两条标记使用同一 runId。</text>
     </view>
     <view class="section">
       <text class="title">关闭采集时业务照常执行</text>
       <button id="collection-view-click" data-title="采集开关下的业务按钮" @click="viewClick($event)">普通业务点击</button>
       <input id="collection-view-input" data-growing-track placeholder="仅填演示值后失焦" @blur="viewInput($event)" />
-      <text class="hint">业务次数：点击 {{ viewClickCount }}，输入完成 {{ viewInputCount }}。先暂停，操作两个控件，再恢复后重复操作。关闭期间计数仍增加但没有 VIEW；恢复后的 VIEW.pageShowTimestamp 应等于新 PAGE.timestamp。输入原文不在页面日志中展示。</text>
+      <text class="hint">业务次数：点击 {{ viewClickCount }}，输入完成 {{ viewInputCount }}。先暂停，操作两个控件，再恢复后重复操作。关闭期间计数仍增加但没有 VIEW；恢复后的 VIEW 使用新 sessionId 和当前页 path。输入原文不在页面日志中展示。</text>
     </view>
     <view class="section"><text class="result">{{ result }}</text></view>
   </scroll-view>

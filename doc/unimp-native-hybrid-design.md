@@ -139,7 +139,6 @@ flowchart TD
 | `domain` | 推荐为客体 DCloud `appId`，如 `__UNI__ORDER`，由宿主来源上下文确认；区别于原生事件的包名 |
 | `path`、`query`、`title`、`referralPage` | 来自客体页面快照；`referralPage` 只承载 PAGE 的页面来源，不塞宿主包名或桥接参数 |
 | `timestamp` | 正常页面 / 行为实际观察时读取的 Unix 毫秒时间；恢复采集补 PAGE 使用恢复时刻，不回填停采前的时间；Native 不改为收到消息的时间 |
-| `pageShowTimestamp` | 此行为关联且已被原生接纳的 PAGE.timestamp；恢复后不能继续使用旧 PageStore.shownAt；Native 构建与序列化必须保留 |
 | `eventSequenceId` | 原生唯一分配；JS 请求关联 ID 不进入此字段 |
 | `xpath`、`textValue`、`index`、`hyperlink` | 复用当前 schema v2 和字段白名单；点击与变更字段不同 |
 | `protocolType` | 本期省略；不为 uni 页面伪造 `https` 或未经定义的 `unimp` 协议值 |
@@ -274,14 +273,14 @@ Android / iOS 原生侧后续交付 `GrowingIOUniMPBridge` module 或提供与�
 | 来源 | 从 module 所属的小程序运行实例和容器记录确认来源 | 同样确认，不能仅信任请求体中的 appId |
 | 应答 | 完成对应操作后通过 module callback 返回协议对象，只应答一次 | 同样处理，单次调用应答后不继续保留回调 |
 | 进程 | 确认到达 SDK 所属进程；必要时内部 IPC | 按实际 SDK 实例所在上下文处理，不建 Android 式 IPC |
-| 事件 | 可以复用现有 builder 与序列化基础，显式设置草稿字段 | 可以复用现有 builder；补 CUSTOM / VIEW_* 时间及 pageShowTimestamp 等链路 |
+| 事件 | 可以复用现有 builder 与序列化基础，显式设置草稿字段 | 可以复用现有 builder；补 CUSTOM / VIEW_* 时间及页面上下文等链路 |
 | 身份 | 进入原生串行操作链后确认结果 | 同样处理，不能只在 DCloud 回调线程修改局部副本 |
 | 会话 | 聚合原生页面和 uniMP 可见性，避免多进程切换误判 | 验证容器切换、预加载、关闭与宿主前后台 |
 | 依赖 | 固定已验证的 DCloud V2、Native SDK 和编译器版本组合 | 固定对应 iOS SDK、Xcode 和编译器版本组合 |
 
 **不直接复用 WebView 私有桥接对象。** Android `NativeBridge` 与 `WebViewBridgeJavascriptInterface` 不是现成公共 uniMP 入口；iOS 现有解析函数也没有完整保留本方案字段。原生侧可在 module 内复用或补齐这些能力，JS 只面向约定的 `invoke(message, callback)`，不依赖原生内部类名。这里描述的是待交付能力，不是要求本次完成 Native 仓库改造。
 
-原生 builder / JSON / Protobuf / 降级格式都要检查，不能只验证 JSON 解析成功。特别确认：PAGE 时间、CUSTOM / VIEW_* 时间、`pageShowTimestamp`、`domain`、`index`、`query` 和属性字符串在最终 collector 报文中一致。
+原生 builder / JSON / Protobuf / 降级格式都要检查，不能只验证 JSON 解析成功。特别确认：PAGE 时间、CUSTOM / VIEW_* 时间、`domain`、`index`、`query` 和属性字符串在最终 collector 报文中一致。
 
 对 uniMP 容器的自动采集还需要去重：避免 Native 对容器壳、渲染 WebView 和内部视图再采一份同名页面 / 点击，避免自动注入 Web SDK 造成第三条链。只排除 uniMP 对应视图，保留宿主其他原生页面的正常采集；具体排除能力必须由两端实测确认。
 
@@ -402,7 +401,7 @@ App 入口快照补足可验证的 scene / referrerInfo；限制大小并只保�
 | Native 收到但应答丢失 | 不二次交付；不自动 HTTP 重发；状态未知可诊断 |
 | 队列溢出、过期、恶意 payload | 新消息拒绝、内存受限、无循环序列化崩溃；身份失败不会继续污染事件 |
 | dataCollect 关闭 / 恢复 | 不读敏感 getter、不缓存停采行为；恢复只补当前页面；Native 总开关优先 |
-| 500 ms 桥接延迟 / 时钟回拨 | timestamp 保持实际发生时值；pageShowTimestamp 不丢失，顺序依赖原生序号 |
+| 500 ms 桥接延迟 / 时钟回拨 | timestamp 保持实际发生时值；页面关联通过内部 pageViewId 确认，顺序依赖原生序号 |
 | schema v2 点击 / 变更 / 敏感输入 | xpath、index、textValue、hyperlink 字段与现有 fixture 一致，原生壳不重复计数 |
 | Native 上传失败、离线与重启 | 仅原生队列按既有规则处理；JS 不另建持久化副本 |
 | npm 与 uni_modules 产物 | 两种渠道都能构建真实 wgt；依赖和 Native 最低兼容版本清楚 |

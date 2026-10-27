@@ -16,7 +16,7 @@
 | 无埋点第 4 / 6 组 | 在字符串 `"1"` 和动态数字 `1` 输入框中填演示值并失焦；点击两种 ignore 按钮 | track 放行值；sensitive 即使带 track 也无 `VIEW_CHANGE`；ignore 无 `VIEW_CLICK`，业务处理仍执行 |
 | 用户身份 | 分别运行 A→退出→A、A→退出→B | 同一 `runId` 下三条 `review_identity_step`：同账号保持 session，不同账号更新 session，退出事件不携带 userId；不额外生成 PAGE |
 | 用户身份 | 运行非法编码身份场景 | 非法参数被拒绝；两条 `review_identity_encoding` 仍为 A 且 session 相同 |
-| 采集开关 | 先开启采集，第 1 步暂停，等几秒后在本页执行第 2 步恢复 | `review_collection_blocked` 不入队；新 PAGE.timestamp 等于 `review_collection_resumed.pageShowTimestamp`，且晚于暂停前页面时间 |
+| 采集开关 | 先开启采集，第 1 步暂停，等几秒后在本页执行第 2 步恢复 | `review_collection_blocked` 不入队；新 PAGE.timestamp 为恢复时刻；`review_collection_resumed` 使用新 sessionId 和当前页 path |
 | 生命周期 | 断网冷启动发送离线标记，退后台恢复网络，回前台发送恢复标记 | collector 最终接收到同一 `runId` 的两条 `review_network_step`；局域网 collector 要恢复同一 Wi-Fi |
 | 生命周期 | 读取屏幕信息并发送核对事件 | `review_screen_context` 的 screenWidth / screenHeight 等于逻辑尺寸 × 有效 DPR 后的物理短边 / 长边；例如 390×844、DPR=3 对应 1170×2532 |
 
@@ -62,7 +62,7 @@ pnpm demo:check
 | picker 文案 | 第 5 组字面量城市、对象 range、固定列 | 采集真实选中文案，与原动态 range 下标回退形成对照 |
 | swiper 正反分支 | 对照两组 swiper，开启 / 关闭自动轮播并手动滑动 | 未放行 autoplay 拦截；原始 target 放行的 autoplay 采集当前下标，保留 0 |
 | 文本边界 | 第 4 组填长文本 / 特殊字符 / 清空，再聚焦并失焦；取消全部多选 | 填充按钮不伪造完成事件；长文本截到 100 字符，控制字符归为空格；空值事件保留但省略 textValue |
-| 采集关闭与恢复 | 采集开关页暂停后点击 / 输入，恢复后重复 | 业务计数始终增加；关闭无 VIEW；恢复后 VIEW.pageShowTimestamp 与新 PAGE.timestamp 一致 |
+| 采集关闭与恢复 | 采集开关页暂停后点击 / 输入，恢复后重复 | 业务计数始终增加；关闭无 VIEW；恢复后 VIEW 使用新 sessionId 和当前页 path |
 | uni-link 真实组合 | 第 6 组点击链接 | navigator 内部探针和父层监听共同走真实 emit 路径，最终同一交互只发送一次 |
 | 编译边界 | 第 6 组进入“预期不采集”页面 | 函数引用、计算成员、.stop、动态事件名、自定义组件 emit、input 打字均只执行业务；.stop 保留阻止冒泡的行为 |
 
