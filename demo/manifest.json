@@ -8,6 +8,8 @@
         "usingComponents" : true
     },
     "vueVersion" : "3",
+    "mp-weixin" : { "appid" : "", "usingComponents" : true },
+    "mp-alipay" : { "appid" : "", "usingComponents" : true },
     "app-harmony" : {
         "distribute" : {
             "bundleName" : "com.growingio.analytics",

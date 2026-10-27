@@ -68,3 +68,11 @@ pnpm run bench:sdk
 ## 验证边界
 
 这些测试运行真实 SDK 代码，替换 uni 宿主、时间、存储和网络等外部依赖；HTTP 链路使用本地 mock collector。它们证明代码行为，不代表 Android/iOS/HarmonyOS 真机、签名打包或生产服务端验收。生产平台能力表不会因代码测试通过而自动开启。独立的[安卓真机报告](./android-device-validation-2026-10-19.md)和[鸿蒙实机报告](./harmony-device-validation-2026-10-19.md)分别记录了单台设备的真实原生交互、设备上传、本地 collector 接收结果和宿主限制。
+
+## 微信和支付宝专项检查
+
+`test/unit/miniprogram-platform.test.ts` 覆盖目标识别、配置、系统接口回退、两端协议与存储隔离；`test/integration/miniprogram-runtime.test.ts` 覆盖真实 SDK 的会话、入口、页面、身份、采集开关、批量上传、重试及编译后监听器的隐私与业务行为。现有 App 用例继续作为回归基线。
+
+提交前补充 `test/integration/miniprogram-boundaries.test.ts`（异常场景、先到页面、采集同意、队列满及跨页面去重）、`test/integration/app-miniprogram-compatibility.test.ts`（三端 App 的公开入口、协议、30 秒超时、原存储及即时上传）和 `test/unit/uploader-aggregation.test.ts`（聚合截止时间、并发、强制发送、离线及重试窗口）。审查结论见[适配审查记录](./miniprogram-review-2026-10-27.md)。
+
+`pnpm run test:miniprogram:compile` 在 SDK 构建后检查 npm／uni_modules、微信／支付宝、有插桩插件／无插件八种实际编译，并在独立进程运行四个交付包消费者。该命令已接入 `release:check`，因此 CI 的 `release:prepare` 也会执行。可用 `GIO_UNI_COMPILER_ROOT` 指定 HBuilderX 编译包复检；结果保存在 `test-results/miniprogram-build/`。这些检查不等同于小程序开发者工具交互或真机收数，生产自动交互能力不会因此开放。

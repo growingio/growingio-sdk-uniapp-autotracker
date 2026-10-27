@@ -27,7 +27,7 @@ export default defineConfig(async () => {
 
 已经使用 ESM 配置的工程可以继续静态导入；参见 [Vite 的 ESM 配置说明](https://vite.dev/guide/troubleshooting.html#this-package-is-esm-only)。App 运行时 `main.ts` 的 SDK 导入方式保持上表写法，无需动态导入。
 
-Vue/Babel 解析器只存在于编译侧 `vite-runtime.js`，随包携带；App 根入口和探针入口不导入这些依赖。无需额外安装解析器。构建工具要求 Node ≥ 20.19；GitHub 发布环境固定 Node 22.14 与 npm 11.5.1。当前工具链以 Vue 3.4.21 / HBuilderX 5.24 为基准，不承诺 Vue2、Web、小程序、nvue 或 uni-app x 兼容。
+Vue/Babel 解析器只存在于编译侧 `vite-runtime.js`，随包携带；App 根入口和探针入口不导入这些依赖。无需额外安装解析器。构建工具要求 Node ≥ 20.19；GitHub 发布环境固定 Node 22.14 与 npm 11.5.1。当前工具链以 Vue 3.4.21 / HBuilderX 5.24 为基准，微信与支付宝的 CLI 编译另以锁定的 DCloud `3.0.0-5020420260812001` 验证，并可通过 `GIO_UNI_COMPILER_ROOT` 复检 HBuilderX；其运行范围与真机状态见[小程序接入](./miniprogram.md)。不承诺 Vue2、Web、其他小程序、nvue 或 uni-app x 兼容。
 
 升级 uni_modules 时完整替换模块目录，不能覆盖后留下旧文件；npm 按所需版本更新。升级 schema v2 必须清理应用编译缓存并完整重建 App，Vite 与运行时不得混用不同版本。正式构建中尚未验收的无埋点能力保持关闭，详情见 [无埋点验收](./autotrack-v2-release.md)。
 

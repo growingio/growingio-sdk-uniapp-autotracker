@@ -2,6 +2,8 @@
 
 这是传统 uni-app Vue 3 App 的可运行 showcase。它与 uni-app x demo 对齐展示已实现的功能：生命周期、`PAGE` 上下文、自定义事件、用户身份/属性、Vite 无埋点业务交互、路由 query 和 `dataCollect` 动态开关。
 
+微信与支付宝复用同一工程：在 `manifest.json` 的对应目标中填写真实 appId，`main.ts` 会读取账号信息并传给 SDK；接口不可用时需在该处显式提供。运行前重新构建 SDK，并配置测试采集域名及平台网络白名单。小程序的保活默认为五分钟、事件按秒聚合、session 和事件队列不落盘；生产自动交互门控及真机状态见[小程序接入](../doc/miniprogram.md)。本 demo 的内部验证开关只用于验收，不能作为能力已经通过真机的证据。
+
 默认开启 `dataCollect`，因此首次 `App:onShow` 会创建 `VISIT`，随后在 uploader 真正发起请求前以 Debug JSON 输出。若业务需要等待隐私同意，可在 `sdk-state.ts` 将 `enabled` 设为 `false`（main.ts 与示例页面共用此状态），再通过「采集开关」页开启。SDK 的完整初始化与 App/Page 生命周期接入只在 `main.ts` 里使用小程序同款的 `gdp('registerPlugins')` 与 `gdp('init', ..., { uniVue: app })`；`App.vue` 和各演示页面都不需要 bridge 或 tracker import，业务调用也全部使用 `gdp('xxx')`，不暴露 `$gio` 或内部 tracker。`gioABTest`、微信分享和 `.nvue` 自动采集并非当前传统 App SDK 的能力；首页的“当前能力边界”区会明确说明，绝不伪造成功结果。
 
 先执行一次 `pnpm build:sdk`。它会将 SDK 编译为 `demo/uni_modules/gio-uniapp-autotracker`；demo 只从该产物导入，绝不跨目录引用仓库源码。随后在 HBuilderX 中打开此 `demo/` 目录并运行 App。`vite.config.ts` 已把 `gioUniappAutoTrack()` 放在 `uni()` 前面，因此原生 `.vue` 页面会在构建时插入无埋点 dispatcher。
