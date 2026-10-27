@@ -119,6 +119,8 @@ export type UploaderDrop = Readonly<{
 
 /** 协调队列批次占用、有限并发槽位和分阶段退避重试。 */
 export class Uploader {
+  private aggregateTimer: unknown
+  private aggregationPending = false
   private active = 0
   private pendingRetries = 0
   private readonly readyRetries: Array<{ batch: readonly QueueEntry[]; attempt: number }> = []
@@ -140,15 +142,26 @@ export class Uploader {
     /** 仅在请求实际派发前接收已清理的协议事件。 */
     private readonly onBeforeDispatch?: (events: readonly ProtocolEvent[]) => void,
     private readonly canDispatch: () => boolean = () => true,
+    private readonly uploadIntervalMs = 0,
   ) {}
 
   /** App 事件入队后立即具备发送资格，仅传输槽位与重试可能使派发延后。 */
   public schedule(): void {
-    this.flush()
+    if (this.uploadIntervalMs === 0) { this.flush(); return }
+    if (this.aggregationPending || this.queue.size() === 0) return
+    this.aggregationPending = true
+    this.aggregateTimer = this.runtime.setTimeout(() => {
+      this.aggregationPending = false
+      this.flush()
+    }, this.uploadIntervalMs)
   }
 
   /** 将未被预留的队列事件标记为可发送，并尝试占用空闲上传槽位。 */
   public flush(): void {
+    if (this.aggregationPending) {
+      this.runtime.clearTimeout(this.aggregateTimer)
+      this.aggregationPending = false
+    }
     for (const requestId of this.queue.requestIds()) {
       if (!this.reservedRequests.has(requestId)) this.readyRequests.add(requestId)
     }
