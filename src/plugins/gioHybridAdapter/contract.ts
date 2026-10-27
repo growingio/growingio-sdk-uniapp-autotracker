@@ -106,42 +106,69 @@ function hostGate(value: unknown): value is HostGate {
   const input = record(value)
   return input !== null && keys(input, ['dataCollect', 'containerVisible']) && typeof input.dataCollect === 'boolean' && typeof input.containerVisible === 'boolean'
 }
-/** 只检查数据属性；有 accessor、循环、深层或非 JSON 形态时不执行 stringify。 */
-function jsonData(value: unknown, depth = 0, budget = { remaining: 50000 }): boolean {
-  if (--budget.remaining < 0 || depth > 16) return false
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true
-  if (typeof value === 'number') return Number.isFinite(value)
-  if (!Array.isArray(value) && record(value) === null) return false
-  return Object.entries(Object.getOwnPropertyDescriptors(value)).every(([key, field]) => key === 'length' && Array.isArray(value)
-    || 'value' in field && jsonData(field.value, depth + 1, budget))
+type JsonValue = null | string | number | boolean | JsonValue[] | { [key: string]: JsonValue }
+
+/** 有界复制枚举自有数据；不读取原对象 getter、Proxy get 或 toJSON。 */
+function jsonSnapshot(value: unknown, depth = 0, budget = { remaining: 50000 }): JsonValue | undefined {
+  if (--budget.remaining < 0 || depth > 16) return undefined
+  if (typeof value === 'string') return value.length <= HYBRID_MAX_BYTES ? value : undefined
+  if (value === null || typeof value === 'boolean') return value
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
+  const array = Array.isArray(value)
+  if (!array && record(value) === null) return undefined
+  const length = array ? Object.getOwnPropertyDescriptor(value, 'length')?.value : 0
+  if (array && (!Number.isSafeInteger(length) || length < 0 || length > budget.remaining)) return undefined
+  const fields = Object.getOwnPropertyDescriptors(value)
+  const result: JsonValue[] | { [key: string]: JsonValue } = array ? [] : Object.create(null)
+  const output = result as { [key: string]: JsonValue }
+  if (array) {
+    if (fields.length?.value !== length || Object.keys(fields).length !== length + 1) return undefined
+    for (let index = 0; index < length; index++) if (!Object.prototype.hasOwnProperty.call(fields, String(index))) return undefined
+  }
+  for (const [key, field] of Object.entries(fields)) {
+    if (array && key === 'length') continue
+    if (!field.enumerable || !('value' in field)) return undefined
+    const snapshot = jsonSnapshot(field.value, depth + 1, budget)
+    if (snapshot === undefined) return undefined
+    output[key] = snapshot
+  }
+  return result
 }
 
 /** 先区分无关回调；完全关联后才把非法内容视为当前请求的失败。 */
 export function validateReply(value: unknown, request: UniMPRequest, config: UniMPConfig): Readonly<{ kind: 'unrelated' }> | Readonly<{ kind: 'invalid' }> | Readonly<{ kind: 'reply'; reply: UniMPReply }> {
-  const input = record(value)
-  const own = (key: string) => input === null ? undefined : Object.getOwnPropertyDescriptor(input, key)?.value
-  if (input === null || own('requestId') !== request.requestId || own('instanceId') !== request.instanceId || own('generation') !== request.generation
-    || (request.method !== 'hello' && own('connectionId') !== request.connectionId)) return { kind: 'unrelated' }
-  if (!jsonData(input)) return { kind: 'invalid' }
-  const serialized = JSON.stringify(input)
-  if (wireBytes(serialized) > HYBRID_MAX_BYTES || input.version !== 1
-    || !positiveCounter(input.requestId) || !positiveCounter(input.generation) || !asciiId(input.instanceId)) return { kind: 'invalid' }
-  const base = ['version', 'requestId', 'instanceId', 'generation', 'status']
-  if (input.status === 'rejected') {
-    if (!keys(input, [...base, 'code', 'host', ...(request.method === 'hello' ? [] : ['connectionId'])])
-      || !NATIVE_ERRORS.includes(input.code as NativeErrorCode) || (input.host !== undefined && !hostGate(input.host))
-      || (input.code === 'collection_disabled' && (!hostGate(input.host) || input.host.dataCollect !== false))) return { kind: 'invalid' }
-  } else if (request.method === 'hello') {
-    const payload = record(input.payload)
-    const version = (v: unknown) => typeof v === 'string' && v.trim() !== '' && [...v].length <= 64
-    if (input.status !== 'ok' || !asciiId(input.connectionId) || !keys(input, [...base, 'connectionId', 'payload']) || payload === null
-      || !keys(payload, ['hostType', 'appId', 'accountId', 'dataSourceId', 'idMapping', 'platform', 'nativeSdkVersion', 'dcloudSdkVersion', 'host', 'events', 'identityWrite'])
-      || payload.hostType !== 'native' || payload.appId !== config.appId || payload.accountId !== config.accountId || payload.dataSourceId !== config.dataSourceId || payload.idMapping !== config.idMapping
-      || !['Android', 'iOS'].includes(payload.platform as string) || !version(payload.nativeSdkVersion) || (payload.dcloudSdkVersion !== undefined && !version(payload.dcloudSdkVersion))
-      || !hostGate(payload.host) || typeof payload.identityWrite !== 'boolean' || !Array.isArray(payload.events)
-      || payload.events.length !== HYBRID_EVENTS.length || HYBRID_EVENTS.some(event => !(payload.events as unknown[]).includes(event))) return { kind: 'invalid' }
-  } else if (input.status === 'unknown') {
-    if (!keys(input, [...base, 'connectionId', 'code', 'host']) || input.code !== 'native_result_unknown' || (input.host !== undefined && !hostGate(input.host))) return { kind: 'invalid' }
-  } else if (!keys(input, [...base, 'connectionId', 'host']) || input.status !== (request.method === 'dispatchEvent' ? 'accepted' : 'ok') || !hostGate(input.host)) return { kind: 'invalid' }
-  return { kind: 'reply', reply: JSON.parse(serialized) as UniMPReply }
+  try {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return { kind: 'unrelated' }
+    const own = (key: string) => Object.getOwnPropertyDescriptor(value, key)?.value
+    if (own('requestId') !== request.requestId || own('instanceId') !== request.instanceId || own('generation') !== request.generation
+      || (request.method !== 'hello' && own('connectionId') !== request.connectionId)) return { kind: 'unrelated' }
+  } catch { return { kind: 'unrelated' } }
+  try {
+    const snapshot = jsonSnapshot(value)
+    if (snapshot === undefined) return { kind: 'invalid' }
+    const serialized = JSON.stringify(snapshot)
+    if (typeof serialized !== 'string' || wireBytes(serialized) > HYBRID_MAX_BYTES) return { kind: 'invalid' }
+    const input = record(JSON.parse(serialized))
+    if (input === null || input.requestId !== request.requestId || input.instanceId !== request.instanceId || input.generation !== request.generation
+      || (request.method !== 'hello' && input.connectionId !== request.connectionId) || input.version !== 1
+      || !positiveCounter(input.requestId) || !positiveCounter(input.generation) || !asciiId(input.instanceId)) return { kind: 'invalid' }
+    const base = ['version', 'requestId', 'instanceId', 'generation', 'status']
+    if (input.status === 'rejected') {
+      if (!keys(input, [...base, 'code', 'host', ...(request.method === 'hello' ? [] : ['connectionId'])])
+        || !NATIVE_ERRORS.includes(input.code as NativeErrorCode) || (input.host !== undefined && !hostGate(input.host))
+        || (input.code === 'collection_disabled' && (!hostGate(input.host) || input.host.dataCollect !== false))) return { kind: 'invalid' }
+    } else if (request.method === 'hello') {
+      const payload = record(input.payload)
+      const version = (v: unknown) => typeof v === 'string' && v.trim() !== '' && [...v].length <= 64
+      if (input.status !== 'ok' || !asciiId(input.connectionId) || !keys(input, [...base, 'connectionId', 'payload']) || payload === null
+        || !keys(payload, ['hostType', 'appId', 'accountId', 'dataSourceId', 'idMapping', 'platform', 'nativeSdkVersion', 'dcloudSdkVersion', 'host', 'events', 'identityWrite'])
+        || payload.hostType !== 'native' || payload.appId !== config.appId || payload.accountId !== config.accountId || payload.dataSourceId !== config.dataSourceId || payload.idMapping !== config.idMapping
+        || !['Android', 'iOS'].includes(payload.platform as string) || !version(payload.nativeSdkVersion) || (payload.dcloudSdkVersion !== undefined && !version(payload.dcloudSdkVersion))
+        || !hostGate(payload.host) || typeof payload.identityWrite !== 'boolean' || !Array.isArray(payload.events)
+        || payload.events.length !== HYBRID_EVENTS.length || HYBRID_EVENTS.some(event => !(payload.events as unknown[]).includes(event))) return { kind: 'invalid' }
+    } else if (input.status === 'unknown') {
+      if (!keys(input, [...base, 'connectionId', 'code', 'host']) || input.code !== 'native_result_unknown' || (input.host !== undefined && !hostGate(input.host))) return { kind: 'invalid' }
+    } else if (!keys(input, [...base, 'connectionId', 'host']) || input.status !== (request.method === 'dispatchEvent' ? 'accepted' : 'ok') || !hostGate(input.host)) return { kind: 'invalid' }
+    return { kind: 'reply', reply: input as UniMPReply }
+  } catch { return { kind: 'invalid' } }
 }
