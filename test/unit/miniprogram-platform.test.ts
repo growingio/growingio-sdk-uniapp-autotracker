@@ -7,7 +7,7 @@ import { AppStoragePort } from '../../src/platform/uni.js'
 import { storageKeys } from '../../src/core/storage/index.js'
 import { buildAppEvent, buildMiniProgramEvent } from '../../src/core/dataStore/protocol.js'
 import { EventQueue } from '../../src/core/queue.js'
-import { miniHost, miniTargets } from '../support/miniprogram-host.js'
+import { miniHost, miniTargets, miniCases } from '../support/miniprogram-host.js'
 
 afterEach(() => vi.unstubAllGlobals())
 const input = { accountId: 'account', dataSourceId: 'source', appId: 'fixture' }
@@ -46,8 +46,8 @@ describe.each(miniTargets)('%s platform and protocol', target => {
     if (!config.ok) throw new Error('invalid_fixture')
     const port = new MiniProgramSystemContextPort(fixture.host, config.config, '0.1.0')
     const context = await port.load()
-    const name = target === 'mp-weixin' ? 'Weixin' : 'Alipay'
-    expect(context).toMatchObject({ platform: target === 'mp-weixin' ? 'MinP' : 'alip', domain: fixture.appId, platformVersion: `${name} 10.0`, deviceType: `${name}-Android`, screenWidth: 1170, screenHeight: 2532, appVersion: '1.2.0', language: 'zh_CN' })
+    const { name, platform } = miniCases[target]
+    expect(context).toMatchObject({ platform, domain: fixture.appId, platformVersion: `${name} 10.0`, deviceType: `${name}-Android`, screenWidth: 1170, screenHeight: 2532, appVersion: '1.2.0', language: 'zh_CN' })
     expect(context).not.toHaveProperty('appState')
     expect(matchesMiniProgramAppId(fixture.host, fixture.appId)).toBe(true)
     expect(matchesMiniProgramAppId(fixture.host, 'wrong')).toBe(false)
@@ -115,7 +115,7 @@ describe.each(miniTargets)('%s platform and protocol', target => {
 
 describe('runtime target and storage isolation', () => {
   it('rejects unknown and conflicting targets without guessing from OS', () => {
-    for (const uniPlatform of ['mp-baidu', 'h5', 'web', 'toString']) expect(resolveRuntimeTarget({ getSystemInfoSync: () => ({ uniPlatform, platform: 'android' }) }, undefined, {})).toBeNull()
+    for (const uniPlatform of ['mp-lark', 'mp-dingtalk', 'mp-360', 'mp-harmony', 'mp-taobao', 'h5', 'web', 'toString']) expect(resolveRuntimeTarget({ getSystemInfoSync: () => ({ uniPlatform, platform: 'android' }) }, undefined, {})).toBeNull()
     expect(resolveRuntimeTarget({}, undefined, {})).toBeNull()
     expect(resolveRuntimeTarget({ getSystemInfoSync: () => ({ uniPlatform: 'mp-weixin' }), getAppBaseInfo: () => ({ uniPlatform: 'mp-alipay' }) }, undefined, {})).toBeNull()
     for (const name of ['wx', 'my']) expect(resolveRuntimeTarget({}, undefined, { [name]: { request() {} } })).toBe(name === 'wx' ? 'mp-weixin' : 'mp-alipay')

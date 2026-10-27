@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createMockCollector } from '../support/mock-collector.js'
-import { miniHost, miniTargets } from '../support/miniprogram-host.js'
+import { miniHost, miniTargets, miniCases } from '../support/miniprogram-host.js'
 import { buildMiniProgramEvent } from '../../src/core/dataStore/protocol.js'
 
 describe.each(miniTargets)('%s real HTTP collector', target => {
@@ -30,7 +30,7 @@ describe.each(miniTargets)('%s real HTTP collector', target => {
       expect(received.map(event => event.eventType)).toEqual(['VISIT', 'PAGE', 'CUSTOM', 'LOGIN_USER_ATTRIBUTES', 'APP_CLOSED'])
       for (const event of received) {
         expect(buildMiniProgramEvent(String(event.eventType), event, true)).toEqual({ ok: true, event })
-        expect(event.platform).toBe(target === 'mp-weixin' ? 'MinP' : 'alip')
+        expect(event.platform).toBe(miniCases[target].platform)
         expect(event.domain).toBe(f.appId)
       }
       expect(received[2]).toMatchObject({ attributes: { amount: '0', member: 'false' }, latitude: 0, longitude: 0, title: '首页' })

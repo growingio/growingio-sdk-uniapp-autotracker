@@ -1,5 +1,7 @@
 import { CHANGE_ELEMENTS, type ChangeElement } from '../plugins/gioEventAutoTracking/contract.js'
 import type { AppPlatform, MiniProgramTarget, MiniProgramPlatform } from '../types/index.js'
+import { MINI_PROGRAM_PROFILES } from './miniprogram.js'
+export { MINI_PROGRAM_PROFILES, MINI_PROGRAM_TARGETS } from './miniprogram.js'
 
 export type AppCapabilityProfile = Readonly<{
   platform: AppPlatform
@@ -14,11 +16,6 @@ export type AppCapabilityProfile = Readonly<{
 }>
 
 export type AutoTrackCapabilityProfile = Omit<AppCapabilityProfile, 'platform'> & Readonly<{ platform: AppPlatform | MiniProgramPlatform }>
-
-export const MINI_PROGRAM_PROFILES = {
-  'mp-weixin': { platform: 'MinP', name: 'Weixin', scenePrefix: '' },
-  'mp-alipay': { platform: 'alip', name: 'Alipay', scenePrefix: 'alip_' },
-} as const
 
 /** 小程序能力与 App 分开验收；验证构建不修改生产矩阵。 */
 export function miniProgramCapabilityProfile(target: MiniProgramTarget, verificationBuild = false): AutoTrackCapabilityProfile {

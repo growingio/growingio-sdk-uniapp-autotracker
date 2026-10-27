@@ -3,7 +3,7 @@ import type { PageSnapshot } from './page.js'
 import type { ClockPort } from '../../types/index.js'
 import { SessionManager, type SessionSnapshot, type SessionTransition } from '../userStore.js'
 import type { MiniProgramTarget } from '../../types/index.js'
-import { MINI_PROGRAM_PROFILES } from '../../constants/platform.js'
+import { MINI_PROGRAM_PROFILES } from '../../constants/miniprogram.js'
 
 export type AppEntrySnapshot = Readonly<{
   path: string | null

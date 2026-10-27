@@ -3,10 +3,21 @@ import type { MiniProgramTarget } from '../../src/types/index.js'
 import type { MiniProgramHost } from '../../src/platform/miniprogram.js'
 import { createMiniProgramTracker } from '../../src/platform/miniprogram.js'
 
-export const miniTargets: readonly MiniProgramTarget[] = ['mp-weixin', 'mp-alipay']
+/** 独立于生产配置的预期表，防止错误平台映射在实现与断言中同时通过。 */
+export const miniCases = {
+  'mp-weixin': { platform: 'MinP', name: 'Weixin', prefix: '', global: 'wx', appId: 'wx1234567890abcdef' },
+  'mp-alipay': { platform: 'alip', name: 'Alipay', prefix: 'alip_', global: 'my', appId: '2026102700000001' },
+  'mp-baidu': { platform: 'baidup', name: 'Baidu', prefix: 'baidup_', global: 'swan', appId: 'baidu-fixture' },
+  'mp-toutiao': { platform: 'bytedance', name: 'Bytedance', prefix: 'bytedance_', global: 'tt', appId: 'tt-fixture' },
+  'mp-qq': { platform: 'qq', name: 'QQ', prefix: 'qq_', global: 'qq', appId: 'qq-fixture' },
+  'mp-kuaishou': { platform: 'kuaishoup', name: 'KuaiShou', prefix: 'ks_', global: 'ks', appId: 'ks-fixture' },
+  'mp-jd': { platform: 'jdp', name: 'JingDong', prefix: 'jd_', global: 'jd', appId: 'jd-fixture' },
+  'mp-xhs': { platform: 'xhsp', name: 'XiaoHongShu', prefix: 'xhs_', global: 'xhs', appId: 'xhs-fixture' },
+} as const
+export const miniTargets = Object.keys(miniCases) as MiniProgramTarget[]
 
 export function miniHost(target: MiniProgramTarget) {
-  const appId = target === 'mp-weixin' ? 'wx1234567890abcdef' : '2026102700000001'
+  const appId = miniCases[target].appId
   const values = new Map<string, unknown>()
   const sent: Array<Readonly<Record<string, unknown>>> = []
   const interceptors = new Map<string, Record<string, (options: unknown) => void>>()

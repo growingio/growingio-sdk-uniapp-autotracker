@@ -1,3 +1,5 @@
+import { miniProgramProfileForPlatform } from '../../constants/miniprogram.js'
+
 export const APP_EVENT_TYPES = [
   'VISIT',
   'PAGE',
@@ -67,8 +69,8 @@ const FIELD_ENUMS: Readonly<Record<string, readonly string[]>> = {
 
 /** 校验保留的出站字段，兼容缓存中已被清理的公共空字段。 */
 function validWireField(key: string, value: unknown, mini = false): boolean {
-  if (mini && key === 'platform') return value === 'MinP' || value === 'alip'
-  if (mini && (key === 'deviceType' || key === 'operatingSystem')) return typeof value === 'string' && /^(Weixin|Alipay)-.+$/.test(value)
+  if (mini && key === 'platform') return miniProgramProfileForPlatform(value) !== undefined
+  if (mini && (key === 'deviceType' || key === 'operatingSystem')) return typeof value === 'string' && value !== ''
   switch (key) {
     case 'eventSequenceId': return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
     case 'timestamp': return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
@@ -202,8 +204,9 @@ function buildEvent(eventType: string, fields: Readonly<Record<string, unknown>>
   if ([...requiredSpecific, ...(mini ? ['platform', 'domain', 'timestamp', 'deviceId', 'sessionId', 'dataSourceId', 'platformVersion', 'sdkVersion'] : [])].some((key) => !(key in event))) return { ok: false, code: 'missing_required_field' }
   if (!Object.entries(event).every(([key, value]) => validWireField(key, value, mini))) return { ok: false, code: 'invalid_field_value' }
   if (mini) {
-    const prefix = event.platform === 'MinP' ? 'Weixin-' : 'Alipay-'
-    if (typeof event.deviceType !== 'string' || !event.deviceType.startsWith(prefix) || event.operatingSystem !== event.deviceType) return { ok: false, code: 'invalid_field_value' }
+    const profile = miniProgramProfileForPlatform(event.platform)
+    const prefix = `${profile?.name}-`
+    if (profile === undefined || typeof event.deviceType !== 'string' || !event.deviceType.startsWith(prefix) || event.deviceType.length <= prefix.length || event.operatingSystem !== event.deviceType) return { ok: false, code: 'invalid_field_value' }
   }
   return { ok: true, event: event as ProtocolEvent }
 }

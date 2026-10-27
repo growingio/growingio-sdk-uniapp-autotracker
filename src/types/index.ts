@@ -1,6 +1,6 @@
 export type AppPlatform = 'Android' | 'iOS' | 'HarmonyOS'
-export type MiniProgramTarget = 'mp-weixin' | 'mp-alipay'
-export type MiniProgramPlatform = 'MinP' | 'alip'
+export type MiniProgramTarget = 'mp-weixin' | 'mp-alipay' | 'mp-baidu' | 'mp-toutiao' | 'mp-qq' | 'mp-kuaishou' | 'mp-jd' | 'mp-xhs'
+export type MiniProgramPlatform = 'MinP' | 'alip' | 'baidup' | 'bytedance' | 'qq' | 'kuaishoup' | 'jdp' | 'xhsp'
 export type NetworkState = '2G' | '3G' | '4G' | '5G' | 'WIFI' | 'UNKNOWN'
 
 export type AppSystemContext = Readonly<{

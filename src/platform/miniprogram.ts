@@ -1,5 +1,5 @@
 import type { ResolvedGioConfig } from '../constants/config.js'
-import { MINI_PROGRAM_PROFILES } from '../constants/platform.js'
+import { MINI_PROGRAM_PROFILES } from '../constants/miniprogram.js'
 import type { MiniProgramSystemContext, MiniProgramTarget, SystemContextPort } from '../types/index.js'
 import { createUniTracker, type AppRuntimeOptions, type UniRuntimeHost } from './index.js'
 import { hostRecord, readHostRecord } from './resolve.js'

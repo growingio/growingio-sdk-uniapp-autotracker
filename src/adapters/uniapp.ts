@@ -20,6 +20,13 @@ function record(value: unknown): Record<string, unknown> | null {
     : null
 }
 
+/** 抖音原生入口使用 refererInfo；其他目标只读取自己的标准字段。 */
+function entryReferrer(source: Record<string, unknown> | null, target?: MiniProgramTarget): Record<string, unknown> | null {
+  const standard = record(source?.referrerInfo)
+  if (target !== 'mp-toutiao' || standard !== null && Object.keys(standard).length > 0) return standard
+  return record(source?.refererInfo) ?? standard
+}
+
 /** 读取并移除页面路由的前导斜杠；不可用时返回 null。 */
 function routeOf(instance: VueInstance, miniprogram = false): string | null {
   const page = record(instance.$page)
@@ -76,7 +83,7 @@ export function installUniAppLifecycle(app: UniAppVueApp, target: LifecycleTarge
         path: fallback.path,
         query: Object.keys(record(fallback.query) ?? {}).length > 0 ? fallback.query : supplied?.query ?? fallback.query,
         scene: fallback.scene ?? supplied?.scene,
-        referrerInfo: Object.keys(record(fallback.referrerInfo) ?? {}).length > 0 ? fallback.referrerInfo : supplied?.referrerInfo,
+        referrerInfo: Object.keys(entryReferrer(fallback, miniprogram) ?? {}).length > 0 ? entryReferrer(fallback, miniprogram) : entryReferrer(supplied, miniprogram),
       } : supplied ?? {}
     const snapshot = appEntrySnapshot(source, options.miniprogram)
     if (!launching && firstShow && snapshot.path === null && launch !== null) return launch
@@ -212,7 +219,7 @@ export function appEntrySnapshot(options: unknown, target?: MiniProgramTarget): 
   const source = record(options)
   const path = typeof source?.path === 'string' && source.path.length > 0 ? source.path : null
   if (target === undefined) return { path, query: querySnapshot(source?.query) }
-  const referrer = record(source?.referrerInfo)
+  const referrer = entryReferrer(source, target)
   const query = miniProgramQueryRecord(source?.query)
   let shoppingScene: string | null = null
   try { shoppingScene = miniProgramScene(query?.wxShoppingListScene) } catch { /* 单字段读取失败时仍采用原始场景。 */ }

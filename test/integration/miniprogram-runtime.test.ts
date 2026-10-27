@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { installUniAppLifecycle, appEntrySnapshot } from '../../src/adapters/uniapp.js'
 import { dispatchAutoTrack } from '../../autotrack.js'
 import { mountAutoTrackSfc } from '../support/autotrack-fixture.js'
-import { miniHost, miniTargets } from '../support/miniprogram-host.js'
+import { miniHost, miniTargets, miniCases } from '../support/miniprogram-host.js'
 import type { TrackerRuntime } from '../../src/core/growingIO.js'
 import type { AppRequestApi } from '../../src/platform/uni.js'
 import type { AutoTrackCall } from '../../src/plugins/gioEventAutoTracking/contract.js'
@@ -28,7 +28,7 @@ describe.each(miniTargets)('%s complete runtime', target => {
     expect(events[0]).toMatchObject({ query: 'entry=1', referralPage: 'external-app', appChannel: 'scn:1001' })
     expect(events[1]).toMatchObject({ query: 'page=1', referralPage: 'external-app', title: '首页' })
     expect(events[2]).toMatchObject({ query: 'page=1', attributes: { value: '0' }, title: '首页' })
-    expect(events.every(event => event.domain === f.appId && event.platform === (target === 'mp-weixin' ? 'MinP' : 'alip'))).toBe(true)
+    expect(events.every(event => event.domain === f.appId && event.platform === miniCases[target].platform)).toBe(true)
     expect(events.every(event => !('appState' in event) && !('appName' in event) && !('orientation' in event))).toBe(true)
     for (let index = 0; index < 10; index++) await Promise.resolve()
     const keys = [...f.values.keys()]
@@ -195,7 +195,7 @@ describe.each(miniTargets)('%s complete runtime', target => {
     hooks.onLoad!.call(page, { p: 2 }); hooks.onShow!.call(page)
     expect(f.tracker.queuedEvents().map(event => event.eventType)).toEqual(['VISIT', 'PAGE'])
     expect(f.tracker.queuedEvents()[0]).toMatchObject({ path: 'pages/home', query: 'a=1', appChannel: 'scn:1001' })
-    expect(f.tracker.queuedEvents()[1]).toMatchObject({ path: 'pages/home', query: 'p=2', referralPage: target === 'mp-weixin' ? 'scn:1001' : 'scn:alip_1001' })
+    expect(f.tracker.queuedEvents()[1]).toMatchObject({ path: 'pages/home', query: 'p=2', referralPage: `scn:${miniCases[target].prefix}1001` })
     const success = vi.fn()
     const options = { title: 'Updated', success }
     f.interceptors.get('setNavigationBarTitle')!.invoke!(options)

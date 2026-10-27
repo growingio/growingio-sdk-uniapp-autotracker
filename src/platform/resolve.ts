@@ -1,4 +1,5 @@
 import type { MiniProgramTarget } from '../types/index.js'
+import { isMiniProgramTarget, MINI_PROGRAM_PROFILES, MINI_PROGRAM_TARGETS } from '../constants/miniprogram.js'
 
 export type RuntimeTarget = 'app' | MiniProgramTarget
 type Host = Readonly<Record<string, unknown>>
@@ -15,7 +16,7 @@ export function readHostRecord(host: Host, name: string): Host {
 
 function targetOf(value: string): RuntimeTarget | null {
   if (value === 'app' || value === 'app-plus' || value === 'app-harmony') return 'app'
-  return value === 'mp-weixin' || value === 'mp-alipay' ? value : null
+  return isMiniProgramTarget(value) ? value : null
 }
 
 /** 显式目标优先且必须一致；无目标的旧 App 保留原有完整宿主检查。 */
@@ -27,9 +28,9 @@ export function resolveRuntimeTarget(host: Host, buildTarget?: unknown, globals:
     const target = targetOf(hints[0]!)
     return target !== null && hints.every(value => targetOf(value) === target) ? target : null
   }
-  const candidates = (['wx', 'my'] as const).filter(name => typeof hostRecord(globals[name]).request === 'function')
+  const candidates = MINI_PROGRAM_TARGETS.filter(target => typeof hostRecord(globals[MINI_PROGRAM_PROFILES[target].global]).request === 'function')
   if (candidates.length > 1) return null
-  if (candidates.length === 1) return candidates[0] === 'wx' ? 'mp-weixin' : 'mp-alipay'
+  if (candidates.length === 1) return candidates[0]!
   const required = ['getDeviceInfo', 'getAppBaseInfo', 'getSystemInfoSync']
   if (!required.every(name => typeof host[name] === 'function')) return null
   const os = readHostRecord(host, 'getDeviceInfo').platform ?? system.platform
