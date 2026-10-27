@@ -7,10 +7,18 @@ import { runtimeFixture, appSystem } from '../support/runtime-fixture.js'
 const flush = async () => { for (let n = 0; n < 10; n++) await Promise.resolve() }
 afterEach(() => vi.useRealTimers())
 describe('optional native identifiers', () => {
-  it.each([undefined, null, [], {}, { fields: [] }, { fields: ['bad'] }, { fields: ['oaid', 'oaid'] }, { fields: ['oaid'], extra: true }])('rejects invalid plugin options %j', input => {
+  it.each([undefined, null, [], {}, { fields: [] }, { fields: ['bad'] }, { fields: ['oaid', 'oaid'] }, { fields: new Array(1) }, { fields: ['oaid', ,] }, { fields: ['oaid'], extra: true }])('rejects invalid plugin options %j', input => {
     expect(validNativeIdentifierOptions(input)).toBe(false)
   })
   it('accepts explicit distinct supported fields', () => expect(validNativeIdentifierOptions({ fields: ['idfa', 'oaid'] })).toBe(true))
+  it('rejects sparse registration and never forwards unsupported fields to the Native module', async () => {
+    const read = vi.fn(async () => ({}))
+    const tracker = runtimeFixture({ nativeIdentifiers: { read } }).tracker
+    expect(tracker.registerPlugins({ name: 'gioNativeIdentifiers', options: { fields: new Array<'oaid'>(1) } })).toBe(false)
+    tracker.init({ accountId: 'a', dataSourceId: 's' }); await tracker.whenReady()
+    new NativeIdentifierState({ read }, [undefined, 'unsupported'] as never, 'Android').refresh()
+    expect(read).not.toHaveBeenCalled()
+  })
   it('snapshots registered identifier fields before caller mutation', async () => {
     const fields: ('oaid' | 'androidId')[] = ['oaid']
     const read = vi.fn(async () => ({ oaid: 'oaid' }))

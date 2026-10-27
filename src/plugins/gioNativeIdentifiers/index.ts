@@ -15,7 +15,7 @@ export function validNativeIdentifierOptions(value: unknown): value is NativeIde
   const input = value as Record<string, unknown>
   return Object.keys(input).length === 1 && Array.isArray(input.fields) && input.fields.length > 0
     && input.fields.length <= NATIVE_IDENTIFIER_FIELDS.length && new Set(input.fields).size === input.fields.length
-    && input.fields.every(field => NATIVE_IDENTIFIER_FIELDS.includes(field))
+    && Array.from(input.fields).every(field => NATIVE_IDENTIFIER_FIELDS.includes(field))
 }
 
 /** 非空有界标识；全零、控制字符、占位字符串和无效 Unicode 均省略。 */
@@ -39,8 +39,8 @@ export class NativeIdentifierState {
 
   public refresh(): void {
     const generation = ++this.generation
-    const fields = this.fields.filter(field => this.platform === 'iOS' ? field === 'idfa' || field === 'idfv'
-      : this.platform === 'Android' ? field !== 'idfa' && field !== 'idfv' : false)
+    const fields = this.fields.filter(field => NATIVE_IDENTIFIER_FIELDS.includes(field) && (this.platform === 'iOS' ? field === 'idfa' || field === 'idfv'
+      : this.platform === 'Android' ? field !== 'idfa' && field !== 'idfv' : false))
     if (this.port === undefined || fields.length === 0) return
     let reading: Promise<unknown>
     try { reading = this.port.read(fields) } catch { return }
