@@ -1,6 +1,8 @@
 import type { AppEntrySnapshot } from '../core/dataStore/app.js'
 import type { PageLoadInput } from '../core/dataStore/page.js'
 import type { AutoTrackCall } from '../plugins/gioEventAutoTracking/contract.js'
+import type { MiniProgramTarget } from '../types/index.js'
+import { readHostRecord } from '../platform/resolve.js'
 
 type LifecycleTarget = AppLifecycleTarget & PageLifecycleTarget
 type PageBridge = ReturnType<typeof createPageLifecycleBridge>
@@ -19,17 +21,18 @@ function record(value: unknown): Record<string, unknown> | null {
 }
 
 /** 读取并移除页面路由的前导斜杠；不可用时返回 null。 */
-function routeOf(instance: VueInstance): string | null {
+function routeOf(instance: VueInstance, miniprogram = false): string | null {
   const page = record(instance.$page)
-  const route = page?.route ?? instance.__route__
+  const route = page?.route ?? instance.__route__ ?? (miniprogram ? record(instance.$scope)?.route ?? instance.route
+    ?? (typeof page?.fullPath === 'string' ? page.fullPath.split('?')[0] : null) : null)
   if (typeof route !== 'string') return null
   const normalized = route.replace(/^\/+/, '')
   return normalized === '' ? null : normalized
 }
 
 /** 根据页面类型和有效路由区分页面实例与 App 实例。 */
-function isPage(instance: VueInstance): boolean {
-  return instance.$mpType === 'page' && routeOf(instance) !== null
+function isPage(instance: VueInstance, miniprogram = false): boolean {
+  return (instance.$mpType ?? (miniprogram ? record(instance.$options)?.mpType : undefined)) === 'page' && routeOf(instance, miniprogram) !== null
 }
 
 /** 保留宿主 this 与参数，并隔离 SDK 异常，避免打断业务生命周期。 */
@@ -40,11 +43,11 @@ function isolatedLifecycleHook<Args extends unknown[]>(hook: (this: VueInstance,
 }
 
 /** 按业务标题、页面元数据和路由配置依次解析标题；读取异常时省略。 */
-function pageTitle(instance: VueInstance): string | null {
+function pageTitle(instance: VueInstance, appRoutes = true): string | null {
   try {
     if (typeof instance.gioPageTitle === 'string') return instance.gioPageTitle
     const page = record(instance.$page)
-    const routes = (globalThis as Record<string, unknown>).__uniRoutes
+    const routes = appRoutes ? (globalThis as Record<string, unknown>).__uniRoutes : undefined
     const route = Array.isArray(routes) ? routes.find((item) => {
       const path = record(item)?.path
       return typeof path === 'string' && path.replace(/^\/+/, '') === routeOf(instance)
@@ -56,8 +59,29 @@ function pageTitle(instance: VueInstance): string | null {
 }
 
 /** 安装一个全局 Vue mixin，以 WeakMap 保存宿主页面与桥接器的对应关系；核心仅接收路由、query 和标题快照。 */
-export function installUniAppLifecycle(app: UniAppVueApp, target: LifecycleTarget): void {
+export function installUniAppLifecycle(app: UniAppVueApp, target: LifecycleTarget, options: Readonly<{ host?: unknown; miniprogram?: MiniProgramTarget }> = {}): void {
+  const host = record(options.host ?? (globalThis as Record<string, unknown>).uni)
+  const miniprogram = options.miniprogram
   const appBridge = createAppLifecycleBridge(target)
+  let launch: AppEntrySnapshot | null = null
+  let firstShow = true
+  const isApp = (instance: VueInstance) => options.miniprogram === undefined ? !isPage(instance)
+    : (instance.$mpType ?? record(instance.$options)?.mpType) === 'app'
+  const entry = (value: unknown, launching: boolean): AppEntrySnapshot => {
+    if (options.miniprogram === undefined) return appEntrySnapshot(value)
+    const supplied = record(value)
+    const fallback = host === null ? {} : readHostRecord(host, launching ? 'getLaunchOptionsSync' : 'getEnterOptionsSync')
+    const source = typeof supplied?.path === 'string' && supplied.path !== '' ? supplied
+      : typeof fallback.path === 'string' && fallback.path !== '' ? {
+        path: fallback.path,
+        query: Object.keys(record(fallback.query) ?? {}).length > 0 ? fallback.query : supplied?.query ?? fallback.query,
+        scene: fallback.scene ?? supplied?.scene,
+        referrerInfo: Object.keys(record(fallback.referrerInfo) ?? {}).length > 0 ? fallback.referrerInfo : supplied?.referrerInfo,
+      } : supplied ?? {}
+    const snapshot = appEntrySnapshot(source, options.miniprogram)
+    if (!launching && firstShow && snapshot.path === null && launch !== null) return launch
+    return snapshot
+  }
   const pages = new WeakMap<object, PageBridge>()
   let nextPageId = 1
   let currentPage: VueInstance | null = null
@@ -66,38 +90,42 @@ export function installUniAppLifecycle(app: UniAppVueApp, target: LifecycleTarge
 
   /** 按页面实例缓存桥接器，为同路由的不同实例分配独立标识。 */
   const pageBridge = (instance: VueInstance): PageBridge | null => {
-    if (!isPage(instance)) return null
+    if (!isPage(instance, miniprogram !== undefined)) return null
     const existing = pages.get(instance)
     if (existing !== undefined) return existing
-    const route = routeOf(instance)
+    const route = routeOf(instance, miniprogram !== undefined)
     if (route === null) return null
-    const bridge = createPageLifecycleBridge(target, `${route}-${nextPageId++}`)
+    const bridge = createPageLifecycleBridge(target, `${route}-${nextPageId++}`, options.miniprogram)
     pages.set(instance, bridge)
     return bridge
   }
 
   app.mixin({
     onLaunch: isolatedLifecycleHook(function(this: VueInstance, options: unknown) {
-      if (!isPage(this)) appBridge.onLaunch(options)
+      if (isApp(this)) {
+        launch = entry(options, true)
+        firstShow = true
+        target.onAppLaunch(launch)
+      }
     }),
     onShow: isolatedLifecycleHook(function(this: VueInstance, options: unknown) {
       const bridge = pageBridge(this)
       if (bridge !== null) {
         currentPage = this
-        bridge.onShow(typeof this.gioPageTitle === 'string' ? this.gioPageTitle : titles.get(this) ?? pageTitle(this))
+        bridge.onShow(typeof this.gioPageTitle === 'string' ? this.gioPageTitle : titles.get(this) ?? pageTitle(this, miniprogram === undefined))
       }
-      else appBridge.onShow(options)
+      else if (isApp(this)) { target.onAppShow(entry(options, false)); firstShow = false }
     }),
     onHide: isolatedLifecycleHook(function(this: VueInstance) {
       try {
         const bridge = pageBridge(this)
         if (bridge !== null) bridge.onHide()
-        else appBridge.onHide()
+        else if (isApp(this)) appBridge.onHide()
       } finally { if (currentPage === this) currentPage = null }
     }),
     onLoad: isolatedLifecycleHook(function(this: VueInstance, query: unknown) {
       const bridge = pageBridge(this)
-      const route = routeOf(this)
+      const route = routeOf(this, miniprogram !== undefined)
       if (bridge !== null && route !== null) { currentPage = this; bridge.onLoad(route, query) }
     }),
     onUnload: isolatedLifecycleHook(function(this: VueInstance) {
@@ -114,7 +142,6 @@ export function installUniAppLifecycle(app: UniAppVueApp, target: LifecycleTarge
   })
 
   try {
-    const host = record((globalThis as Record<string, unknown>).uni)
     if (typeof host?.addInterceptor === 'function') {
       host.addInterceptor('setNavigationBarTitle', {
         /** 仅在标题设置成功后更新对应页面快照，并保留原业务成功回调。 */
@@ -181,10 +208,61 @@ export function querySnapshot(value: unknown): string | null {
 }
 
 /** 将 App 生命周期参数裁剪为纯 JSON 入口，省略不支持的 query 值。 */
-export function appEntrySnapshot(options: unknown): AppEntrySnapshot {
+export function appEntrySnapshot(options: unknown, target?: MiniProgramTarget): AppEntrySnapshot {
   const source = record(options)
   const path = typeof source?.path === 'string' && source.path.length > 0 ? source.path : null
-  return { path, query: querySnapshot(source?.query) }
+  if (target === undefined) return { path, query: querySnapshot(source?.query) }
+  const referrer = record(source?.referrerInfo)
+  const query = miniProgramQueryRecord(source?.query)
+  let shoppingScene: string | null = null
+  try { shoppingScene = miniProgramScene(query?.wxShoppingListScene) } catch { /* 单字段读取失败时仍采用原始场景。 */ }
+  return {
+    path: path?.replace(/^\/+/, '') ?? null,
+    query: miniProgramQuery(query, referrer?.extraData),
+    scene: shoppingScene ?? miniProgramScene(source?.scene),
+    referralPage: typeof referrer?.appId === 'string' ? referrer.appId : null,
+  }
+}
+
+function miniProgramScene(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim()
+    : typeof value === 'number' && Number.isFinite(value) ? String(value) : null
+}
+
+function miniProgramQueryRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== 'string') return record(value)
+  const query: Record<string, unknown> = Object.create(null)
+  for (const part of value.split('&')) {
+    try {
+      const index = part.indexOf('=')
+      const key = decodeURIComponent(index < 0 ? part : part.slice(0, index))
+      if (key !== '') query[key] = decodeURIComponent(index < 0 ? '' : part.slice(index + 1))
+    } catch { /* 损坏的 URL 编码不进入入口快照。 */ }
+  }
+  return query
+}
+
+/** 对齐小程序入口参数清理；附加参数不覆盖 query，单字段损坏不影响其余字段。 */
+function miniProgramQuery(value: unknown, extraData: unknown): string {
+  const result: Record<string, unknown> = Object.create(null)
+  const dirty = ['wxShoppingListScene', '$taroTimestamp', 'gdpCircleRoomCollectUrl']
+  const parse = (source: unknown): Record<string, unknown> | null => {
+    if (typeof source !== 'string') return record(source)
+    try { return record(JSON.parse(source)) } catch { return null }
+  }
+  const query = miniProgramQueryRecord(value)
+  for (const source of [query, parse(extraData)]) {
+    if (source === null) continue
+    for (const key of Object.keys(source)) {
+      try {
+        if (source !== query && query !== null && Object.prototype.hasOwnProperty.call(query, key)) continue
+        const value = source[key]
+        if (Object.prototype.hasOwnProperty.call(result, key) || dirty.some(part => key.includes(part) || typeof value === 'string' && value.includes(part))) continue
+        if (typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value)) result[key] = value
+      } catch { /* 宿主参数访问失败时保留其余有效字段。 */ }
+    }
+  }
+  return querySnapshot(result) ?? ''
 }
 
 /** 为 App 的三个生命周期钩子提供桥接，不将宿主或 Vue 对象传入核心。 */
@@ -248,7 +326,7 @@ function tabClickCall(value: unknown): AutoTrackCall | null {
 }
 
 /** 将宿主页面实例绑定到稳定标识，调用方只提交快照，不传入 Vue 或 Page 对象。 */
-export function createPageLifecycleBridge(target: PageLifecycleTarget, instanceId: string): Readonly<{
+export function createPageLifecycleBridge(target: PageLifecycleTarget, instanceId: string, miniprogram?: MiniProgramTarget): Readonly<{
   /** 将宿主页面参数转换为纯数据后提交。 */
   onLoad: (route: unknown, query: unknown, referralPage?: unknown) => boolean
   /** 转发显示状态及当前入口或页面标题。 */
@@ -273,7 +351,7 @@ export function createPageLifecycleBridge(target: PageLifecycleTarget, instanceI
       return target.onPageLoad({
         instanceId: stableInstanceId,
         route: normalizedRoute,
-        query: querySnapshot(query) ?? '',
+        query: miniprogram === undefined ? querySnapshot(query) ?? '' : miniProgramQuery(query, undefined),
         referralPage: typeof referralPage === 'string' && referralPage.length > 0 ? referralPage : null,
       })
     },

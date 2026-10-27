@@ -1,5 +1,5 @@
 import { CHANGE_ELEMENTS, type ChangeElement } from '../plugins/gioEventAutoTracking/contract.js'
-import type { AppPlatform } from '../types/index.js'
+import type { AppPlatform, MiniProgramTarget, MiniProgramPlatform } from '../types/index.js'
 
 export type AppCapabilityProfile = Readonly<{
   platform: AppPlatform
@@ -12,6 +12,23 @@ export type AppCapabilityProfile = Readonly<{
   tabBar: boolean
   appClosedBestEffort: boolean
 }>
+
+export type AutoTrackCapabilityProfile = Omit<AppCapabilityProfile, 'platform'> & Readonly<{ platform: AppPlatform | MiniProgramPlatform }>
+
+export const MINI_PROGRAM_PROFILES = {
+  'mp-weixin': { platform: 'MinP', name: 'Weixin', scenePrefix: '' },
+  'mp-alipay': { platform: 'alip', name: 'Alipay', scenePrefix: 'alip_' },
+} as const
+
+/** 小程序能力与 App 分开验收；验证构建不修改生产矩阵。 */
+export function miniProgramCapabilityProfile(target: MiniProgramTarget, verificationBuild = false): AutoTrackCapabilityProfile {
+  return {
+    ...unverified('Android'), platform: MINI_PROGRAM_PROFILES[target].platform,
+    autoClick: verificationBuild, tabBar: verificationBuild,
+    changeInput: verificationBuild, changePicker: verificationBuild,
+    autoChange: Object.fromEntries(CHANGE_ELEMENTS.map(element => [element, verificationBuild])) as Record<ChangeElement, boolean>,
+  }
+}
 
 /** 静态测试只能证明代码结构；平台、编译器版本、真机请求和服务端收数证据齐全前，各项 App 能力保持未验收状态。 */
 const unverified = (platform: AppPlatform): AppCapabilityProfile => ({

@@ -1,12 +1,17 @@
 import { normalizeCollectorHost } from '../utils/tools.js'
 import metadata from '../../package.json' with { type: 'json' }
+import type { MiniProgramTarget } from '../types/index.js'
 
 export type GioInitOptions = Readonly<{
   accountId: string
   dataSourceId: string
   serverUrl?: string | null
-  /** 为 Web 和小程序配置预留，当前 App 在此边界剥离该字段。 */
+  /** 小程序的真实平台 appId；App 不消费此字段。 */
   appId?: string | null
+  /** 小程序后台保活分钟数，默认 5。App 不消费。 */
+  keepAlive?: number
+  /** 小程序聚合上报间隔毫秒数，默认 1000。App 不消费。 */
+  uploadInterval?: number
   appChannel?: string | null
   appVersion?: string | null
   sessionExpires?: number
@@ -15,7 +20,7 @@ export type GioInitOptions = Readonly<{
   debug?: boolean
 }>
 
-export type SessionPolicy = Readonly<{ timeoutMs: number }>
+export type SessionPolicy = Readonly<{ timeoutMs: number; activityTimeoutMs?: number }>
 
 export type ResolvedGioConfig = Readonly<{
   accountId: string
@@ -27,6 +32,7 @@ export type ResolvedGioConfig = Readonly<{
   dataCollect: boolean
   idMapping: boolean
   debug: boolean
+  miniprogram?: Readonly<{ target: MiniProgramTarget; appId: string; uploadIntervalMs: number }>
 }>
 
 export type ConfigErrorCode =
@@ -40,6 +46,9 @@ export type ConfigErrorCode =
   | 'invalid_data_collect'
   | 'invalid_id_mapping'
   | 'invalid_debug'
+  | 'invalid_app_id'
+  | 'invalid_keep_alive'
+  | 'invalid_upload_interval'
 
 export type ConfigResult =
   | Readonly<{ ok: true; config: ResolvedGioConfig }>
@@ -116,7 +125,7 @@ function normalizeSessionPolicy(value: unknown): SessionPolicy | ConfigErrorCode
 }
 
 /** 统一读取和校验原始初始化配置；失败不产生副作用，修正参数后可再次尝试初始化。 */
-export function normalizeInitOptions(input: unknown): ConfigResult {
+export function normalizeInitOptions(input: unknown, target?: MiniProgramTarget): ConfigResult {
   if (!isRecord(input)) return { ok: false, code: 'invalid_options' }
 
   const accountId = nonEmptyString(input.accountId)
@@ -136,8 +145,21 @@ export function normalizeInitOptions(input: unknown): ConfigResult {
   }
   const appVersionFallback = optionalTrimmedString(input.appVersion)
 
-  const sessionPolicy = normalizeSessionPolicy(input.sessionExpires)
-  if (typeof sessionPolicy === 'string') return { ok: false, code: sessionPolicy }
+  let sessionPolicy = normalizeSessionPolicy(target === undefined ? input.sessionExpires : input.keepAlive === undefined ? 5 : input.keepAlive)
+  if (typeof sessionPolicy === 'string') return { ok: false, code: target === undefined ? sessionPolicy : 'invalid_keep_alive' }
+  let miniprogram: ResolvedGioConfig['miniprogram']
+  if (target !== undefined) {
+    const appId = nonEmptyString(input.appId)
+    if (appId === null || appId.startsWith('__UNI__')) return { ok: false, code: 'invalid_app_id' }
+    if (input.sessionExpires !== undefined && input.sessionExpires !== -1) {
+      const activity = normalizeSessionPolicy(input.sessionExpires)
+      if (typeof activity === 'string') return { ok: false, code: activity }
+      sessionPolicy = { ...sessionPolicy, activityTimeoutMs: activity.timeoutMs }
+    }
+    const interval = input.uploadInterval === undefined ? 1000 : input.uploadInterval
+    if (typeof interval !== 'number' || !Number.isSafeInteger(interval) || interval <= 0 || interval > 2147483647) return { ok: false, code: 'invalid_upload_interval' }
+    miniprogram = { target, appId, uploadIntervalMs: interval }
+  }
   const dataCollect = normalizeBoolean(input.dataCollect, true, 'invalid_data_collect')
   if (typeof dataCollect === 'string') return { ok: false, code: dataCollect }
   const idMapping = normalizeBoolean(input.idMapping, false, 'invalid_id_mapping')
@@ -157,6 +179,7 @@ export function normalizeInitOptions(input: unknown): ConfigResult {
       dataCollect,
       idMapping,
       debug,
+      ...(miniprogram === undefined ? {} : { miniprogram }),
     },
   }
 }

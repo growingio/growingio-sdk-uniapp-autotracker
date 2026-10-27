@@ -27,7 +27,7 @@ export class PageStore {
   private lastShownPageKey: string | null = null
 
   /** 冻结 onLoad query 与显式来源；自动来源在真实页面切换时更新。 */
-  public onLoad(input: PageLoadInput): PageSnapshot | null {
+  public onLoad(input: PageLoadInput, entryReferral: string | null = null): PageSnapshot | null {
     if (!this.validLoadInput(input)) return null
     const existing = this.pages.get(input.instanceId)
     if (existing !== undefined) return existing
@@ -36,7 +36,7 @@ export class PageStore {
       route: input.route,
       query: input.query,
       title: null,
-      referralPage: input.referralPage ?? this.lastShownRoute,
+      referralPage: input.referralPage ?? this.lastShownRoute ?? entryReferral,
       shownAt: null,
     }
     if (input.referralPage === null) this.automaticReferrals.add(input.instanceId)
@@ -45,12 +45,12 @@ export class PageStore {
   }
 
   /** 真实 onShow 选择当前页面，并更新安全读取到的标题与显示时间。 */
-  public onShow(instanceId: string, shownAt: number, title: string | null): PageSnapshot | null {
+  public onShow(instanceId: string, shownAt: number, title: string | null, entryReferral: string | null = null): PageSnapshot | null {
     if (!Number.isFinite(shownAt) || shownAt < 0 || typeof title !== 'string' && title !== null) return null
     const page = this.pages.get(instanceId)
     if (page === undefined) return null
     const referralPage = this.automaticReferrals.has(instanceId) && this.lastShownRoute !== null && this.lastShownPageKey !== page.pageKey
-      ? this.lastShownRoute : page.referralPage
+      ? this.lastShownRoute : this.automaticReferrals.has(instanceId) && this.lastShownRoute === null ? entryReferral ?? page.referralPage : page.referralPage
     const snapshot = { ...page, title, shownAt, referralPage }
     this.pages.set(instanceId, snapshot)
     this.currentInstanceId = instanceId
@@ -153,39 +153,51 @@ export type PageLifecycleDependencies = Readonly<{
   orientation: () => PageOrientation
   /** 判断当前意图与采集同意状态是否允许生成 PAGE。 */
   canCollect: () => boolean
+  entryReferral?: () => string | null
 }>
 
 /** 将已归一化的页面生命周期快照转换为 PAGE，不承担 App 生命周期职责。 */
 export class PageLifecycle {
+  private replayedPageKey: string | null = null
   /** 注入页面状态、事件组装及采集门控，保持页面逻辑与宿主对象隔离。 */
   public constructor(private readonly dependencies: PageLifecycleDependencies) {}
 
   /** 登记页面实例的不可变路由和初始 query 快照。 */
   public onLoad(input: PageLoadInput): PageSnapshot | null {
-    return this.dependencies.pages.onLoad(input)
+    return this.dependencies.pages.onLoad(input, this.dependencies.entryReferral?.() ?? null)
   }
 
   /** 以同一时间戳更新当前页并生成 PAGE，保证后续行为关联一致。 */
   public onShow(instanceId: string, title: string | null): PageShowResult {
-    const page = this.dependencies.pages.onShow(instanceId, this.dependencies.clock.now(), title)
+    const current = this.dependencies.pages.current()
+    if (this.replayedPageKey !== null && current?.pageKey === this.replayedPageKey) {
+      this.replayedPageKey = null
+      const page = this.dependencies.pages.onShow(instanceId, current.shownAt!, title)
+      if (page?.pageKey === current.pageKey) return { page, pageQueued: false }
+    }
+    const page = this.dependencies.pages.onShow(instanceId, this.dependencies.clock.now(), title, this.dependencies.entryReferral?.() ?? null)
     return { page, pageQueued: page !== null && this.emitPage(page) }
   }
 
   /** 清除该实例的当前页面关联，不将切页误作 App 退后台。 */
   public onHide(instanceId: string): void {
     this.dependencies.pages.onHide(instanceId)
+    if (this.dependencies.pages.current()?.pageKey !== this.replayedPageKey) this.replayedPageKey = null
   }
 
   /** 释放卸载页面的快照与当前页引用。 */
   public onUnload(instanceId: string): void {
     this.dependencies.pages.onUnload(instanceId)
+    if (this.dependencies.pages.current()?.pageKey !== this.replayedPageKey) this.replayedPageKey = null
   }
 
   /** 恢复采集时，在 App 生命周期已生成新 VISIT 后补发当前 PAGE。 */
-  public replayCurrentPage(): boolean {
+  public replayCurrentPage(dedupeNextShow = false): boolean {
     if (!this.dependencies.canCollect() || this.dependencies.pages.current() === null) return false
     const page = this.dependencies.pages.refreshCurrentShownAt(this.dependencies.clock.now())
-    return page !== null && this.emitPage(page)
+    const queued = page !== null && this.emitPage(page)
+    this.replayedPageKey = dedupeNextShow && queued ? page?.pageKey ?? null : null
+    return queued
   }
 
   /** 在允许采集且页面已显示时，携带来源、标题和方向生成 PAGE。 */

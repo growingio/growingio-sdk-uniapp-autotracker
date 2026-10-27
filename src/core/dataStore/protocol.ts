@@ -66,7 +66,9 @@ const FIELD_ENUMS: Readonly<Record<string, readonly string[]>> = {
 }
 
 /** 校验保留的出站字段，兼容缓存中已被清理的公共空字段。 */
-function validWireField(key: string, value: unknown): boolean {
+function validWireField(key: string, value: unknown, mini = false): boolean {
+  if (mini && key === 'platform') return value === 'MinP' || value === 'alip'
+  if (mini && (key === 'deviceType' || key === 'operatingSystem')) return typeof value === 'string' && /^(Weixin|Alipay)-.+$/.test(value)
   switch (key) {
     case 'eventSequenceId': return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
     case 'timestamp': case 'pageShowTimestamp': return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
@@ -170,21 +172,38 @@ export function normalizeAttributes(input: unknown): NormalizedAttributes {
 
 /** 按事件白名单裁剪并校验报文。缓存恢复允许省略已清理的公共空字段，事件专属必填项仍严格检查。 */
 export function buildAppEvent(eventType: string, fields: Readonly<Record<string, unknown>>, restored = false): BuildEventResult {
+  return buildEvent(eventType, fields, restored, false)
+}
+
+/** 小程序独立的字段与枚举契约，不能放宽 App 的报文校验。 */
+export function buildMiniProgramEvent(eventType: string, fields: Readonly<Record<string, unknown>>, restored = false): BuildEventResult {
+  return buildEvent(eventType, fields, restored, true)
+}
+
+function buildEvent(eventType: string, fields: Readonly<Record<string, unknown>>, restored: boolean, mini: boolean): BuildEventResult {
   if (!APP_EVENT_TYPES.includes(eventType as AppEventType)) return { ok: false, code: 'invalid_event_type' }
   const typedEventType = eventType as AppEventType
   if (typedEventType === 'CUSTOM' && !isValidCustomEventName(fields.eventName)) {
     return { ok: false, code: 'invalid_custom_event_name' }
   }
-  const allowed = new Set([...COMMON_FIELDS, ...EVENT_FIELDS[typedEventType]])
+  const common = mini ? [...COMMON_FIELDS.filter(key => key !== 'appState' && key !== 'appName'), 'operatingSystem', 'title'] : COMMON_FIELDS
+  const specific = mini ? EVENT_FIELDS[typedEventType].filter(key => key !== 'orientation' && key !== 'protocolType') : EVENT_FIELDS[typedEventType]
+  const allowed = new Set([...common, ...specific, ...(mini && typedEventType === 'VISIT' ? ['referralPage'] : [])])
   const candidate = Object.fromEntries(
     Object.entries({ ...fields, eventType: typedEventType }).filter(([key]) => allowed.has(key)),
   )
   // 公共字段沿用既有契约，已提供的空值可以在出站报文中省略。
   // 事件专属必填字段在空值清理后仍须存在。
   // 缓存保存的是已清理空字段的上报事件，恢复时不再要求这些公共字段存在。
-  if (!restored && REQUIRED_COMMON_FIELDS.some((key) => !(key in candidate))) return { ok: false, code: 'missing_required_field' }
+  const required = mini ? [...REQUIRED_COMMON_FIELDS.filter(key => key !== 'appState' && key !== 'appName'), 'operatingSystem', 'path'] : REQUIRED_COMMON_FIELDS
+  if (!restored && required.some((key) => !(key in candidate))) return { ok: false, code: 'missing_required_field' }
   const event = sanitizeOutboundEvent(candidate)
-  if (REQUIRED_EVENT_FIELDS[typedEventType].some((key) => !(key in event))) return { ok: false, code: 'missing_required_field' }
-  if (!Object.entries(event).every(([key, value]) => validWireField(key, value))) return { ok: false, code: 'invalid_field_value' }
+  const requiredSpecific = mini ? REQUIRED_EVENT_FIELDS[typedEventType].filter(key => key !== 'orientation') : REQUIRED_EVENT_FIELDS[typedEventType]
+  if ([...requiredSpecific, ...(mini ? ['platform', 'domain', 'timestamp', 'deviceId', 'sessionId', 'dataSourceId', 'platformVersion', 'sdkVersion'] : [])].some((key) => !(key in event))) return { ok: false, code: 'missing_required_field' }
+  if (!Object.entries(event).every(([key, value]) => validWireField(key, value, mini))) return { ok: false, code: 'invalid_field_value' }
+  if (mini) {
+    const prefix = event.platform === 'MinP' ? 'Weixin-' : 'Alipay-'
+    if (typeof event.deviceType !== 'string' || !event.deviceType.startsWith(prefix) || event.operatingSystem !== event.deviceType) return { ok: false, code: 'invalid_field_value' }
+  }
   return { ok: true, event: event as ProtocolEvent }
 }

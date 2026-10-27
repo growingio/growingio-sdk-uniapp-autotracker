@@ -1,9 +1,14 @@
 import { createAppTracker, type AppRuntimeHost, type AppRuntimeOptions } from './src/platform/index.js'
-import { SDK_VERSION, type GioInitOptions } from './src/constants/config.js'
+import { SDK_VERSION, normalizeInitOptions, type GioInitOptions } from './src/constants/config.js'
+import { createMiniProgramTracker, matchesMiniProgramAppId, type MiniProgramHost } from './src/platform/miniprogram.js'
+import { resolveRuntimeTarget, type RuntimeTarget } from './src/platform/resolve.js'
 import type { GioBuiltinPlugin } from './src/core/lifecycle.js'
 import { TrackerRuntime } from './src/core/growingIO.js'
 import { installUniAppLifecycle, type UniAppVueApp } from './src/adapters/uniapp.js'
 import { guid } from './src/utils/tools.js'
+
+declare const uni: unknown
+declare const __GIO_UNI_PLATFORM__: string
 
 let singleton: TrackerRuntime | null = null
 let gdpTracker: TrackerRuntime | null = null
@@ -12,8 +17,8 @@ let pendingGdpPlugins: readonly GdpPlugin[] = []
 type GdpPlugin = GioBuiltinPlugin | GioPlugin
 
 /** App SDK 只创建单例；重复请求返回首次运行时，避免重复安装生命周期、队列、存储命名空间和上传器。 */
-function createGioTracker(host: AppRuntimeHost, options: AppRuntimeOptions): TrackerRuntime {
-  if (singleton === null) singleton = createAppTracker(host, options)
+function createGioTracker(host: AppRuntimeHost | MiniProgramHost, options: AppRuntimeOptions, target: RuntimeTarget): TrackerRuntime {
+  if (singleton === null) singleton = target === 'app' ? createAppTracker(host as AppRuntimeHost, options) : createMiniProgramTracker(host, target, options)
   return singleton
 }
 
@@ -74,12 +79,13 @@ function record(value: unknown): Readonly<Record<string, unknown>> | null {
 }
 
 /** 检查全局 uni 是否具备 App SDK 所需的宿主方法；缺失时拒绝初始化。 */
-function appHost(): AppRuntimeHost | null {
-  const candidate = record((globalThis as Readonly<Record<string, unknown>>).uni)
-  const required = ['getStorageSync', 'setStorageSync', 'removeStorageSync', 'getDeviceInfo', 'getSystemInfoSync', 'getAppBaseInfo', 'getNetworkType', 'request']
-  return candidate !== null && required.every((name) => typeof candidate[name] === 'function')
-    ? candidate as unknown as AppRuntimeHost
-    : null
+function runtimeHost(): Readonly<{ host: AppRuntimeHost | MiniProgramHost; target: RuntimeTarget }> | null {
+  const candidate = record(typeof uni === 'undefined' ? (globalThis as Readonly<Record<string, unknown>>).uni : uni)
+  const required = ['getStorageSync', 'setStorageSync', 'removeStorageSync', 'getNetworkType', 'request']
+  if (candidate === null || !required.every(name => typeof candidate[name] === 'function')) return null
+  const target = resolveRuntimeTarget(candidate, typeof __GIO_UNI_PLATFORM__ === 'undefined' ? undefined : __GIO_UNI_PLATFORM__)
+  if (target === null || (target === 'app' && !['getDeviceInfo', 'getSystemInfoSync', 'getAppBaseInfo'].every(name => typeof candidate[name] === 'function'))) return null
+  return { host: candidate as unknown as AppRuntimeHost | MiniProgramHost, target }
 }
 
 /** 确认传入的是可安装全局 mixin 的 Vue 应用。 */
@@ -133,18 +139,21 @@ export const gdp: GdpCommand = (command: unknown, ...args: readonly unknown[]): 
   if (command === 'init') {
     if (gdpTracker !== null || typeof args[0] !== 'string' || typeof args[1] !== 'string') return false
     const input = record(args[2])
-    const host = appHost()
-    if (input === null || host === null || !isUniVueApp(input.uniVue)) return false
+    const runtime = runtimeHost()
+    if (input === null || runtime === null || !isUniVueApp(input.uniVue)) return false
+    const { host, target } = runtime
     const { uniVue, sdkVersion: _ignoredVersion, ...init } = input
+    const config = normalizeInitOptions({ ...init, accountId: args[0], dataSourceId: args[1] }, target === 'app' ? undefined : target)
+    if (!config.ok || (config.config.miniprogram !== undefined && !matchesMiniProgramAppId(host, config.config.miniprogram.appId))) return false
     const tracker = createGioTracker(host, {
       sdkVersion: SDK_VERSION,
       deviceIdFactory: guid,
       sessionIdFactory: guid,
-    })
+    }, target)
     const registered = new Set(tracker.registeredPluginNames())
     const builtinPlugins = pendingGdpPlugins.filter(isBuiltinPlugin).filter((plugin) => !registered.has(plugin.name))
     if (!tracker.registerPlugins(...builtinPlugins) || !tracker.init({ ...init, accountId: args[0], dataSourceId: args[1] })) return false
-    installUniAppLifecycle(uniVue, tracker)
+    installUniAppLifecycle(uniVue, tracker, { host, miniprogram: target === 'app' ? undefined : target })
     gdpTracker = tracker
     for (const plugin of pendingGdpPlugins.filter(isCustomerPlugin)) {
       try {

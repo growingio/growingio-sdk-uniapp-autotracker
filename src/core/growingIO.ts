@@ -4,18 +4,19 @@ import type { GioInitOptions, ResolvedGioConfig } from '../constants/config.js'
 import { IdentityPersistence, type DeviceIdFactory, MetaPersistence, QueuePersistence, SessionPersistence, storageKeys } from './storage/index.js'
 import { updateIdentity, type Identity, LocationState, SessionManager, type SessionIdFactory } from './userStore.js'
 import { PageStore, type PageLoadInput, type PageOrientation, PageLifecycle } from './dataStore/page.js'
-import type { ClockPort, LoggerPort, NetworkPort, NetworkState, StoragePort, SystemContextPort, TimezonePort, TransportPort } from '../types/index.js'
-import { isValidCustomEventName, normalizeAttributes, type ProtocolEvent } from './dataStore/protocol.js'
+import type { ClockPort, LoggerPort, MiniProgramTarget, NetworkPort, NetworkState, StoragePort, SystemContextPort, TimezonePort, TransportPort } from '../types/index.js'
+import { buildAppEvent, buildMiniProgramEvent, isValidCustomEventName, normalizeAttributes, type ProtocolEvent } from './dataStore/protocol.js'
 import { EventQueue } from './queue.js'
 import { AppLifecycle, type AppEntrySnapshot } from './dataStore/app.js'
 import { Uploader, type UploaderRuntime } from './uploader.js'
 import type { AutoTrackCall, ChangeElement, NormalizedAutoTrackCall } from '../plugins/gioEventAutoTracking/contract.js'
 import { AutoTrackDispatcher } from '../plugins/gioEventAutoTracking/index.js'
-import { appCapabilityProfile, type AppCapabilityProfile } from '../constants/platform.js'
+import { appCapabilityProfile, miniProgramCapabilityProfile, type AutoTrackCapabilityProfile } from '../constants/platform.js'
 
 declare const __GIO_AUTOTRACK_VERIFICATION__: boolean
 
 export type TrackerRuntimeDependencies = Readonly<{
+  target?: MiniProgramTarget
   storage: StoragePort
   systemContext: SystemContextPort | ((config: ResolvedGioConfig) => SystemContextPort)
   clock: ClockPort
@@ -26,7 +27,7 @@ export type TrackerRuntimeDependencies = Readonly<{
   orientation: () => PageOrientation
   logger?: LoggerPort
   /** 仅内部受控宿主验证注入，不通过 gdp init 暴露。 */
-  autoTrackProfile?: AppCapabilityProfile
+  autoTrackProfile?: AutoTrackCapabilityProfile
   network?: NetworkPort
   upload?: Readonly<{ transport: TransportPort; runtime: UploaderRuntime }>
 }>
@@ -34,9 +35,9 @@ export type TrackerRuntimeDependencies = Readonly<{
 type RuntimeState = Readonly<{
   identity: { value: Identity }
   identityPersistence: IdentityPersistence
-  sessionPersistence: SessionPersistence
+  sessionPersistence: SessionPersistence | null
   metaPersistence: MetaPersistence
-  queuePersistence: QueuePersistence
+  queuePersistence: QueuePersistence | null
   queue: EventQueue
   sequence: EventSequence
   sessions: SessionManager
@@ -45,7 +46,7 @@ type RuntimeState = Readonly<{
   page: PageLifecycle
   dispatcher: EventDispatcher
   pages: PageStore
-  autoTrackProfile: AppCapabilityProfile | null
+  autoTrackProfile: AutoTrackCapabilityProfile | null
   uploader: Uploader | null
   stopNetwork: (() => void) | null
   /** 合并网络刷新请求，可要求在当前查询后补一次新读取。 */
@@ -59,11 +60,13 @@ function record(value: unknown): Readonly<Record<string, unknown>> | null {
 
 /** 通过显式宿主端口协调运行时，不向核心暴露 uni 对象，使真实 App 和受控测试共用同一恢复路径。 */
 export class TrackerRuntime {
-  private readonly lifecycle = new TrackerLifecycle()
-  private readonly gate = new TrackerEventGate(this.lifecycle)
+  private readonly lifecycle: TrackerLifecycle
+  private readonly gate: TrackerEventGate
   private state: RuntimeState | null = null
   private bootstrapFailed = false
   private appShown = false
+  private foreground = false
+  private pendingPageShow: TrackerIntent | null = null
   private intentCollection: boolean | undefined
   private readonly pendingSessionCommands = new BootstrapBuffer()
   private hydration: Promise<void> | null = null
@@ -71,7 +74,10 @@ export class TrackerRuntime {
   private readonly autoTrackDispatcher = new AutoTrackDispatcher()
 
   /** 保存宿主依赖并创建门控组件；真正的状态恢复由 init 触发。 */
-  public constructor(private readonly dependencies: TrackerRuntimeDependencies) {}
+  public constructor(private readonly dependencies: TrackerRuntimeDependencies) {
+    this.lifecycle = new TrackerLifecycle(dependencies.target)
+    this.gate = new TrackerEventGate(this.lifecycle)
+  }
 
   /** 在初始化窗口内注册已交付的内置插件。 */
   public registerPlugins(...plugins: Parameters<TrackerLifecycle['registerPlugins']>): boolean {
@@ -184,8 +190,14 @@ export class TrackerRuntime {
     // 首次显示之前只保存身份，不能为早期 A→B 创建无入口的 VISIT 或使用历史会话。
     if (!this.appShown) return true
     const transition = state.sessions.onUserIdChange(previous.userId ?? previous.lastUserId, update.identity.userId)
-    if (transition.snapshot !== null) void state.sessionPersistence.persist(transition.snapshot)
-    if (transition.startedNew) state.app.onUserChanged()
+    if (transition.snapshot !== null) void state.sessionPersistence?.persist(transition.snapshot)
+    if (transition.startedNew) {
+      state.app.onUserChanged()
+      if (config.miniprogram !== undefined && this.foreground) {
+        state.page.replayCurrentPage()
+        this.autoTrackDispatcher.reset()
+      }
+    }
     this.persistAfterEvent()
     return true
   }
@@ -272,21 +284,21 @@ export class TrackerRuntime {
 
   /** 恢复各类持久状态并装配会话、页面、事件和上传组件，全部就绪后回放暂存调用。 */
   private async hydrate(config: NonNullable<ReturnType<TrackerLifecycle['config']>>): Promise<void> {
-    const keys = storageKeys(config.dataSourceId)
-    const queue = new EventQueue()
+    const keys = storageKeys(config.dataSourceId, config.miniprogram === undefined ? undefined : { ...config.miniprogram, accountId: config.accountId })
+    const queue = new EventQueue(undefined, config.miniprogram === undefined ? buildAppEvent : buildMiniProgramEvent)
     const identityPersistence = new IdentityPersistence(this.dependencies.storage, keys.identity, config.dataSourceId, this.dependencies.deviceIdFactory)
-    const sessionPersistence = new SessionPersistence(this.dependencies.storage, keys.session)
+    const sessionPersistence = config.miniprogram === undefined ? new SessionPersistence(this.dependencies.storage, keys.session) : null
     const metaPersistence = new MetaPersistence(this.dependencies.storage, keys.meta)
-    const queuePersistence = new QueuePersistence(this.dependencies.storage, keys.queue)
+    const queuePersistence = this.dependencies.storage.persistentQueue ? new QueuePersistence(this.dependencies.storage, keys.queue) : null
     const hydrated = await hydrateTrackerState({
       /** 恢复当前数据源的设备与登录身份。 */
       hydrateIdentity: () => identityPersistence.hydrate(),
       /** 恢复历史会话记录，等待真实生命周期确定是否续用。 */
-      hydrateSession: () => sessionPersistence.hydrate(),
+      hydrateSession: () => sessionPersistence?.hydrate() ?? Promise.resolve({ snapshot: null, source: 'missing' }),
       /** 独立恢复全局序号，避免身份或会话损坏导致编号重置。 */
       hydrateMeta: () => metaPersistence.hydrate(),
       /** 恢复并校验缓存队列，拒绝损坏或超限的快照。 */
-      hydrateQueue: () => queuePersistence.hydrate(queue),
+      hydrateQueue: () => queuePersistence?.hydrate(queue) ?? Promise.resolve('missing'),
       /** 读取当前配置对应的宿主系统上下文。 */
       loadSystemContext: () => this.systemContext(config).load(),
     })
@@ -295,6 +307,7 @@ export class TrackerRuntime {
       this.log('error', '[GrowingIO]：SDK初始化失败!')
       return
     }
+    if (config.miniprogram !== undefined && hydrated.state.systemContext.appVersion === '') this.log('warn', '[GrowingIO]: mini-program appVersion unavailable')
 
     const sessions = new SessionManager(config.sessionPolicy, this.dependencies.sessionIdFactory, hydrated.state.session.snapshot,
       hydrated.state.identity.identity.lastUserId ?? hydrated.state.identity.identity.userId)
@@ -309,18 +322,19 @@ export class TrackerRuntime {
       await identityPersistence.persist(identity.value)
     }
     let networkState: NetworkState = hydrated.state.systemContext.networkState
+    const pages = new PageStore()
     const composer = new EventComposer(
       config, hydrated.state.systemContext, () => identity.value, sessions, sequence, queue,
-      this.dependencies.clock, this.dependencies.timezone, location, () => networkState,
+      this.dependencies.clock, this.dependencies.timezone, location, () => networkState, () => pages.current(),
     )
-    const pages = new PageStore()
     const page = new PageLifecycle({
       pages,
       composer,
       clock: this.dependencies.clock,
       orientation: this.dependencies.orientation,
       /** 同时检查当前开关和正在回放意图的采集状态。 */
-      canCollect: () => this.collecting()
+      canCollect: () => this.collecting(),
+      entryReferral: () => this.state?.app.pageReferral() ?? null,
     })
     const dispatcher = new EventDispatcher(composer, () => pages.current())
     const uploader = this.dependencies.upload === undefined ? null : new Uploader(
@@ -330,11 +344,13 @@ export class TrackerRuntime {
       config.serverUrl,
       config.accountId,
       (drop) => this.log('warn', `[GrowingIO]: upload dropped (${drop.reason})`),
-      () => { void queuePersistence.persist(queue) },
+      () => { void queuePersistence?.persist(queue) },
       config.debug ? (events) => this.debugEvents(events) : undefined,
       () => this.dependencies.network?.isConnected() !== false,
+      config.miniprogram?.uploadIntervalMs ?? 0,
     )
     const appWithFlush = new AppLifecycle({
+      miniprogram: config.miniprogram?.target,
       sessions,
       composer,
       clock: this.dependencies.clock,
@@ -343,7 +359,7 @@ export class TrackerRuntime {
       /** 读取当前可见页面，供关闭事件补充页面上下文。 */
       currentPage: () => pages.current(),
       /** 仅在存在快照时尽力保存会话。 */
-      persistSession: (snapshot) => { if (snapshot !== null) void sessionPersistence.persist(snapshot) },
+      persistSession: (snapshot) => { if (snapshot !== null) void sessionPersistence?.persist(snapshot) },
       /** 后台切换时尽力刷新队列，不阻塞宿主生命周期。 */
       forceFlush: () => { if (uploader !== null) void uploader.forceFlush() },
     })
@@ -390,7 +406,9 @@ export class TrackerRuntime {
     this.state = {
       identity, identityPersistence, sessionPersistence, metaPersistence, queuePersistence, queue, sequence, sessions, location,
       app: appWithFlush, page, dispatcher, pages, uploader, stopNetwork, refreshNetwork,
-      autoTrackProfile: this.dependencies.autoTrackProfile ?? appCapabilityProfile(hydrated.state.systemContext.platform, typeof __GIO_AUTOTRACK_VERIFICATION__ !== 'undefined' && __GIO_AUTOTRACK_VERIFICATION__ === true),
+      autoTrackProfile: this.dependencies.autoTrackProfile ?? (config.miniprogram === undefined
+        ? appCapabilityProfile(hydrated.state.systemContext.platform, typeof __GIO_AUTOTRACK_VERIFICATION__ !== 'undefined' && __GIO_AUTOTRACK_VERIFICATION__ === true)
+        : miniProgramCapabilityProfile(config.miniprogram.target, typeof __GIO_AUTOTRACK_VERIFICATION__ !== 'undefined' && __GIO_AUTOTRACK_VERIFICATION__ === true)),
     }
     this.log('success', '[GrowingIO]：Gio uni-app SDK 初始化完成！')
     this.gate.release((intent) => this.emit(intent))
@@ -444,10 +462,22 @@ export class TrackerRuntime {
     if (state === null) return false
     const payload = record(intent.payload)
     if (payload === null) return false
+    const mini = this.lifecycle.config()?.miniprogram !== undefined
+    if (mini && intent.kind === 'page-show' && !this.foreground) {
+      if (typeof payload.instanceId !== 'string' || (typeof payload.title !== 'string' && payload.title !== null)) return false
+      this.pendingPageShow = intent
+      return true
+    }
     if (intent.kind === 'track' || intent.kind === 'user-attributes') {
       if (!this.collecting()) return false
       // 恢复出的历史会话不能承接本次启动的业务事件，等待首次真实 App.onShow。
       if (!this.appShown) return this.pendingSessionCommands.push(intent)
+    }
+    if (mini && this.foreground && this.collecting() && ['track', 'user-attributes', 'autotrack', 'page-show'].includes(intent.kind)) {
+      if (state.app.onActivity(this.dependencies.clock.now())) {
+        if (intent.kind !== 'page-show') state.page.replayCurrentPage()
+        this.autoTrackDispatcher.reset()
+      }
     }
     const shownBefore = state.pages.current()
     let emitted = false
@@ -463,14 +493,28 @@ export class TrackerRuntime {
       case 'track': emitted = state.dispatcher.track({ eventName: payload.eventName, properties: payload.properties }); break
       case 'autotrack': emitted = state.dispatcher.autoTrack(payload as NormalizedAutoTrackCall); break
       case 'app-launch': state.app.onLaunch(payload as AppEntrySnapshot); emitted = true; lifecycleHandled = true; break
-      case 'app-show':
-        emitted = state.app.onShow(payload as AppEntrySnapshot, intent.observedAt).visitQueued
+      case 'app-show': {
+        const shown = state.app.onShow(payload as AppEntrySnapshot, intent.observedAt)
+        emitted = shown.visitQueued
         state.refreshNetwork(this.appShown)
         this.appShown = true
+        this.foreground = true
+        if (this.pendingPageShow !== null) {
+          const pending = this.pendingPageShow
+          this.pendingPageShow = null
+          // PAGE 在 App 真正显示时生成，使用此刻同意状态，不回放隐藏期间的采集状态。
+          this.emit({ ...pending, collecting: this.collecting() })
+        } else if (mini && shown.session.startedNew) state.page.replayCurrentPage(true)
         lifecycleHandled = true
         for (const command of this.pendingSessionCommands.drain()) this.emit(command as TrackerIntent)
         break
-      case 'app-hide': emitted = state.app.onHide(intent.observedAt).appClosedQueued; lifecycleHandled = true; break
+      }
+      case 'app-hide':
+        this.foreground = false
+        if (mini) this.pendingPageShow = null
+        emitted = state.app.onHide(intent.observedAt).appClosedQueued
+        lifecycleHandled = true
+        break
       case 'page-load': emitted = state.page.onLoad(payload as PageLoadInput) !== null; lifecycleHandled = true; break
       case 'page-title':
         if (typeof payload.instanceId !== 'string' || typeof payload.title !== 'string') return false
@@ -478,8 +522,22 @@ export class TrackerRuntime {
         return true
       case 'page-show': emitted = typeof payload.instanceId === 'string' && (typeof payload.title === 'string' || payload.title === null)
         ? state.page.onShow(payload.instanceId, payload.title).pageQueued : false; lifecycleHandled = typeof payload.instanceId === 'string' && (typeof payload.title === 'string' || payload.title === null); break
-      case 'page-hide': if (typeof payload.instanceId === 'string') { state.page.onHide(payload.instanceId); emitted = true; lifecycleHandled = true }; break
-      case 'page-unload': if (typeof payload.instanceId === 'string') { state.page.onUnload(payload.instanceId); emitted = true; lifecycleHandled = true }; break
+      case 'page-hide':
+        if (typeof payload.instanceId === 'string') {
+          if (this.pendingPageShow?.payload.instanceId === payload.instanceId) this.pendingPageShow = null
+          state.page.onHide(payload.instanceId)
+          emitted = true
+          lifecycleHandled = true
+        }
+        break
+      case 'page-unload':
+        if (typeof payload.instanceId === 'string') {
+          if (this.pendingPageShow?.payload.instanceId === payload.instanceId) this.pendingPageShow = null
+          state.page.onUnload(payload.instanceId)
+          emitted = true
+          lifecycleHandled = true
+        }
+        break
       default: return false
     }
     if (state.pages.current() !== shownBefore) this.autoTrackDispatcher.reset()
@@ -513,7 +571,7 @@ export class TrackerRuntime {
   private persistAfterEvent(): void {
     const state = this.state
     if (state === null) return
-    void state.queuePersistence.persist(state.queue)
+    void state.queuePersistence?.persist(state.queue)
     void state.metaPersistence.persist(state.sequence.current())
     state.uploader?.schedule()
   }

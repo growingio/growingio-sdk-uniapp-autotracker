@@ -1,7 +1,8 @@
-import { type AppEventType, buildAppEvent, type ProtocolEvent, normalizeAttributes } from './protocol.js'
+import { type AppEventType, buildAppEvent, buildMiniProgramEvent, type ProtocolEvent, normalizeAttributes } from './protocol.js'
 import type { ResolvedGioConfig } from '../../constants/config.js'
 import { type Identity, LocationState, SessionManager } from '../userStore.js'
-import type { AppSystemContext, ClockPort, NetworkState, TimezonePort } from '../../types/index.js'
+import type { AppSystemContext, SystemContext, ClockPort, NetworkState, TimezonePort } from '../../types/index.js'
+import type { AppEntrySnapshot } from './app.js'
 import { EventQueue } from '../queue.js'
 import type { PageSnapshot } from './page.js'
 import type { NormalizedAutoTrackCall } from '../../plugins/gioEventAutoTracking/contract.js'
@@ -75,10 +76,11 @@ function timezoneOffset(timezone: TimezonePort): string {
 /** 结合稳定系统上下文和当前可变状态组装事件。先用占位序号校验，再在成功入队后递增，避免拒绝事件留下序号缺口。 */
 export class EventComposer {
   private appState: AppSystemContext['appState'] = 'FOREGROUND'
+  private entry: AppEntrySnapshot | null = null
   /** 注入事件所需的稳定配置、动态状态和宿主端口，不提前生成事件。 */
   public constructor(
     private readonly config: ResolvedGioConfig,
-    private readonly system: AppSystemContext,
+    private readonly system: SystemContext,
     private readonly identity: () => Identity,
     private readonly sessions: SessionManager,
     private readonly sequence: EventSequence,
@@ -87,7 +89,11 @@ export class EventComposer {
     private readonly timezone: TimezonePort,
     private readonly location: LocationState,
     private readonly network: (() => NetworkState) | undefined = undefined,
+    private readonly currentPage?: () => PageSnapshot | null,
   ) {}
+
+  /** 小程序入口由生命周期冻结，不将原始宿主对象放入事件。 */
+  public setEntry(entry: AppEntrySnapshot): void { this.entry = entry }
 
   /** 更新后续事件采用的前后台状态。 */
   public setAppState(value: AppSystemContext['appState']): void { this.appState = value }
@@ -106,8 +112,13 @@ export class EventComposer {
     if (!Number.isFinite(timestamp) || timestamp < 0) return { ok: false, code: 'invalid_timestamp' }
 
     const identity = this.identity()
+    const page = this.currentPage?.()
     const base = {
       ...this.system,
+      ...(this.config.miniprogram === undefined ? {} : {
+        path: page?.route ?? this.entry?.path ?? '', query: page?.query ?? this.entry?.query ?? '',
+        title: input.eventType === 'VISIT' && input.fields?.path !== page?.route ? null : page?.title,
+      }),
       ...input.fields,
       deviceId: identity.deviceId,
       userId: identity.userId,
@@ -116,20 +127,21 @@ export class EventComposer {
       dataSourceId: this.config.dataSourceId,
       timestamp,
       appState: input.appState ?? this.appState,
-      appChannel: this.config.appChannel,
+      appChannel: this.config.miniprogram === undefined ? this.config.appChannel : `scn:${this.entry?.scene ?? 'NA'}`,
       networkState: this.networkState(),
       timezoneOffset: timezoneOffset(this.timezone),
       ...(this.location.current() ?? {}),
     }
 
     // buildAppEvent 是纯函数，占位序号校验不会改变运行时状态。
-    const preview = buildAppEvent(input.eventType, { ...base, eventSequenceId: 1 })
+    const buildEvent = this.config.miniprogram === undefined ? buildAppEvent : buildMiniProgramEvent
+    const preview = buildEvent(input.eventType, { ...base, eventSequenceId: 1 })
     if (!preview.ok) return preview
 
     const eventSequenceId = this.sequence.peek(input.eventType)
     const built = eventSequenceId === null
       ? preview
-      : buildAppEvent(input.eventType, { ...base, eventSequenceId })
+      : buildEvent(input.eventType, { ...base, eventSequenceId })
     if (!built.ok) return built
 
     const enqueued = this.queue.enqueue(built.event)

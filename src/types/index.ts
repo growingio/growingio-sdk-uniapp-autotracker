@@ -1,4 +1,6 @@
 export type AppPlatform = 'Android' | 'iOS' | 'HarmonyOS'
+export type MiniProgramTarget = 'mp-weixin' | 'mp-alipay'
+export type MiniProgramPlatform = 'MinP' | 'alip'
 export type NetworkState = '2G' | '3G' | '4G' | '5G' | 'WIFI' | 'UNKNOWN'
 
 export type AppSystemContext = Readonly<{
@@ -18,9 +20,17 @@ export type AppSystemContext = Readonly<{
   sdkVersion: string
 }>
 
+/** 小程序只携带自己的协议字段，不以 App 的操作系统枚举代替宿主。 */
+export type MiniProgramSystemContext = Readonly<Omit<AppSystemContext, 'platform' | 'appState' | 'appName' | 'deviceType'> & {
+  platform: MiniProgramPlatform
+  deviceType: string
+  operatingSystem: string
+}>
+export type SystemContext = AppSystemContext | MiniProgramSystemContext
+
 export interface SystemContextPort {
   /** 加载已归一化的 App 系统上下文，不向核心返回原始宿主对象。 */
-  load(): Promise<AppSystemContext>
+  load(): Promise<SystemContext>
 }
 
 export interface ClockPort {

@@ -1,7 +1,7 @@
 import { normalizeInitOptions, type GioInitOptions, type ResolvedGioConfig } from '../constants/config.js'
 import type { EventSequenceSnapshot } from './dataStore/index.js'
 import type { IdentityHydration, QueueHydration, SessionHydration } from './storage/index.js'
-import type { AppSystemContext } from '../types/index.js'
+import type { SystemContext } from '../types/index.js'
 
 export type GioBuiltinPlugin = Readonly<{
   name: 'gioEventAutoTracking'
@@ -66,6 +66,8 @@ export class TrackerLifecycle {
   private configValue: ResolvedGioConfig | null = null
   private readonly plugins = new BuiltinPluginRegistry()
 
+  public constructor(private readonly target?: import('../types/index.js').MiniProgramTarget) {}
+
   /** 通过注册表校验初始化前的内置插件声明。 */
   public registerPlugins(...plugins: GioBuiltinPlugin[]): boolean {
     return this.plugins.register(...plugins).ok
@@ -74,7 +76,7 @@ export class TrackerLifecycle {
   /** 仅允许首次有效初始化；配置通过后冻结插件注册并进入恢复阶段。 */
   public init(options: GioInitOptions): TrackerInitResult {
     if (this.statusValue !== 'new') return { ok: false, code: 'already_initialized' }
-    const normalized = normalizeInitOptions(options)
+    const normalized = normalizeInitOptions(options, this.target)
     if (!normalized.ok) return { ok: false, code: 'invalid_config' }
     this.configValue = normalized.config
     this.statusValue = 'initializing'
@@ -258,7 +260,7 @@ export type HydratedTrackerState = Readonly<{
   session: SessionHydration
   meta: Readonly<{ snapshot: EventSequenceSnapshot; source: string }>
   queue: QueueHydration
-  systemContext: AppSystemContext
+  systemContext: SystemContext
 }>
 
 export type HydrationDependencies = Readonly<{
@@ -271,7 +273,7 @@ export type HydrationDependencies = Readonly<{
   /** 恢复并验证持久化队列。 */
   hydrateQueue: () => Promise<QueueHydration>
   /** 加载可用于构建协议事件的系统上下文。 */
-  loadSystemContext: () => Promise<AppSystemContext>
+  loadSystemContext: () => Promise<SystemContext>
 }>
 
 export type HydrationResult =

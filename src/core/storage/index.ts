@@ -13,8 +13,9 @@ export type StorageKeys = Readonly<{
 }>
 
 /** 为同一数据源生成身份、会话、序号和队列的独立存储键。 */
-export function storageKeys(dataSourceId: string): StorageKeys {
-  const prefix = `${GIO_STORAGE_PREFIX}${dataSourceId}:`
+export function storageKeys(dataSourceId: string, mini?: Readonly<{ target: string; appId: string; accountId: string }>): StorageKeys {
+  const prefix = mini === undefined ? `${GIO_STORAGE_PREFIX}${dataSourceId}:`
+    : `gio:mp:v1:${[mini.target, mini.appId, mini.accountId, dataSourceId].map(value => encodeURIComponent(value)).join(':')}:`
   return { identity: `${prefix}identity`, session: `${prefix}session`, meta: `${prefix}meta`, queue: `${prefix}queue:v1` }
 }
 

@@ -293,6 +293,7 @@ export type UniAppAutoTrackViteContext = Readonly<{
 export type UniAppAutoTrackVitePlugin = Readonly<{
   name: string;
   enforce: 'pre';
+  config: () => Readonly<{ define: Readonly<Record<string, string>> }>;
   /** 返回实际改写源码；不支持或无需改写时返回 null。 */
   transform: (this: UniAppAutoTrackViteContext | void, source: string, id: string) => Readonly<{ code: string }> | null
 }>
@@ -303,6 +304,7 @@ export function gioUniappAutoTrack(options?: string | UniAppAutoTrackViteOptions
   return {
     name: 'gio-uniapp-autotrack',
     enforce: 'pre',
+    config: () => ({ define: { __GIO_UNI_PLATFORM__: JSON.stringify(process.env.UNI_PLATFORM ?? '') } }),
     /** 只处理支持的 Vue 文件，透传采集边界告警并返回实际改写结果。 */
     transform(source, id) {
       if (typeof options !== 'string' && options?.enabled === false) return null

@@ -20,13 +20,13 @@ function writeFailure(error: unknown): StorageWrite {
 
 /** App 存储适配器只转换宿主调用，不解释 SDK 记录内容。 */
 export class AppStoragePort implements StoragePort {
-  public readonly persistentQueue = true
 
   /** 保存同步 uni 存储 API，不在构造时读取或修改业务数据。 */
-  public constructor(private readonly api: AppStorageApi) {}
+  public constructor(private readonly api: AppStorageApi, public readonly persistentQueue = true) {}
 
   /** 将宿主读取结果区分为值、缺失、损坏或不可用；只接受字符串记录。 */
   public async read(_area: StorageArea, key: string): Promise<StorageRead> {
+    if (_area === 'queue' && !this.persistentQueue) return { kind: 'missing' }
     try {
       const value = this.api.getStorageSync(key)
       if (value === undefined || value === null || value === '') return { kind: 'missing' }
@@ -38,6 +38,7 @@ export class AppStoragePort implements StoragePort {
 
   /** 以 Promise 端口包装同步写入，并将宿主异常转换为标准结果。 */
   public async write(_area: StorageArea, key: string, value: string): Promise<StorageWrite> {
+    if (_area === 'queue' && !this.persistentQueue) return { kind: 'ok' }
     try {
       this.api.setStorageSync(key, value)
       return { kind: 'ok' }
@@ -48,6 +49,7 @@ export class AppStoragePort implements StoragePort {
 
   /** 仅删除调用方指定的 SDK 键，隔离宿主删除异常。 */
   public async remove(_area: StorageArea, key: string): Promise<StorageWrite> {
+    if (_area === 'queue' && !this.persistentQueue) return { kind: 'ok' }
     try {
       this.api.removeStorageSync(key)
       return { kind: 'ok' }

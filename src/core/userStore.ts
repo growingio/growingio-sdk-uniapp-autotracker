@@ -135,7 +135,7 @@ export type SessionSnapshot = Readonly<{
   lastCloseTime: number | null
 }>
 
-export type SessionStartReason = 'initial' | 'cold_start' | 'timeout' | 'user_changed' | 'collection_resumed'
+export type SessionStartReason = 'initial' | 'cold_start' | 'timeout' | 'user_changed' | 'collection_resumed' | 'scene_changed' | 'activity_timeout'
 
 export type SessionTransition = Readonly<{
   snapshot: SessionSnapshot | null
@@ -170,6 +170,7 @@ function createSession(idFactory: SessionIdFactory, reason: SessionStartReason):
 
 /** 会话状态机不依赖宿主存储，快照持久化由运行时经存储模块负责。 */
 export class SessionManager {
+  private lastActivityAt: number | null = null
   private snapshot: SessionSnapshot | null
   private lastUserId: string | null
 
@@ -239,6 +240,21 @@ export class SessionManager {
     return this.replace(createSession(this.idFactory, 'collection_resumed'), true)
   }
 
+  /** 小程序场景切换，或显式活动超时，使用同一会话替换路径。 */
+  public renew(reason: 'scene_changed' | 'activity_timeout'): SessionTransition {
+    return this.replace(createSession(this.idFactory, reason))
+  }
+
+  /** 仅配置了活动超时的小程序调用；读取快照本身不触发续期。 */
+  public touch(now: number): SessionTransition {
+    if (!validTimestamp(now)) throw new Error('invalid_session_timestamp')
+    const expired = this.snapshot !== null && this.lastActivityAt !== null && this.policy.activityTimeoutMs !== undefined
+      && now - this.lastActivityAt > this.policy.activityTimeoutMs
+    const transition = expired ? this.renew('activity_timeout') : { snapshot: this.snapshot, startedNew: false, reason: null }
+    this.lastActivityAt = now
+    return transition
+  }
+
   /** 提交新会话；后台身份或采集变化时可保留原离开时间。 */
   private replace(transition: SessionTransition, preserveCloseTime = false): SessionTransition {
     if (transition.snapshot === null) throw new Error('session_transition_missing_snapshot')
@@ -246,6 +262,7 @@ export class SessionManager {
     this.snapshot = preserveCloseTime
       ? { ...transition.snapshot, lastCloseTime: this.snapshot?.lastCloseTime ?? null }
       : transition.snapshot
+    this.lastActivityAt = null
     return { ...transition, snapshot: this.snapshot }
   }
 }

@@ -38,6 +38,9 @@ const command: GdpCommand = gdp
 
 command('registerPlugins', [{ name: 'gioEventAutoTracking' }, customerPlugin])
 command('init', 'account-id', 'data-source-id', initOptions)
+command('init', 'account-id', 'data-source-id', { uniVue: app, appId: 'wx123', keepAlive: 5, uploadInterval: 1000, sessionExpires: -1 })
+// @ts-expect-error 小程序聚合间隔必须为数值。
+command('init', 'account-id', 'data-source-id', { uniVue: app, uploadInterval: '1000' })
 command('track', 'purchase_completed', attributes)
 command('setUserId', 'user-1', 'email')
 command('setUserId', 'user-1', null)

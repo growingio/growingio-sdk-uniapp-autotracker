@@ -7,8 +7,10 @@ import { installAutoTrackDispatcher } from '../plugins/gioEventAutoTracking/inde
 import { AppRequestPort, type AppRequestApi, AppStoragePort, type AppStorageApi } from './uni.js'
 import { AppNetworkPort, type AppNetworkApi } from './network.js'
 import { AppSystemContextPort, type AppSystemApi } from './system.js'
+import type { MiniProgramTarget, SystemContextPort } from '../types/index.js'
 
 export type AppRuntimeHost = AppStorageApi & AppRequestApi & AppSystemApi & AppNetworkApi
+export type UniRuntimeHost = AppStorageApi & AppRequestApi & AppNetworkApi & Partial<AppSystemApi>
 
 export type AppRuntimeOptions = Readonly<{
   sdkVersion: string
@@ -17,11 +19,11 @@ export type AppRuntimeOptions = Readonly<{
 }>
 
 /** 读取窗口方向并复用最近有效方向，宿主失败时由方向解析器安全兜底。 */
-function orientationReader(host: AppSystemApi): () => PageOrientation {
+function orientationReader(host: Partial<AppSystemApi>): () => PageOrientation {
   const resolver = new OrientationResolver()
   return () => {
     try {
-      const value = host.getSystemInfoSync()
+      const value = host.getSystemInfoSync?.()
       const system = typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : {}
       return resolver.resolve({
         deviceOrientation: system.deviceOrientation,
@@ -36,18 +38,24 @@ function orientationReader(host: AppSystemApi): () => PageOrientation {
 
 /** 从真实 uni 宿主装配 App 运行时，核心通过端口使用能力，不接收 uni 对象。 */
 export function createAppTracker(host: AppRuntimeHost, options: AppRuntimeOptions): TrackerRuntime {
-  const storage = new AppStoragePort(host)
+  return createUniTracker(host, options, config => new AppSystemContextPort(host, options.sdkVersion, config.appVersionFallback))
+}
+
+/** uni 的存储、网络、请求与调度共用同一装配，系统字段和运行策略由目标提供。 */
+export function createUniTracker(host: UniRuntimeHost, options: AppRuntimeOptions, context: (config: ResolvedGioConfig) => SystemContextPort, target?: MiniProgramTarget): TrackerRuntime {
+  const storage = new AppStoragePort(host, target === undefined)
   const network = new AppNetworkPort(host)
   const tracker = new TrackerRuntime({
+    target,
     storage,
     /** 按当前配置创建系统读取端口，版本回退由初始化参数提供。 */
     systemContext: (config: ResolvedGioConfig) => ({
       /** 读取基础系统信息并后台刷新网络，避免慢网络回调阻塞首批事件。 */
       load: async () => {
-        const context = await new AppSystemContextPort(host, options.sdkVersion, config.appVersionFallback).load()
+        const system = await context(config).load()
         // 网络元数据在后台刷新，不能因宿主慢回调阻塞 App 首批事件。
         void network.current()
-        return { ...context, networkState: network.cached() }
+        return { ...system, networkState: network.cached() }
       },
     }),
     clock: {

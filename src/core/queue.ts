@@ -90,7 +90,7 @@ export class EventQueue {
   private nextRequestNumber = 1
 
   /** 注入队列条数、事件字节和上传批次等内部限制。 */
-  public constructor(private readonly limits: QueueLimits = DEFAULT_LIMITS) {}
+  public constructor(private readonly limits: QueueLimits = DEFAULT_LIMITS, private readonly buildEvent = buildAppEvent) {}
 
   /** 依次校验事件和队列容量，成功后以独立 JSON 副本入队并分配请求标识。 */
   public enqueue(event: ProtocolEvent): EnqueueResult {
@@ -261,7 +261,7 @@ export class EventQueue {
     if (serialized === null || utf8ByteLength(serialized) > this.limits.maxEventBytes || utf8ByteLength(`[${serialized}]`) > this.limits.maxBatchBytes) return false
     const event = candidate.event as ProtocolEvent
     if (typeof event.eventType !== 'string') return false
-    const rebuilt = buildAppEvent(event.eventType, event, true)
+    const rebuilt = this.buildEvent(event.eventType, event, true)
     return rebuilt.ok && JSON.stringify(rebuilt.event) === serialized
   }
 }

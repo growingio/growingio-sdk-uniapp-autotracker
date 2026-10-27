@@ -1,9 +1,9 @@
 # GrowingIO Measurement Protocol（全端）
 
-> 覆盖 **Web / 小程序(MinP) / App(iOS · Android · HarmonyOS)** 的事件上报协议。本文中的 App 列同时覆盖 Android、iOS 和 HarmonyOS；平台专属字段以实际端能力为准。
+> 覆盖 **Web / 小程序 / App(iOS · Android · HarmonyOS)** 的事件上报协议。本文中的 App 列同时覆盖 Android、iOS 和 HarmonyOS；当前 uni-app 小程序实现覆盖微信 `MinP` 和支付宝 `alip`，其他目标尚未实现。
 > 上报方式：`POST` 到 collect 接口，Body 为事件对象数组。每个事件 = 公共字段（context）+ 事件专有字段。
 >
-> **传统 uni-app 1.0 请求契约：**`serverUrl` 是基础地址，未传时为 `https://napi.growingio.com`，不能传入既有接口路径或 query。每批请求为 `POST {serverUrl}/v3/projects/{accountId}/collect?stm={sendAt}&compress=0`；`sendAt` 是该批实际开始发送时的 Unix 毫秒时间。请求头固定为 `Content-Type: application/json` 与 `Accept: application/json`，Body 是已完成字段清理的 JSON 事件数组。Web / 小程序后续 profile 可以替换请求适配器，但不得让宿主差异渗入 event core。
+> **传统 uni-app 1.0 请求契约：**`serverUrl` 是基础地址，未传时为 `https://napi.growingio.com`，不能传入既有接口路径或 query。每批请求为 `POST {serverUrl}/v3/projects/{accountId}/collect?stm={sendAt}&compress=0`；`sendAt` 是该批实际开始发送时的 Unix 毫秒时间。请求头固定为 `Content-Type: application/json` 与 `Accept: application/json`，Body 是已完成字段清理的 JSON 事件数组。App、微信、支付宝共用该请求契约；后续平台替换请求适配器时也不改变核心契约。
 >
 > **传统 uni-app 1.0 范围：**本协议是全端目标协议，不等于一期必须实现所有可选字段。传统 uni-app 一期只发送其开发文档明确列入一期的字段；`idfa`、`idfv`、`oaid`、`googleAdvertisingId`、`androidId`、`imei` 和 `urlScheme` 等原生增强字段属于二期。下文 App 报文仅说明字段格式，不代表一期一定带上全部选填字段。
 
@@ -33,7 +33,7 @@
 | `sessionId` | string | ● | ● | ● | 访问会话 ID |
 | `dataSourceId` | string | ● | ● | ● | 数据源 ID |
 | `eventType` | string | ● | ● | ● | 事件类型（见上表枚举） |
-| `platform` | string | ● | ● | ● | Web：`web`；小程序：`MinP`；App 固定映射为 `iOS` / `Android` / `HarmonyOS`，不透传宿主原始字符串；无法确认时初始化失败。 |
+| `platform` | string | ● | ● | ● | Web：`web`；微信小程序：`MinP`；支付宝小程序：`alip`。App 固定映射为 `iOS` / `Android` / `HarmonyOS`；与构建目标及设备 OS 分开，无法确认或明确冲突时初始化失败。 |
 | `platformVersion` | string | — | ● | ● | 小程序：宿主（微信等）版本；App：操作系统版本，正常时读取并保留真实格式；读取失败、空白或异常时写 `UNKNOWN` 并记录诊断，不阻塞采集。 |
 | `timestamp` | long | ● | ● | ● | 事件创建时的设备当前系统时间，单位毫秒。与 Android/iOS/HarmonyOS 独立 SDK 一致，不因系统时钟回拨而修正或伪造递增值；事件顺序以 `eventSequenceId` 为准 |
 | `domain` | string | ● | ● | ● | Web：网页域名；小程序：appId；App：自动读取包标识（iOS BundleID / Android 包名 / HarmonyOS Bundle Name），不可由业务覆盖；读取失败时内部值为空字符串并记录诊断，出站清理时省略该字段，不阻断采集；Hybrid 为 H5 域名 |
@@ -43,7 +43,7 @@
 | `path` | string | ● | ● | ○ | 页面路径。App 在存在当前页面上下文时携带 |
 | `query` | string | ○ | ○ | ○ | 页面查询参数。App 的普通页面取 `onLoad` 快照；`VISIT` 取 `App.onShow` 的入口参数；Hybrid 取 H5 url query |
 | `title` | string | ○ | ○ | ○ | 页面标题（App 仅 `PAGE`） |
-| `referralPage` | string | ○ | ○ | ○ | 来源页面。Web 所有事件携带；小程序 / App 仅 `PAGE` 携带 |
+| `referralPage` | string | ○ | ○ | ○ | 来源页面。Web 所有事件携带；微信／支付宝的 VISIT 可携带外部来源 appId，PAGE 使用上一页面、外部来源或场景回退；App 仍仅 PAGE 携带。 |
 | `networkState` | string | — | ● | ● | 网络类型：`2G`/`3G`/`4G`/`5G`/`WIFI`/`UNKNOWN`。App 将宿主小写值规范化为大写；`none`、`unknown`、泛化 `cellular`、超时或错误统一为 `UNKNOWN`，不猜测网络代际。 |
 | `appChannel` | string | — | ● | ○ | 小程序：场景值（`scn:xxx`）；App 三端统一使用 init 的非空 `appChannel`，不读取平台专属系统渠道。未传或空白时由出站清理省略。 |
 | `screenWidth` | int | ● | ● | ● | 屏幕宽度。小程序为物理像素；App 为设备物理像素的短边，即 `min(rawWidth, rawHeight)`，不随横竖屏交换；两级读取均失败时写 `0` 并记录诊断。 |
@@ -60,6 +60,8 @@
 | `sdkVersion` | string | ● | ● | ● | SDK 版本号 |
 
 App 事件先按字段表构建内部快照，再在进入队列、持久化和发送前经过同一份出站清理：移除 `null`、`undefined`、空字符串、空对象和空数组；保留数值 `0`（包括 `screenWidth`、`screenHeight`、经纬度与时区 `"0"`）。这与 Web / 小程序 `eventConverter` 的“空值不进入请求、`0` 保留”路径一致。`attributes` 中的布尔值在属性归一化阶段已转成字符串（如 `"false"`），不是空值，不能清掉。清理后的对象才是最终 wire event；因此表中的必填标记表示正常可用时必须构建，不要求为读取失败的系统字段伪造值。
+
+微信和支付宝使用独立字段白名单并共享出站空值清理。`platformVersion` 为 `Weixin`／`Alipay` 加可读取的宿主版本，缺失版本时保留平台名；`appVersion` 优先使用初始化配置，其次取可用的小程序账号版本，均无则省略并记录固定诊断。没有可靠页面上下文时 path／title 可省略，不拼入旧页面的 query。`domain`、身份、session、数据源、时间及 SDK 版本不能借用 App 空值降级规则省略；不携带 App 的 `appState/appName/orientation/protocolType`。
 
 ---
 
@@ -112,9 +114,9 @@ SDK 维护一份持久化的全局计数器：`VISIT`、`PAGE`、`CUSTOM`、`VIE
 
 ### 3.5 APP_CLOSED（关闭事件）
 
-无专有字段，仅携带公共字段。App 和微信小程序会在进入后台时尽力发送；Web 不产生此事件。进程被系统直接终止、崩溃或网络未完成时，不保证事件一定送达，不能把它当作可靠的“应用已关闭”确认。
+无专有字段，仅携带公共字段。App、微信和支付宝小程序会在进入后台时尽力发送；小程序同一后台周期只生成一次。Web 不产生此事件。进程被系统直接终止、崩溃或网络未完成时，不保证事件一定送达，不能把它当作可靠的“应用已关闭”确认。
 
-`APP_CLOSED.appState` 当前统一采用 `BACKGROUND`：事件由 `App.vue` 的 `onHide` 触发，语义就是“应用已进入后台”。这是简化实现和数据消费的共同口径，不是强制抹平平台差异；只有平台差异会改变事件含义、字段可用性或数据正确性时，才在 Protocol 中列出有证据的例外。Android 原生 SDK 的既有取值源于内部触发时机，不改变此事件的业务含义，因此不作为例外。
+App 的 `APP_CLOSED.appState` 继续采用 `BACKGROUND`：事件由 `App.vue` 的 `onHide` 触发，语义为“应用已进入后台”。小程序按自身字段白名单发送，不携带 `appState`；不因共用生命周期实现混入 App 专属字段。Android 原生 SDK 的既有取值源于内部触发时机，不改变本仓库 App 事件的业务含义。
 
 ### 3.6 VIEW_CLICK（元素点击事件）
 
