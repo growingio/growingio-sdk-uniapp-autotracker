@@ -33,11 +33,13 @@ export async function hashes(directory: string): Promise<Record<string, string>>
 }
 
 /** 对源码、测试、文档和发布配置共同计算构建依据，阻止复用过期交付包。 */
-export async function sourceHash(): Promise<string> {
-  const inputs = ['index.ts', 'autotrack.ts', 'vite.ts', 'package.json', 'pnpm-lock.yaml', 'tsconfig.json', 'tsconfig.build.json', 'tsconfig.dev.json', 'vitest.config.ts', 'README.md', 'LICENSE']
+export async function sourceHash(baseDirectory = root): Promise<string> {
+  const inputs = ['index.ts', 'autotrack.ts', 'vite.ts', 'package.json', 'pnpm-lock.yaml', 'tsconfig.json', 'tsconfig.build.json', 'tsconfig.dev.json', 'vitest.config.ts', 'README.md', 'LICENSE',
+    // 编译矩阵直接使用这些 demo 源码；不扫描生成的 demo/uni_modules，避免构建摘要自引用。
+    'demo/main.ts', 'demo/sdk-state.ts', 'demo/miniprogram-config.ts']
   // 测试与门禁配置也属于本次构建依据，改动后不能沿用旧交付包的检查结果。
-  for (const directory of ['src', 'doc', 'scripts', 'test', '.github/workflows']) inputs.push(...(await files(join(root, directory))).map((file) => `${directory}/${file}`))
+  for (const directory of ['src', 'doc', 'scripts', 'test', '.github/workflows']) inputs.push(...(await files(join(baseDirectory, directory))).map((file) => `${directory}/${file}`))
   const hash = createHash('sha256')
-  for (const file of inputs.sort()) hash.update(file).update('\0').update(await readFile(join(root, file))).update('\0')
+  for (const file of inputs.sort()) hash.update(file).update('\0').update(await readFile(join(baseDirectory, file))).update('\0')
   return hash.digest('hex')
 }

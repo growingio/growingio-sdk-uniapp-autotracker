@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { build } from 'esbuild'
 import { dist, hashes, metadata, modulesDir, npmDir, root, runtimeEntries, sdkName, sourceHash } from './release-layout.js'
+import { MINI_PROGRAM_TARGETS } from '../src/constants/miniprogram.js'
 
 // 只清理固定生成目录；公开入口和 src 中的开发源码不受影响。
 for (const output of [join(dist, 'build'), npmDir, modulesDir]) await rm(output, { recursive: true, force: true })
@@ -63,7 +64,7 @@ await writeFile(join(modulesDir, 'package.json'), `${JSON.stringify({
   ...packageJson, id: sdkName, displayName: 'GrowingIO uni-app SDK', keywords: ['GrowingIO', '统计', 'uni-app'],
   uni_modules: { dependencies: [], encrypt: [], platforms: { client: { 'uni-app': {
     vue: { vue2: 'x', vue3: '-' }, app: { vue: '-', nvue: 'x', android: '-', ios: '-', harmony: '-' },
-    web: { chrome: 'x', safari: 'x' }, mp: { weixin: '-', alipay: '-' },
+    web: { chrome: 'x', safari: 'x' }, mp: Object.fromEntries(MINI_PROGRAM_TARGETS.map(target => [target.slice(3), '-'])),
   } } } },
 }, null, 2)}\n`)
 

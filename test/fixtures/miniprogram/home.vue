@@ -9,6 +9,8 @@ const complete = (event: { detail: { value: string } }) => { value.value = event
 
 <template>
   <view>
+    <navigator url="/subpackage/detail">打开分包页面</navigator>
+    <navigator url="/pages/detail/index" open-type="switchTab">切换 tab</navigator>
     <button id="save" @tap="save($event)">保存</button>
     <input v-model="value" data-growing-track @blur="complete($event)" />
     <input password data-growing-track @blur="complete($event)" />

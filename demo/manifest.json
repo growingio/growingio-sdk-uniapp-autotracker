@@ -10,6 +10,12 @@
     "vueVersion" : "3",
     "mp-weixin" : { "appid" : "", "usingComponents" : true },
     "mp-alipay" : { "appid" : "", "usingComponents" : true },
+    "mp-baidu" : { "appid" : "", "usingComponents" : true },
+    "mp-toutiao" : { "appid" : "", "usingComponents" : true },
+    "mp-qq" : { "appid" : "", "usingComponents" : true },
+    "mp-kuaishou" : { "appid" : "", "usingComponents" : true },
+    "mp-jd" : { "appid" : "", "usingComponents" : true },
+    "mp-xhs" : { "appid" : "", "usingComponents" : true },
     "app-harmony" : {
         "distribute" : {
             "bundleName" : "com.growingio.analytics",

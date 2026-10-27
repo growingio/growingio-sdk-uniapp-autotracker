@@ -5,6 +5,7 @@ import { transformAutoTrackSfc } from '../src/compiler/vite.js'
 const root = resolve(import.meta.dirname, '..')
 const required = [
   'demo/App.vue',
+  'demo/miniprogram-config.ts',
   'autotrack.ts',
   'demo/vite.config.ts',
   'demo/pages/index/index.vue',
