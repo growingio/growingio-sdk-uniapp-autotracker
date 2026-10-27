@@ -16,6 +16,7 @@ const command: GdpCommand = sdkGdp
 
 command('registerPlugins', [{ name: 'gioEventAutoTracking' }, plugin])
 command('init', 'account-id', 'data-source-id', options)
+command('init', 'account-id', 'data-source-id', { uniVue: app, appId: 'wx123', keepAlive: 5, uploadInterval: 1000, sessionExpires: -1 })
 command('track', 'purchase_completed', attributes)
 command('setOptions', { dataCollect: true })
 

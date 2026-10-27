@@ -63,7 +63,7 @@ await writeFile(join(modulesDir, 'package.json'), `${JSON.stringify({
   ...packageJson, id: sdkName, displayName: 'GrowingIO uni-app SDK', keywords: ['GrowingIO', '统计', 'uni-app'],
   uni_modules: { dependencies: [], encrypt: [], platforms: { client: { 'uni-app': {
     vue: { vue2: 'x', vue3: '-' }, app: { vue: '-', nvue: 'x', android: '-', ios: '-', harmony: '-' },
-    web: { chrome: 'x', safari: 'x' }, mp: { weixin: 'x' },
+    web: { chrome: 'x', safari: 'x' }, mp: { weixin: '-', alipay: '-' },
   } } } },
 }, null, 2)}\n`)
 
