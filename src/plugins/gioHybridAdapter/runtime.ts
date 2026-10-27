@@ -390,14 +390,17 @@ export class UniMPRuntime {
     this.inFlight = null; this.release(entry)
     if (reply.status === 'rejected') {
       if (reply.code === 'identity_not_allowed') this.identityWrite = false
-      if (entry.method !== 'dispatchEvent' || INCOMPATIBLE.includes(reply.code) || DISCONNECT.includes(reply.code)) {
-        if (entry.method !== 'dispatchEvent') this.identityBlocked = true
+      const pendingIdentityRevoked = reply.code === 'identity_not_allowed' && this.queue.some(pending => pending.method !== 'dispatchEvent')
+      if (entry.method !== 'dispatchEvent' || pendingIdentityRevoked || INCOMPATIBLE.includes(reply.code) || DISCONNECT.includes(reply.code)) {
+        if (entry.method !== 'dispatchEvent' || pendingIdentityRevoked) this.identityBlocked = true
         this.operationError(entry, reply.code, 'dispatch', 'rejected')
         this.reset(reply.code, INCOMPATIBLE.includes(reply.code) ? 'incompatible' : 'suspended')
         return
       }
+      const revokedAttributes = reply.code === 'identity_not_allowed' ? this.removeQueuedUserAttributes() : []
       if (entry.eventType === 'PAGE') this.unavailable(entry.page!)
       this.operationError(entry, reply.code, 'dispatch', 'rejected')
+      if (revokedAttributes[0] !== undefined) this.operationError(revokedAttributes[0], 'identity_not_allowed', 'queue', 'not_sent', revokedAttributes.length)
     } else {
       if (entry.eventType === 'PAGE') entry.page!.status = 'accepted'
       if (entry.method !== 'dispatchEvent' && this.identityBlocked) {
@@ -435,6 +438,12 @@ export class UniMPRuntime {
     this.operationError(entry, code, 'dispatch', 'unknown'); this.reset(code, 'suspended')
   }
   private release(entry: Entry): void { this.cancel(entry.timer); this.bytes -= entry.bytes }
+  private removeQueuedUserAttributes(): Entry[] {
+    const removed = this.queue.filter(entry => entry.eventType === 'LOGIN_USER_ATTRIBUTES')
+    this.queue = this.queue.filter(entry => entry.eventType !== 'LOGIN_USER_ATTRIBUTES')
+    for (const entry of removed) this.release(entry)
+    return removed
+  }
   private dropPending(code: HybridErrorCode): void {
     const pending = this.queue
     this.queue = []
