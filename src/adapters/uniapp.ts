@@ -66,13 +66,13 @@ function pageTitle(instance: VueInstance, appRoutes = true): string | null {
 }
 
 /** 安装一个全局 Vue mixin，以 WeakMap 保存宿主页面与桥接器的对应关系；核心仅接收路由、query 和标题快照。 */
-export function installUniAppLifecycle(app: UniAppVueApp, target: LifecycleTarget, options: Readonly<{ host?: unknown; miniprogram?: MiniProgramTarget }> = {}): void {
+export function installUniAppLifecycle(app: UniAppVueApp, target: LifecycleTarget, options: Readonly<{ host?: unknown; miniprogram?: MiniProgramTarget; unimp?: boolean }> = {}): void {
   const host = record(options.host ?? (globalThis as Record<string, unknown>).uni)
   const miniprogram = options.miniprogram
   const appBridge = createAppLifecycleBridge(target)
   let launch: AppEntrySnapshot | null = null
   let firstShow = true
-  const isApp = (instance: VueInstance) => options.miniprogram === undefined ? !isPage(instance)
+  const isApp = (instance: VueInstance) => options.miniprogram === undefined && !options.unimp ? !isPage(instance)
     : (instance.$mpType ?? record(instance.$options)?.mpType) === 'app'
   const entry = (value: unknown, launching: boolean): AppEntrySnapshot => {
     if (options.miniprogram === undefined) return appEntrySnapshot(value)
@@ -102,7 +102,8 @@ export function installUniAppLifecycle(app: UniAppVueApp, target: LifecycleTarge
     if (existing !== undefined) return existing
     const route = routeOf(instance, miniprogram !== undefined)
     if (route === null) return null
-    const bridge = createPageLifecycleBridge(target, `${route}-${nextPageId++}`, options.miniprogram)
+    const instanceId = options.unimp ? `unimp-page-${nextPageId++}` : `${route}-${nextPageId++}`
+    const bridge = createPageLifecycleBridge(target, instanceId, options.miniprogram)
     pages.set(instance, bridge)
     return bridge
   }

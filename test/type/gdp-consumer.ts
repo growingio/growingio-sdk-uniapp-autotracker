@@ -49,6 +49,23 @@ command('setUserAttributes', attributes)
 command('setOptions', { dataCollect: true })
 command('setLocation', 30.2741, 120.1551)
 command('clearLocation')
+command('identify', 'assigned-device')
+command('identify', 123)
+const gioInfo: string | null = command('getGioInfo')
+void gioInfo
+command('registerPlugins', [{ name: 'gioHybridAdapter', options: { transport: 'native-module', onReady: state => { void state.identityBlocked }, onError: error => { void error.outcome } } }])
+command('registerPlugins', [{ name: 'gioNativeIdentifiers', options: { fields: ['oaid', 'androidId'] } }])
+command('init', 'account-id', 'data-source-id', { uniVue: app, runtime: 'unimp', appId: '__UNI__guest', idMapping: true })
+command('init', 'account-id', 'data-source-id', { uniVue: app, appId: 'wx123', forceLogin: true,
+  legacyMiniProgramIdentity: { appId: 'wx123', accountId: 'account-id', dataSourceId: 'data-source-id' } })
+// @ts-expect-error identify 不接受对象。
+command('identify', { id: 'device' })
+// @ts-expect-error getGioInfo 返回可空查询串，不能当作布尔命令。
+const infoAccepted: boolean = command('getGioInfo')
+// @ts-expect-error 不提供未知的原生传输实现。
+command('registerPlugins', [{ name: 'gioHybridAdapter', options: { transport: 'host-event' } }])
+// @ts-expect-error 标识增强需要明确选择已支持字段。
+command('registerPlugins', [{ name: 'gioNativeIdentifiers', options: { fields: ['unknown'] } }])
 
 // @ts-expect-error 未知命令不属于客户 API。
 command('getTracker')
@@ -60,10 +77,3 @@ command('setOptions', { idMapping: true })
 command('setLocation', '30.2741', 120.1551)
 // @ts-expect-error init 必须接收 SDK 使用的 Vue 应用引用。
 command('init', 'account-id', 'data-source-id', { dataCollect: true })
-
-command('identify', 'assigned-device')
-command('identify', 123)
-const info: string | null = command('getGioInfo')
-void info
-command('registerPlugins', [{ name: 'gioNativeIdentifiers', options: { fields: ['oaid', 'idfv'] } }])
-command('init', 'account-id', 'data-source-id', { uniVue: app, forceLogin: true })

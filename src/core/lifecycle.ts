@@ -3,11 +3,12 @@ import type { EventSequenceSnapshot } from './dataStore/index.js'
 import type { IdentityHydration, QueueHydration, SessionHydration } from './storage/index.js'
 import type { SystemContext } from '../types/index.js'
 import { validNativeIdentifierOptions, type NativeIdentifierOptions } from '../plugins/gioNativeIdentifiers/index.js'
+import { validHybridOptions, type HybridOptions } from '../plugins/gioHybridAdapter/contract.js'
 
 export type GioBuiltinPlugin = Readonly<{
   name: 'gioEventAutoTracking'
   options?: Readonly<Record<string, never>>
-}> | Readonly<{ name: 'gioNativeIdentifiers'; options: NativeIdentifierOptions }>
+}> | Readonly<{ name: 'gioNativeIdentifiers'; options: NativeIdentifierOptions }> | Readonly<{ name: 'gioHybridAdapter'; options?: HybridOptions }>
 
 export type PluginRegistrationCode = 'plugin_invalid' | 'plugin_duplicate' | 'plugin_registration_closed'
 export type PluginRegistrationResult = Readonly<{ ok: true } | { ok: false; code: PluginRegistrationCode }>
@@ -17,6 +18,7 @@ export function isBuiltinPlugin(value: unknown): value is GioBuiltinPlugin {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const record = value as Readonly<Record<string, unknown>>
   if (record.name === 'gioNativeIdentifiers') return validNativeIdentifierOptions(record.options)
+  if (record.name === 'gioHybridAdapter') return validHybridOptions(record.options)
   if (record.name !== 'gioEventAutoTracking') return false
   return record.options === undefined
     || (typeof record.options === 'object' && record.options !== null && !Array.isArray(record.options) && Object.keys(record.options).length === 0)
@@ -86,6 +88,7 @@ export class TrackerLifecycle {
     if (this.statusValue !== 'new') return { ok: false, code: 'already_initialized' }
     const normalized = normalizeInitOptions(options, this.target)
     if (!normalized.ok) return { ok: false, code: 'invalid_config' }
+    if (this.plugins.plugins().some(plugin => plugin.name === 'gioHybridAdapter')) return { ok: false, code: 'invalid_config' }
     if (this.target !== undefined && this.plugins.plugins().some(plugin => plugin.name === 'gioNativeIdentifiers')) return { ok: false, code: 'invalid_config' }
     this.configValue = normalized.config
     this.statusValue = 'initializing'

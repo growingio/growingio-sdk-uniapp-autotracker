@@ -19,6 +19,12 @@ command('init', 'account-id', 'data-source-id', options)
 command('init', 'account-id', 'data-source-id', { uniVue: app, appId: 'wx123', keepAlive: 5, uploadInterval: 1000, sessionExpires: -1 })
 command('track', 'purchase_completed', attributes)
 command('setOptions', { dataCollect: true })
+command('identify', 'device')
+const info: string | null = command('getGioInfo')
+void info
+command('registerPlugins', [{ name: 'gioHybridAdapter', options: { onReady: state => { void state.collecting }, onError: error => { void error.code } } }])
+command('registerPlugins', [{ name: 'gioNativeIdentifiers', options: { fields: ['idfa', 'idfv'] } }])
+command('init', 'account-id', 'data-source-id', { runtime: 'unimp', appId: '__UNI__guest', uniVue: app })
 
 gdp('clearUserId')
 gdp('setLocation', 30.2741, 120.1551)

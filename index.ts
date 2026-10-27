@@ -3,6 +3,9 @@ import { SDK_VERSION, normalizeInitOptions, type GioInitOptions } from './src/co
 import { createMiniProgramTracker, matchesMiniProgramAppId, type MiniProgramHost } from './src/platform/miniprogram.js'
 import { resolveRuntimeTarget, type RuntimeTarget } from './src/platform/resolve.js'
 import { isBuiltinPlugin, snapshotBuiltinPlugin, type GioBuiltinPlugin } from './src/core/lifecycle.js'
+import { normalizeUniMPConfig, type UniMPInitOptions } from './src/plugins/gioHybridAdapter/contract.js'
+import { createUniMPTracker } from './src/platform/unimp.js'
+import type { NativePluginHost } from './src/platform/native-identifiers.js'
 import { TrackerRuntime } from './src/core/growingIO.js'
 import { installUniAppLifecycle, type UniAppVueApp } from './src/adapters/uniapp.js'
 import { guid } from './src/utils/tools.js'
@@ -25,7 +28,7 @@ function createGioTracker(host: AppRuntimeHost | MiniProgramHost, options: AppRu
 /** 生命周期安装器所需的最小 Vue 应用接口，createSSRApp(App) 的结果满足此约束。 */
 export type GioUniVueApp = UniAppVueApp
 
-export type GioGdpInitOptions = Omit<GioInitOptions, 'accountId' | 'dataSourceId'> & { runtime?: 'app' } & Readonly<{
+export type GioGdpInitOptions = (Omit<GioInitOptions, 'accountId' | 'dataSourceId'> & { runtime?: 'app' } | Omit<UniMPInitOptions, 'accountId' | 'dataSourceId'>) & Readonly<{
   /** 由 createSSRApp(App) 返回的 Vue 应用，SDK 通过它接管 App 和 Page 生命周期。 */
   uniVue: GioUniVueApp
 }>
@@ -137,9 +140,22 @@ export const gdp = ((command: unknown, ...args: readonly unknown[]): boolean | s
     const input = record(args[2])
     if (input === null || !isUniVueApp(input.uniVue)) return false
     const { uniVue, sdkVersion: _ignoredVersion, ...init } = input
+    if (input.runtime === 'unimp') {
+      const value = { ...init, accountId: args[0], dataSourceId: args[1] }
+      if (normalizeUniMPConfig(value) === null || !pendingGdpPlugins.some(plugin => isBuiltinPlugin(plugin) && plugin.name === 'gioHybridAdapter')
+        || pendingGdpPlugins.some(plugin => isBuiltinPlugin(plugin) && plugin.name === 'gioNativeIdentifiers')) return false
+      const host = record(typeof uni === 'undefined' ? (globalThis as Readonly<Record<string, unknown>>).uni : uni) ?? {}
+      // 不要求本地 App 的存储 / 请求 / 系统 API；缺少 module 在首次前台握手时报告。
+      const tracker = createUniMPTracker(host as NativePluginHost)
+      if (!tracker.registerPlugins(...pendingGdpPlugins.filter(isBuiltinPlugin)) || !tracker.init(value)) return false
+      singleton = tracker; gdpTracker = tracker
+      installUniAppLifecycle(uniVue, tracker, { host, unimp: true })
+      installCustomerPlugins(tracker)
+      return true
+    }
     if (input.runtime !== undefined && input.runtime !== 'app') return false
     const runtime = runtimeHost()
-    if (runtime === null) return false
+    if (runtime === null || pendingGdpPlugins.some(plugin => isBuiltinPlugin(plugin) && plugin.name === 'gioHybridAdapter')) return false
     const { host, target } = runtime
     if (target !== 'app' && pendingGdpPlugins.some(plugin => isBuiltinPlugin(plugin) && plugin.name === 'gioNativeIdentifiers')) return false
     const config = normalizeInitOptions({ ...init, accountId: args[0], dataSourceId: args[1] }, target === 'app' ? undefined : target)
@@ -189,4 +205,5 @@ declare global {
 export default gdp
 
 export type { GioBuiltinPlugin } from './src/core/lifecycle.js'
+export type { HybridOptions, HybridReady, HybridError, HybridErrorCode } from './src/plugins/gioHybridAdapter/contract.js'
 export type { NativeIdentifierField } from './src/plugins/gioNativeIdentifiers/index.js'
