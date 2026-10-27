@@ -83,7 +83,9 @@ describe('forceLogin and embedded identity', () => {
     qs = new URLSearchParams(tracker.getGioInfo()!)
     expect(qs.get('gionewdevice')).toBe('false')
     tracker.setDataCollect(false)
-    expect(tracker.getGioInfo()).toBe('giodatacollect=false')
+    expect(Object.fromEntries(new URLSearchParams(tracker.getGioInfo()!))).toEqual({
+      gioappid: 'example.app', gioprojectid: 'account', giodatasourceid: 'source', giodatacollect: 'false',
+    })
   })
 
   it.each([null, undefined, '', ' ', '-', 'null', 'undefined', 0, -1, Infinity, NaN, {}, '\ud800', 'a'.repeat(1001)])('rejects invalid assigned identity %j', value => {
@@ -123,7 +125,9 @@ describe('forceLogin and embedded identity', () => {
   })
   it('handles an unavailable session and malformed URI identity safely', () => {
     const input = { collecting: true, appId: 'app', accountId: 'a', dataSourceId: 's', platform: 'MinP', sessionId: 'session', identity: { deviceId: 'device', userId: null, userKey: null }, idMapping: false, newDevice: false }
-    expect(embeddedGioInfo({ ...input, collecting: false })).toBe('giodatacollect=false')
+    expect(Object.fromEntries(new URLSearchParams(embeddedGioInfo({ ...input, collecting: false })!))).toEqual({
+      gioappid: 'app', gioprojectid: 'a', giodatasourceid: 's', giodatacollect: 'false',
+    })
     expect(embeddedGioInfo({ ...input, sessionId: null })).toBeNull()
     expect(embeddedGioInfo({ ...input, appId: '\ud800' })).toBeNull()
   })

@@ -99,7 +99,7 @@ import assert from 'node:assert/strict';import gdp from ${JSON.stringify(entry)}
 const stored=new Map(),hooks=[],sent=[];let tracker;
 globalThis.uni={
  getStorageSync:key=>stored.get(key),setStorageSync:(key,value)=>stored.set(key,value),removeStorageSync:key=>stored.delete(key),
- getDeviceInfo:()=>({platform:'android',osVersion:'14'}),getSystemInfoSync:()=>({}),getAppBaseInfo:()=>({}),
+ getDeviceInfo:()=>({platform:'android',osVersion:'14'}),getSystemInfoSync:()=>({}),getAppBaseInfo:()=>({packageName:'example.app'}),
  getNetworkType:options=>options.success({networkType:'wifi'}),request:options=>{sent.push(...JSON.parse(options.data));options.success({statusCode:204});},
  requireNativePlugin:name=>{
   assert.equal(name,'GrowingIOUniAppEnhance');
@@ -110,6 +110,7 @@ gdp('registerPlugins',[{name:'gioNativeIdentifiers',options:{fields:['oaid']}},{
 assert.equal(gdp('init','account','source',{uniVue:{mixin:value=>hooks.push(value)},forceLogin:true}),true);hooks[0].onShow.call({},{});await tracker.whenReady();
 assert.equal(gdp('track','waiting'),true);assert.equal(sent.length,0);assert.equal(gdp('getGioInfo'),null);assert.equal(gdp('identify','assigned-device'),true);assert.ok(sent.every(event=>event.deviceId==='assigned-device'));
 assert.equal(new URLSearchParams(gdp('getGioInfo')).get('giou'),'assigned-device');gdp('setUserId','A');gdp('setUserId','B');assert.ok(sent.some(event=>event.eventType==='VISIT'&&event.oaid==='native-oaid'));assert.ok(sent.filter(event=>event.eventType!=='VISIT').every(event=>!('oaid'in event)));
+assert.equal(gdp('setOptions',{dataCollect:false}),true);assert.deepEqual(Object.fromEntries(new URLSearchParams(gdp('getGioInfo'))),{gioappid:'example.app',gioprojectid:'account',giodatasourceid:'source',giodatacollect:'false'});
 hooks[0].onHide.call({});console.log('advanced_consumer_passed:${channel}');
 `)
     execFileSync(process.execPath, [join(project, 'advanced-consumer.mjs')], { cwd: project, stdio: 'inherit', timeout: 30_000 })

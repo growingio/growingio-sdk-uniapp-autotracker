@@ -12,13 +12,15 @@ export function embeddedGioInfo(input: Readonly<{
   idMapping: boolean
   newDevice: boolean
 }>): string | null {
-  if (!input.collecting) return 'giodatacollect=false'
-  if (input.sessionId === null) return null
+  if (input.appId.trim() === '' || input.collecting && input.sessionId === null) return null
   const fields: Record<string, string | boolean> = {
     gioappid: input.appId, gioprojectid: input.accountId, giodatasourceid: input.dataSourceId,
-    gioplatform: input.platform, gios: input.sessionId, giou: input.identity.deviceId,
-    giocs1: input.identity.userId ?? '', gionewdevice: input.newDevice, giodatacollect: true,
-    ...(input.idMapping ? { giouserkey: input.identity.userKey ?? '' } : {}),
+    giodatacollect: input.collecting,
+    ...(input.collecting ? {
+      gioplatform: input.platform, gios: input.sessionId!, giou: input.identity.deviceId,
+      giocs1: input.identity.userId ?? '', gionewdevice: input.newDevice,
+      ...(input.idMapping ? { giouserkey: input.identity.userKey ?? '' } : {}),
+    } : {}),
   }
   try { return Object.entries(fields).map(([key, value]) => `${key}=${encodeURIComponent(String(value))}`).join('&') }
   catch { return null }

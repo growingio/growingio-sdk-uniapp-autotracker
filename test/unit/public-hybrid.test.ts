@@ -91,7 +91,7 @@ describe('public advanced and uniMP entry', () => {
     const requests: unknown[] = []; const storage = new Map<string, unknown>(); const hooks: Record<string, Function>[] = []
     vi.stubGlobal('uni', {
       getStorageSync: (key: string) => storage.get(key), setStorageSync: (key: string, value: unknown) => storage.set(key, value), removeStorageSync: (key: string) => storage.delete(key),
-      getDeviceInfo: () => ({ platform: 'android', osVersion: '14' }), getSystemInfoSync: () => ({}), getAppBaseInfo: () => ({}),
+      getDeviceInfo: () => ({ platform: 'android', osVersion: '14' }), getSystemInfoSync: () => ({}), getAppBaseInfo: () => ({ packageName: 'example.app' }),
       getNetworkType: (options: { success: (value: unknown) => void }) => options.success({ networkType: 'wifi' }),
       request: (options: { data: string; success: (value: unknown) => void }) => { requests.push(JSON.parse(options.data)); options.success({ statusCode: 204 }) },
     })

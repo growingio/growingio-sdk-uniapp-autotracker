@@ -243,10 +243,9 @@ export class LocalTrackerRuntime {
     const config = this.lifecycle.config()
     const state = this.state
     if (!this.ready() || config === null || state === null) return null
-    if (!config.dataCollect) return 'giodatacollect=false'
-    if (this.awaitingIdentify) return null
+    if (config.dataCollect && this.awaitingIdentify) return null
     const session = state.sessions.current()?.sessionId ?? null
-    return embeddedGioInfo({ collecting: true, appId: config.miniprogram?.appId ?? state.domain,
+    return embeddedGioInfo({ collecting: config.dataCollect, appId: config.miniprogram?.appId ?? state.domain,
       accountId: config.accountId, dataSourceId: config.dataSourceId, platform: state.platform,
       sessionId: session, identity: state.identity.value, idMapping: config.idMapping,
       newDevice: state.newDevice && session !== null && session === this.firstDeviceSession })
