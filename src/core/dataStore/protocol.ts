@@ -21,11 +21,11 @@ const COMMON_FIELDS = [
 const EVENT_FIELDS: Readonly<Record<AppEventType, readonly string[]>> = {
   VISIT: ['eventSequenceId'],
   PAGE: ['eventSequenceId', 'orientation', 'protocolType', 'title', 'referralPage'],
-  CUSTOM: ['eventSequenceId', 'eventName', 'pageShowTimestamp', 'attributes'],
+  CUSTOM: ['eventSequenceId', 'eventName', 'attributes'],
   LOGIN_USER_ATTRIBUTES: ['attributes'],
   APP_CLOSED: [],
-  VIEW_CLICK: ['eventSequenceId', 'pageShowTimestamp', 'textValue', 'xpath', 'index', 'hyperlink'],
-  VIEW_CHANGE: ['eventSequenceId', 'pageShowTimestamp', 'textValue', 'xpath'],
+  VIEW_CLICK: ['eventSequenceId', 'textValue', 'xpath', 'index', 'hyperlink'],
+  VIEW_CHANGE: ['eventSequenceId', 'textValue', 'xpath'],
 }
 
 const REQUIRED_EVENT_FIELDS: Readonly<Record<AppEventType, readonly string[]>> = {
@@ -34,8 +34,8 @@ const REQUIRED_EVENT_FIELDS: Readonly<Record<AppEventType, readonly string[]>> =
   CUSTOM: ['eventSequenceId', 'eventName'],
   LOGIN_USER_ATTRIBUTES: ['attributes'],
   APP_CLOSED: [],
-  VIEW_CLICK: ['eventSequenceId', 'pageShowTimestamp', 'xpath'],
-  VIEW_CHANGE: ['eventSequenceId', 'pageShowTimestamp', 'xpath'],
+  VIEW_CLICK: ['eventSequenceId', 'xpath'],
+  VIEW_CHANGE: ['eventSequenceId', 'xpath'],
 }
 
 const REQUIRED_COMMON_FIELDS = [
@@ -71,7 +71,7 @@ function validWireField(key: string, value: unknown, mini = false): boolean {
   if (mini && (key === 'deviceType' || key === 'operatingSystem')) return typeof value === 'string' && /^(Weixin|Alipay)-.+$/.test(value)
   switch (key) {
     case 'eventSequenceId': return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
-    case 'timestamp': case 'pageShowTimestamp': return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+    case 'timestamp': return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
     case 'screenWidth': case 'screenHeight': return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
     case 'index': return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value < 2147483647
     case 'latitude': case 'longitude': return typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= (key === 'latitude' ? 90 : 180)

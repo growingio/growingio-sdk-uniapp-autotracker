@@ -72,7 +72,7 @@
 |---|---|---|
 | module 名称、签名、真实来源 / 执行进程 | JS 面向 invoke(request, callback)，平台适配器映射实际注册名 | Android / iOS 各一次真实 wgt 请求与串行执行记录 |
 | 宿主会话与容器生命周期 | Native 聚合原生页和 uniMP；客体不产 VISIT / APP_CLOSED | 多进程、预加载、全屏切换、桌面与关闭路径的真机事件 |
-| 两端 builder 与序列化保留字段 | 全部草稿时间、pageShowTimestamp、guest domain 均保留，身份在 Native 固定 | 原生队列、JSON / Protobuf、Collector 对照，不能只看 HTTP 成功 |
+| 两端 builder 与序列化保留字段 | 全部草稿时间、guest domain 均保留，身份在 Native 固定 | 原生队列、JSON / Protobuf、Collector 对照，不能只看 HTTP 成功 |
 | domain=appId、platform=原生 OS | 沿 Hybrid 宿主数据源，客体通过 domain 区分 | 服务端归档、页面统计、两个客体同路径查询结果；该组合仍是协议扩展提案 |
 | Native 身份 / session 更新时的页面关联 | 不让 JS 猜测宿主新 session；保持当前页面观察时间 | T07 / T29 核验服务端是否接受跨原生会话的页面观察关联；若要求新会话 PAGE，先补明确通知 / 补页契约 |
 | 原生自动采集壳层重复 | 仅排除 uniMP 壳 / 渲染视图重复采集，保留其他原生页 | 原生与客体事件对照，不提前标记两端 autoClick / autoChange 支持 |

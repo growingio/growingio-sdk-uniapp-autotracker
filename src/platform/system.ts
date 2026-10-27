@@ -105,9 +105,12 @@ export class AppSystemContextPort implements SystemContextPort {
     const physicalWidth = Math.round(width * ratio)
     const physicalHeight = Math.round(height * ratio)
     const domain = (targetPlatform === 'iOS' ? text(app.bundleId) : targetPlatform === 'Android' ? text(app.packageName) : text(app.bundleName ?? app.packageName)) || text(app.hostPackageName ?? system.hostPackageName) || nativeDomain(targetPlatform)
+    const osVersion = text(device.osVersion, text(system.osVersion, text(device.platformVersion, text(system.system).replace(/^(?:iOS|Android|HarmonyOS)\s*/i, '') || 'UNKNOWN')))
     return {
       platform: targetPlatform,
-      platformVersion: text(device.osVersion, text(system.osVersion, text(device.platformVersion, text(system.system).replace(/^(?:iOS|Android|HarmonyOS)\s*/i, '') || 'UNKNOWN'))),
+      // 鸿蒙原生 SDK 使用 deviceInfo.displayVersion，对应 uni 的 osHarmonyDisplayVersion。
+      platformVersion: targetPlatform === 'HarmonyOS'
+        ? text(device.osHarmonyDisplayVersion, text(system.osHarmonyDisplayVersion, osVersion)) : osVersion,
       domain,
       appState: 'FOREGROUND',
       appName: text(app.appName),

@@ -51,7 +51,7 @@ describe('Protocol core', () => {
     const { appVersion: _emptyAppVersion, ...nonEmptyContext } = context
     expect(result).toStrictEqual({
       ok: true,
-      event: { ...nonEmptyContext, eventType: 'VIEW_CHANGE', eventSequenceId: 1, pageShowTimestamp: 2, xpath: 'page#change#switch' },
+      event: { ...nonEmptyContext, eventType: 'VIEW_CHANGE', eventSequenceId: 1, xpath: 'page#change#switch' },
     })
   })
 
@@ -70,7 +70,7 @@ describe('Protocol core', () => {
 
   it('rejects required values that sanitization would remove', () => {
     expect(buildAppEvent('VIEW_CLICK', {
-      ...context, eventSequenceId: 1, pageShowTimestamp: 2, xpath: '',
+      ...context, eventSequenceId: 1, xpath: '',
     })).toStrictEqual({ ok: false, code: 'missing_required_field' })
     expect(buildAppEvent('LOGIN_USER_ATTRIBUTES', {
       ...context, attributes: {},

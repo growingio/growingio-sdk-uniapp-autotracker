@@ -45,11 +45,12 @@ describe('EventDispatcher', () => {
 
     expect(queue.snapshot()[0]?.event).toStrictEqual(expect.objectContaining({
       eventType: 'CUSTOM', eventName: 'product_view', eventSequenceId: 1,
-      path: 'pages/detail/index', query: 'id=42', pageShowTimestamp: 99,
+      path: 'pages/detail/index', query: 'id=42',
       attributes: { count: '0', enabled: 'false', tags: 'a||b' },
     }))
     expect(queue.snapshot()[0]?.event).not.toHaveProperty('title')
     expect(queue.snapshot()[0]?.event).not.toHaveProperty('referralPage')
+    expect(queue.snapshot()[0]?.event).not.toHaveProperty('pageShowTimestamp')
   })
 
   it('refuses an invalid name without advancing the shared event sequence', () => {
@@ -74,11 +75,12 @@ describe('EventDispatcher', () => {
     expect(dispatcher.autoTrack({ kind: 'click', xpath: 'buy#save', textValue: 'Buy', index: 1, hyperlink: '/buy' })).toBe(true)
     expect(dispatcher.autoTrack({ kind: 'change', xpath: '#search', textValue: 'false' })).toBe(true)
     expect(queue.snapshot().map((entry) => entry.event)).toMatchObject([
-      { eventType: 'VIEW_CLICK', eventSequenceId: 1, path: 'pages/detail/index', pageShowTimestamp: 99, xpath: 'buy#save', index: 1, hyperlink: '/buy' },
+      { eventType: 'VIEW_CLICK', eventSequenceId: 1, path: 'pages/detail/index', xpath: 'buy#save', index: 1, hyperlink: '/buy' },
       { eventType: 'VIEW_CHANGE', eventSequenceId: 2, xpath: '#search', textValue: 'false' },
     ])
     expect(queue.snapshot()[1]?.event).not.toHaveProperty('index')
     expect(queue.snapshot()[1]?.event).not.toHaveProperty('hyperlink')
     expect(queue.snapshot()[1]?.event).not.toHaveProperty('eventName')
+    for (const { event } of queue.snapshot()) expect(event).not.toHaveProperty('pageShowTimestamp')
   })
 })

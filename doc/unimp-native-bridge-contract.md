@@ -168,19 +168,19 @@ hello 不改变身份、不产生分析事件，但会更新连接绑定，因�
 
 ### 4.1 wire 白名单
 
-所有草稿必须包含 eventType 和 timestamp。timestamp / pageShowTimestamp 是非负安全整数 Unix 毫秒数，保留真实观察值，不因时钟回拨重写。业务排队顺序与超时不用它们决定。可选空字段在 JS 白名单构建后省略；Native 不自动补造页面 / 业务字段。
+所有草稿必须包含 eventType 和 timestamp。timestamp 是非负安全整数 Unix 毫秒数，保留真实观察值，不因时钟回拨重写。业务排队顺序与超时不用它决定。可选空字段在 JS 白名单构建后省略；Native 不自动补造页面 / 业务字段。
 
 | eventType | 必填字段（除共同字段） | 可选字段 | pageViewId |
 |---|---|---|---|
 | PAGE | path | query、title、referralPage | 必填，每次新观察点不同 |
-| CUSTOM | eventName | attributes；有关联页时 path、query、pageShowTimestamp | 有当前页面时必填；无页面时不带 |
-| VIEW_CLICK | path、pageShowTimestamp、xpath | query、textValue、index、hyperlink | 必填 |
-| VIEW_CHANGE | path、pageShowTimestamp、xpath | query、textValue | 必填 |
+| CUSTOM | eventName | attributes；有关联页时 path、query | 有当前页面时必填；无页面时不带 |
+| VIEW_CLICK | path、xpath | query、textValue、index、hyperlink | 必填 |
+| VIEW_CHANGE | path、xpath | query、textValue | 必填 |
 | LOGIN_USER_ATTRIBUTES | 非空 attributes | 无 | 禁止 |
 
-path / xpath 是非空字符串，query / title / referralPage 是字符串；总长度受报文限额约束。CUSTOM.eventName 使用当前 `^[A-Za-z_][A-Za-z0-9_]{0,99}$`。带页面的 CUSTOM 必须同时带 path 与 pageShowTimestamp；无页面的 CUSTOM 不得携带 path / query / pageShowTimestamp。VIEW_CHANGE 禁止 index / hyperlink；USER_ATTRIBUTES 不附带无意义的页面字段。
+path / xpath 是非空字符串，query / title / referralPage 是字符串；总长度受报文限额约束。CUSTOM.eventName 使用当前 `^[A-Za-z_][A-Za-z0-9_]{0,99}$`。带页面的 CUSTOM 必须带 path；无页面的 CUSTOM 不得携带 path / query。VIEW_CHANGE 禁止 index / hyperlink；USER_ATTRIBUTES 不附带无意义的页面字段。
 
-`pageViewId` 放在 dispatchEvent.payload 中，不放到 event 中，不进入 collector；长度 1–128 个 ASCII 字符，使用运行期随机标识和递增计数构成，内部再关联 pageKey。它不是根据 timestamp 算出的 hash。PAGE.timestamp、关联行为.pageShowTimestamp、path、query 必须与该 pageViewId 记录一致。
+`pageViewId` 放在 dispatchEvent.payload 中，不放到 event 中，不进入 collector；长度 1–128 个 ASCII 字符，使用运行期随机标识和递增计数构成，内部再关联 pageKey。它不是根据 timestamp 算出的 hash。PAGE.timestamp 及 PAGE / 关联行为的 path、query 必须与该 pageViewId 记录一致；关联行为的 timestamp 使用各自的实际发生时间。
 
 属性归一化直接复用当前 src/core/dataStore/protocol.ts 的纯规则：键截至 100 个 Unicode 字符、值截至 1000 个；有限数值 / boolean 转字符串，合法 Date 转 ISO；数组最多 100 项且元素须可归一化，以 `||` 拼接；嵌套对象或非法值按现有规则丢弃该属性；截断后键冲突保留首次值并诊断。Native 只接收已归一化的 string-to-string 对象，不再自行换分隔符或做第二次截断。空属性串、字符串 `"false"` 和 `"0"` 遵守现有属性语义，不当作 false / 0 删除；整体为空的 CUSTOM.attributes 省略，空用户属性调用 false。
 

@@ -57,11 +57,11 @@ describe('EventComposer', () => {
   })
   it('does not consume a sequence when an automatically tracked event exceeds the queue byte limit', () => {
     const { composer, queue, sequence } = createComposer()
-    expect(composer.compose({ eventType: 'VIEW_CLICK', fields: { xpath: 'x'.repeat(MAX_EVENT_BYTES), pageShowTimestamp: 100 } }))
+    expect(composer.compose({ eventType: 'VIEW_CLICK', fields: { xpath: 'x'.repeat(MAX_EVENT_BYTES) } }))
       .toEqual({ ok: false, code: 'event_too_large' })
     expect(queue.snapshot()).toEqual([])
     expect(sequence.current().eventSequenceId).toBe(0)
-    expect(composer.compose({ eventType: 'VIEW_CLICK', fields: { xpath: '#save', pageShowTimestamp: 100 } }))
+    expect(composer.compose({ eventType: 'VIEW_CLICK', fields: { xpath: '#save' } }))
       .toMatchObject({ ok: true, event: { eventSequenceId: 1 } })
   })
   it('系统时钟抛错时拒绝事件，不入队也不消耗序列号', () => {

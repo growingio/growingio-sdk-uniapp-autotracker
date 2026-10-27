@@ -34,7 +34,7 @@
 | `dataSourceId` | string | ● | ● | ● | 数据源 ID |
 | `eventType` | string | ● | ● | ● | 事件类型（见上表枚举） |
 | `platform` | string | ● | ● | ● | Web：`web`；微信小程序：`MinP`；支付宝小程序：`alip`。App 固定映射为 `iOS` / `Android` / `HarmonyOS`；与构建目标及设备 OS 分开，无法确认或明确冲突时初始化失败。 |
-| `platformVersion` | string | — | ● | ● | 小程序：宿主（微信等）版本；App：操作系统版本，正常时读取并保留真实格式；读取失败、空白或异常时写 `UNKNOWN` 并记录诊断，不阻塞采集。 |
+| `platformVersion` | string | — | ● | ● | 小程序：宿主（微信等）版本；App：Android / iOS 读取操作系统版本，HarmonyOS 优先读取 `osHarmonyDisplayVersion`（对应原生 `deviceInfo.displayVersion`）并保留完整产品显示版本；设备信息缺失时回退同步系统信息的同名字段，仍不可用时沿用系统版本回退。读取失败、空白或异常且无有效回退时写 `UNKNOWN` 并记录诊断，不阻塞采集。 |
 | `timestamp` | long | ● | ● | ● | 事件创建时的设备当前系统时间，单位毫秒。与 Android/iOS/HarmonyOS 独立 SDK 一致，不因系统时钟回拨而修正或伪造递增值；事件顺序以 `eventSequenceId` 为准 |
 | `domain` | string | ● | ● | ● | Web：网页域名；小程序：appId；App：自动读取包标识（iOS BundleID / Android 包名 / HarmonyOS Bundle Name），不可由业务覆盖；读取失败时内部值为空字符串并记录诊断，出站清理时省略该字段，不阻断采集；Hybrid 为 H5 域名 |
 | `urlScheme` | string | — | — | ○ | App 链接协议（如 `growing.xxx`）。一期基础 SDK 不读取、存储或上报；以后仅由 Deep Link／圈选等经批准产品插件的专属配置和协议扩展使用 |
@@ -101,7 +101,6 @@ SDK 维护一份持久化的全局计数器：`VISIT`、`PAGE`、`CUSTOM`、`VIE
 |---|---|:--:|:--:|:--:|---|
 | `eventSequenceId` | long | ● | ● | ● | 事件请求编号 |
 | `eventName` | string | ● | ● | ● | 自定义事件名称 |
-| `pageShowTimestamp` | long | ● | ○ | ○ | 关联页面的显示时间戳 |
 | `attributes` | Map<string,string> | ○ | ○ | ○ | 自定义事件属性 |
 
 `eventName` 的全端写入规则为 `^[A-Za-z_][A-Za-z0-9_]{0,99}$`：首字符只能是英文字母或下划线，其余只能是英文字母、数字或下划线，且总长度不超过 100 字符。SDK 不自动转换或截断非法名称；空白、中文、空格、连字符、数字开头和超长名称均整条拒绝并记录脱敏诊断。
@@ -123,7 +122,6 @@ App 的 `APP_CLOSED.appState` 继续采用 `BACKGROUND`：事件由 `App.vue` �
 | 字段 | 类型 | Web | 小程序 | App | 说明 |
 |---|---|:--:|:--:|:--:|---|
 | `eventSequenceId` | long | ● | ● | ● | 事件请求编号 |
-| `pageShowTimestamp` | long | ● | ● | ● | 页面显示时间 |
 | `textValue` | string | ○ | ○ | ○ | `data-title` 标记的元素文案 |
 | `xpath` | string | ● | ● | ● | 元素标识符，不要求是 DOM XPath |
 | `index` | int | ○ | ○ | ○ | `data-index` 标记的列表元素序号 |
@@ -134,7 +132,6 @@ App 的 `APP_CLOSED.appState` 继续采用 `BACKGROUND`：事件由 `App.vue` �
 | 字段 | 类型 | Web | 小程序 | App | 说明 |
 |---|---|:--:|:--:|:--:|---|
 | `eventSequenceId` | long | ● | ● | ● | 事件请求编号 |
-| `pageShowTimestamp` | long | ● | ● | ● | 页面显示时间 |
 | `textValue` | string | ○ | ○ | ○ | 标记的组件值，或 swiper 的 `data-title` 文案 |
 | `xpath` | string | ● | ● | ● | 元素标识符，不要求是 DOM XPath |
 | `index` | int | — | — | — | `VIEW_CHANGE` 不产生该字段 |

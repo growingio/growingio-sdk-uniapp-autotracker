@@ -78,11 +78,12 @@ describe('SFC to mock collector pipeline', () => {
       expect(read).not.toHaveBeenCalled()
       const views = received.filter(event => typeof event.eventType === 'string' && event.eventType.startsWith('VIEW_'))
       expect(views).toMatchObject([
-        { eventType: 'VIEW_CLICK', xpath: '#business', pageShowTimestamp: 100, sessionId: 'session-1' },
-        { eventType: 'VIEW_CLICK', xpath: '#business', pageShowTimestamp: 100, sessionId: 'session-1' },
-        { eventType: 'VIEW_CLICK', xpath: '#business', pageShowTimestamp: 1_000, sessionId: 'session-2' },
-        { eventType: 'VIEW_CHANGE', xpath: '#business', pageShowTimestamp: 1_000, sessionId: 'session-2' },
+        { eventType: 'VIEW_CLICK', xpath: '#business', timestamp: 100, sessionId: 'session-1' },
+        { eventType: 'VIEW_CLICK', xpath: '#business', timestamp: 100, sessionId: 'session-1' },
+        { eventType: 'VIEW_CLICK', xpath: '#business', timestamp: 1_000, sessionId: 'session-2' },
+        { eventType: 'VIEW_CHANGE', xpath: '#business', timestamp: 1_000, sessionId: 'session-2' },
       ])
+      for (const event of received) expect(event).not.toHaveProperty('pageShowTimestamp')
       expect(views.at(-1)).not.toHaveProperty('textValue')
       expect(views.every(event => !('targetId' in event) && !('eventName' in event) && !('source' in event))).toBe(true)
       expect(business).toHaveBeenCalledTimes(5)

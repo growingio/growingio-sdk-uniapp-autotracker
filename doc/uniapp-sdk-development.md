@@ -451,7 +451,7 @@ export function createApp() {
 | `App.vue:onLaunch` | 标记新的 App JS 运行期并记录启动参数快照；不直接发事件 | 读取尚未稳定的页面实例 |
 | `App.vue:onShow` | 新运行期强制创建 session 并发 `VISIT`；无新 `onLaunch` 时才按后台超时续接 | 页面事件替代 App 事件 |
 | `Page:onLoad` | 复制 query 并绑定到页面实例/唯一 page key | 以后从可变页面对象回读 query |
-| `Page:onShow` | 解析 route/title/referral，记录 pageShowTimestamp；自动发 `PAGE` | 全局 50ms 去重误吞不同页面 |
+| `Page:onShow` | 解析 route/title/referral，记录内部显示时间 `shownAt`；自动发 `PAGE` | 全局 50ms 去重误吞不同页面 |
 | `Page:onHide` | 标记页面非当前；不发 `APP_CLOSED` | 认为页面隐藏就是应用进入后台 |
 | `Page:onUnload` | 删除该页面快照和页面专属去重桶 | 删除仍在栈中页面的上下文 |
 | `App.vue:onHide` | 更新 lastCloseTime，持久化身份/队列，按 capability profile 构建 `APP_CLOSED` 并强制 flush | 宣称这是可靠退出确认 |
@@ -694,7 +694,7 @@ gio:v1:{dataSourceId}:meta
 
 `eventSequenceId` 放在 `meta` 中，作为一份持久化全局计数器：`VISIT`、`PAGE`、`CUSTOM`、`VIEW_CLICK`、`VIEW_CHANGE` 创建时递增，冷启动后继续；其他事件不携带该字段。它不随 session 重置，也不需要任何平台分支。恢复时取 `meta` 与有效待发队列中最大事件序号的较大值，避免分别落盘或异常退出使新事件复用队列中已分配的编号。若计数器和历史队列都已丢失，不能据此恢复已上传历史的最大编号。
 
-`PAGE.timestamp` 与该页快照的 `shownAt` 共用同一次构建时取时；CUSTOM / VIEW 的 `pageShowTimestamp` 引用此值，恢复采集补 PAGE 时也更新该关联时间。其余 `timestamp` 由 `ClockPort.now()` 在**每条事件实际创建**时读取，取设备当前系统 Unix 毫秒时间；不得使用入队、重试或发送时间覆盖它，也不因时钟回拨、重复或未来值进行单调化修正。该口径严格对齐 Android 的 `System.currentTimeMillis()`、iOS 的当前 Unix 毫秒时间和 HarmonyOS 的 `Date.now()`；跨事件先后关系只使用 `eventSequenceId`，不能借 `timestamp` 猜测。
+`PAGE.timestamp` 与该页快照的内部显示时间 `shownAt` 共用同一次构建时取时，恢复采集补 PAGE 时刷新该值。CUSTOM / VIEW 仅携带当前页的 `path` / `query`，其 `timestamp` 由 `ClockPort.now()` 在**每条事件实际创建**时读取，其他非 PAGE 事件也遵循这一取时规则，取设备当前系统 Unix 毫秒时间；不得使用入队、重试或发送时间覆盖它，也不因时钟回拨、重复或未来值进行单调化修正。该口径严格对齐 Android 的 `System.currentTimeMillis()`、iOS 的当前 Unix 毫秒时间和 HarmonyOS 的 `Date.now()`；跨事件先后关系只使用 `eventSequenceId`，不能借 `timestamp` 猜测。
 
 ### 9.2 存储边界与记录格式
 

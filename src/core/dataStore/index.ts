@@ -175,7 +175,7 @@ export class EventDispatcher {
     private readonly currentPage: () => PageSnapshot | null,
   ) {}
 
-  /** 生成 CUSTOM，规范属性并附加当前页面的路由、query 和显示时间。 */
+  /** 生成 CUSTOM，规范属性并附加当前页面的路由和 query。 */
   public track(intent: TrackIntent): boolean {
     const page = this.currentPage()
     const attributes = Object.fromEntries(this.attributes(intent.properties))
@@ -187,7 +187,6 @@ export class EventDispatcher {
         ...(page === null ? {} : {
           path: page.route,
           query: page.query,
-          pageShowTimestamp: page.shownAt,
         }),
       },
     }).ok
@@ -210,7 +209,6 @@ export class EventDispatcher {
       fields: {
         path: page.route,
         query: page.query,
-        pageShowTimestamp: page.shownAt,
         xpath: normalized.xpath,
         textValue: normalized.textValue,
         ...(normalized.kind === 'click' ? { index: normalized.index, hyperlink: normalized.hyperlink } : {}),

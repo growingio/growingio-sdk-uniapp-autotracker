@@ -67,7 +67,7 @@
 2. 实现 `src/core/dataStore/protocol.ts` 与 `src/core/dataStore/index.ts`：公共 context、事件专有字段、字段裁剪、长度与类型验证，并在入队前运行统一 `sanitizeOutboundEvent`；它移除 `null`、`undefined`、空字符串、空对象和空数组，保留 `0`，使读取失败的系统字段不会作为空值发出。CUSTOM `eventName` 固定为 `^[A-Za-z_][A-Za-z0-9_]{0,99}$`，非法时整条拒绝且不分配序号；所有 attributes 经同一 normalizer 输出 `Map<string,string>`（key 100、value 1000、一层数组 `||` 拼接、null/undefined 为空字符串、嵌套对象拒绝）。
 3. 实现 `src/core/userStore.ts` 与 `src/core/storage/encrypt.ts`：稳定 `deviceId`、`userId`、`userKey`、clear 语义和 storage migration；身份字段使用 `xor-utf8-v1`（UTF-8 字节级循环 XOR + Base64URL），统一输出 `gioenc-v3-` 前缀；存储 key 统一使用 `gio:v1:` 前缀。所有值经 version envelope 读写，不直接操作宿主存储。
 4. 实现 `src/core/userStore.ts`：新访问、热启动续接、session 更新和 `eventSequenceId`；匿名 → 首个 userId 不切 session，已登录 A → B 时新 session + `VISIT`，登出不新建 session/`VISIT`。
-5. 实现 `src/core/dataStore/page.ts`：`pageKey`、当前页、referral、`pageShowTimestamp`；只保存纯数据。
+5. 实现 `src/core/dataStore/page.ts`：`pageKey`、当前页、referral、内部显示时间 `shownAt`；只保存纯数据。
 6. 实现仅内存的 `src/core/userStore.ts`：`setLocation()` 校验有限数和纬度/经度范围（含合法 `0`），`clearLocation()` / 进程重启清除；不得请求权限、不得写 storage。
 7. 实现与 uniappx 当前能力同级的 `src/core/lifecycle.ts`：只允许在首次 `init()` 前声明已交付的内置插件名称，重复或未知名称返回 `false`；声明仅留内存，`init()` 参数校验成功后才按声明顺序安装。配置失败后保留声明，修正后重试无需重新注册；首次成功后注册窗口关闭。一期只交付同名 `gioEventAutoTracking`，不实现第三方插件 hook、capability registry、插件 storage/request 或 destroy/dispose 生命周期。基础 init 不含 `urlScheme`；以后 Deep Link／圈选插件如需它，必须使用插件专属配置并先扩展协议与 intent。
 8. 定义 `src/types/index.ts` 并提供内存 fake，实现不依赖 `uni` 的单元测试。

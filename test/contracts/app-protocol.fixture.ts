@@ -58,11 +58,11 @@ const COMMON_ALLOWED_FIELDS = [
 const EVENT_FIELDS = {
   VISIT: ['eventSequenceId'],
   PAGE: ['eventSequenceId', 'orientation', 'protocolType', 'title', 'referralPage'],
-  CUSTOM: ['eventSequenceId', 'eventName', 'pageShowTimestamp', 'attributes'],
+  CUSTOM: ['eventSequenceId', 'eventName', 'attributes'],
   LOGIN_USER_ATTRIBUTES: ['attributes'],
   APP_CLOSED: [],
-  VIEW_CLICK: ['eventSequenceId', 'pageShowTimestamp', 'textValue', 'xpath', 'index', 'hyperlink'],
-  VIEW_CHANGE: ['eventSequenceId', 'pageShowTimestamp', 'textValue', 'xpath'],
+  VIEW_CLICK: ['eventSequenceId', 'textValue', 'xpath', 'index', 'hyperlink'],
+  VIEW_CHANGE: ['eventSequenceId', 'textValue', 'xpath'],
 } as const satisfies Record<AppEventType, readonly string[]>
 
 export const APP_ALLOWED_FIELDS: Readonly<Record<AppEventType, readonly string[]>> = APP_EVENT_TYPES.reduce(
@@ -79,8 +79,8 @@ export const APP_EVENT_REQUIRED_FIELDS: Readonly<Record<AppEventType, readonly s
   CUSTOM: ['eventSequenceId', 'eventName'],
   LOGIN_USER_ATTRIBUTES: ['attributes'],
   APP_CLOSED: [],
-  VIEW_CLICK: ['eventSequenceId', 'pageShowTimestamp', 'xpath'],
-  VIEW_CHANGE: ['eventSequenceId', 'pageShowTimestamp', 'xpath'],
+  VIEW_CLICK: ['eventSequenceId', 'xpath'],
+  VIEW_CHANGE: ['eventSequenceId', 'xpath'],
 }
 
 export const EVENT_SEQUENCE_EVENT_TYPES = [
@@ -141,7 +141,6 @@ export const APP_EVENT_FIXTURES: Readonly<Record<AppEventType, AppEventFixture>>
     eventType: 'CUSTOM',
     eventSequenceId: 3,
     eventName: 'fixture_event',
-    pageShowTimestamp: 1_700_000_000_000,
     attributes: { enabled: 'false' },
   },
   LOGIN_USER_ATTRIBUTES: {
@@ -154,7 +153,6 @@ export const APP_EVENT_FIXTURES: Readonly<Record<AppEventType, AppEventFixture>>
     ...context,
     eventType: 'VIEW_CLICK',
     eventSequenceId: 4,
-    pageShowTimestamp: 1_700_000_000_000,
     xpath: 'fixture-button#tap',
     index: 0,
   },
@@ -162,7 +160,6 @@ export const APP_EVENT_FIXTURES: Readonly<Record<AppEventType, AppEventFixture>>
     ...context,
     eventType: 'VIEW_CHANGE',
     eventSequenceId: 5,
-    pageShowTimestamp: 1_700_000_000_000,
     xpath: 'fixture-switch#change',
     textValue: 'false',
   },

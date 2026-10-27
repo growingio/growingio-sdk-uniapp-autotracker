@@ -80,6 +80,16 @@ function cloneEvent(serialized: string): ProtocolEvent | null {
   }
 }
 
+/** 仅移除旧版行为事件已废弃的页面时间字段，其余缓存内容仍须严格校验。 */
+function migrateQueueEntry(entry: QueueEntry): QueueEntry {
+  if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return entry
+  const event = entry.event
+  if (typeof event !== 'object' || event === null || Array.isArray(event)
+    || !['CUSTOM', 'VIEW_CLICK', 'VIEW_CHANGE'].includes(event.eventType) || !('pageShowTimestamp' in event)) return entry
+  const { pageShowTimestamp: _removed, ...fields } = event
+  return { ...entry, event: fields }
+}
+
 /** 队列状态与宿主无关，快照编码及有序宿主写入由存储模块负责。 */
 export class EventQueue {
   private readonly entries: QueueEntry[] = []
@@ -189,10 +199,12 @@ export class EventQueue {
     }
   }
 
-  /** 仅恢复完整有效的持久快照；校验失败时保留现有队列。 */
+  /** 迁移旧版字段后仅恢复完整有效的持久快照；校验失败时保留现有队列。 */
   public restore(entries: readonly QueueEntry[]): boolean {
-    if (entries.length > this.limits.maxItems || entries.some((entry) => !this.validEntry(entry))) return false
-    const normalized = entries.map((entry) => ({
+    if (entries.length > this.limits.maxItems) return false
+    const migrated = entries.map(migrateQueueEntry)
+    if (migrated.some((entry) => !this.validEntry(entry))) return false
+    const normalized = migrated.map((entry) => ({
       requestId: entry.requestId,
       event: cloneEvent(JSON.stringify(entry.event))!,
       retryCount: entry.retryCount,
