@@ -34,7 +34,7 @@
 | `dataSourceId` | string | ● | ● | ● | 数据源 ID |
 | `eventType` | string | ● | ● | ● | 事件类型（见上表枚举） |
 | `platform` | string | ● | ● | ● | Web：`web`；小程序：`MinP`；App 固定映射为 `iOS` / `Android` / `HarmonyOS`，不透传宿主原始字符串；无法确认时初始化失败。 |
-| `platformVersion` | string | — | ● | ● | 小程序：宿主（微信等）版本；App：操作系统版本，正常时读取并保留真实格式；读取失败、空白或异常时写 `UNKNOWN` 并记录诊断，不阻塞采集。 |
+| `platformVersion` | string | — | ● | ● | 小程序：宿主（微信等）版本；App：Android / iOS 读取操作系统版本，HarmonyOS 优先读取 `osHarmonyDisplayVersion`（对应原生 `deviceInfo.displayVersion`）并保留完整产品显示版本；设备信息缺失时回退同步系统信息的同名字段，仍不可用时沿用系统版本回退。读取失败、空白或异常且无有效回退时写 `UNKNOWN` 并记录诊断，不阻塞采集。 |
 | `timestamp` | long | ● | ● | ● | 事件创建时的设备当前系统时间，单位毫秒。与 Android/iOS/HarmonyOS 独立 SDK 一致，不因系统时钟回拨而修正或伪造递增值；事件顺序以 `eventSequenceId` 为准 |
 | `domain` | string | ● | ● | ● | Web：网页域名；小程序：appId；App：自动读取包标识（iOS BundleID / Android 包名 / HarmonyOS Bundle Name），不可由业务覆盖；读取失败时内部值为空字符串并记录诊断，出站清理时省略该字段，不阻断采集；Hybrid 为 H5 域名 |
 | `urlScheme` | string | — | — | ○ | App 链接协议（如 `growing.xxx`）。一期基础 SDK 不读取、存储或上报；以后仅由 Deep Link／圈选等经批准产品插件的专属配置和协议扩展使用 |

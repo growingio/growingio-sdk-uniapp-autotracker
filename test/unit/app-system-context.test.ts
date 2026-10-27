@@ -50,6 +50,35 @@ describe('AppSystemContextPort', () => {
     await expect(port.load()).resolves.toMatchObject({ platformVersion: '18.1', appVersion: '2.3.4', domain: 'com.gio.host' })
   })
 
+  it('HarmonyOS 与原生 SDK 一致，使用产品显示版本而非纯数字系统版本', async () => {
+    const displayVersion = 'ALN-AL00 6.1.0.135(SPC00E120R4P11)'
+    const port = new AppSystemContextPort({
+      getDeviceInfo: () => ({ platform: 'harmonyos', osVersion: '6.1.1.120', osHarmonyDisplayVersion: displayVersion }),
+      getSystemInfoSync: () => ({ osHarmonyDisplayVersion: 'older system snapshot' }),
+      getAppBaseInfo: () => ({}),
+    }, '0.1.0', null)
+    await expect(port.load()).resolves.toMatchObject({ platform: 'HarmonyOS', platformVersion: displayVersion })
+  })
+
+  it.each([undefined, '   ', 42])('HarmonyOS 设备显示版本为 %j 时回退到同步系统信息的完整版本', async (osHarmonyDisplayVersion) => {
+    const displayVersion = 'ALN-AL00 6.1.0.135(SPC00E120R4P11)'
+    const port = new AppSystemContextPort({
+      getDeviceInfo: () => ({ platform: 'harmony', osVersion: '6.1.1.120', osHarmonyDisplayVersion }),
+      getSystemInfoSync: () => ({ osHarmonyDisplayVersion: displayVersion }),
+      getAppBaseInfo: () => ({}),
+    }, '0.1.0', null)
+    await expect(port.load()).resolves.toMatchObject({ platformVersion: displayVersion })
+  })
+
+  it.each(['android', 'ios'])('%s 忽略鸿蒙专属显示版本，继续使用自身系统版本', async (platform) => {
+    const port = new AppSystemContextPort({
+      getDeviceInfo: () => ({ platform, osVersion: '18.1', osHarmonyDisplayVersion: 'harmony-only' }),
+      getSystemInfoSync: () => ({ osHarmonyDisplayVersion: 'harmony-only' }),
+      getAppBaseInfo: () => ({}),
+    }, '0.1.0', null)
+    await expect(port.load()).resolves.toMatchObject({ platformVersion: '18.1' })
+  })
+
   it('Android 包信息缺失时使用 Native.js，应用版本缺失才使用 fallback', async () => {
     const activity = {}
     const invoke = vi.fn((value, method) => value === activity && method === 'getPackageName' ? 'com.native.android' : '')
