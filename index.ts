@@ -112,6 +112,15 @@ function pluginName(plugin: GdpPlugin): string {
   return plugin.name
 }
 
+/** 固定内置配置，同时保留兼具客户插件角色的安装方法和原对象上下文。 */
+function snapshotGdpPlugin(plugin: GdpPlugin): GdpPlugin {
+  if (!isBuiltinPlugin(plugin)) return plugin
+  const builtin = snapshotBuiltinPlugin(plugin)
+  return isCustomerPlugin(plugin)
+    ? Object.freeze({ ...builtin, install: plugin.install.bind(plugin) })
+    : builtin
+}
+
 /** 在首次初始化前原子校验并暂存插件；重复名称或非法声明使整批失败。 */
 function registerGdpPlugins(value: unknown): boolean {
   if (!Array.isArray(value) || gdpTracker !== null) return false
@@ -123,7 +132,7 @@ function registerGdpPlugins(value: unknown): boolean {
     if (names.has(name)) return false
     names.add(name)
   }
-  pendingGdpPlugins = [...pendingGdpPlugins, ...plugins.map(plugin => isBuiltinPlugin(plugin) ? snapshotBuiltinPlugin(plugin) : plugin)]
+  pendingGdpPlugins = [...pendingGdpPlugins, ...plugins.map(snapshotGdpPlugin)]
   return true
 }
 
