@@ -1,6 +1,6 @@
 # gio-uniapp-autotracker 开发计划
 
-> **平台小程序扩展：**微信／支付宝已完成首批运行适配及专项自动化，交付与编译验证见[小程序接入](./miniprogram.md)和[验证记录](./miniprogram-validation-2026-10-27.md)。开发者工具交互及真机收数按本轮约定后补；其余六端仍按[开发方案](./miniprogram-support-development-plan.md)待实施。该方向与下述 uniMP 原生宿主打通分别推进。
+> **平台小程序扩展：**微信、支付宝、百度、抖音、QQ、快手、京东和小红书的基础运行适配与自动化已完成，交付、开发／生产编译及当前结果见[小程序接入](./miniprogram.md)和[八端验证记录](./miniprogram-platforms-validation-2026-10-27.md)。开发者工具交互及真机收数按约定后补。该方向与下述 uniMP 原生宿主打通分别推进。
 
 > **后续需求：**[uni 小程序与原生宿主打通设计](./unimp-native-hybrid-design.md) 给出了独立的实施阶段与验收矩阵，当前为待评审提案。已确认先假设 Android / iOS 提供约定的原生 module，JS 侧可按契约设计和开发，原生完成后再实测对接；微信等平台小程序适配和原生提前实测均不是 JS 开发前置条件。本文下方阶段继续描述原有独立 App 工作。
 

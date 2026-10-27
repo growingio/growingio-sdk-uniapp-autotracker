@@ -1,14 +1,15 @@
 # gio-uniapp-autotracker
 
-传统 uni-app Vue 3 数据采集 SDK，包含 Android、iOS、HarmonyOS `.vue` App，以及微信和支付宝小程序的运行适配。小程序已完成代码与自动化验证，开发者工具交互和真机收数后补。
+传统 uni-app Vue 3 数据采集 SDK，包含 Android、iOS、HarmonyOS `.vue` App，以及微信、支付宝、百度、抖音、QQ、快手、京东和小红书小程序的运行适配。小程序已完成代码与自动化验证，开发者工具交互和真机收数后补。
 
 ## 文档
 
 - [全端 Measurement Protocol](./doc/measurement-protocol.md)：唯一的事件字段与端间口径来源。
 - [SDK 架构设计](./doc/uniapp-sdk-development.md)：目录、模块边界、依赖方向和运行时数据链。
-- [微信和支付宝小程序接入](./doc/miniprogram.md)：appId、会话、内存队列、上传策略、无埋点门控及验证命令。
+- [八端小程序接入](./doc/miniprogram.md)：平台映射、appId、会话、内存队列、上传策略、无埋点门控及验证命令。
+- [八端扩展验证记录](./doc/miniprogram-platforms-validation-2026-10-27.md)：六端新增适配、现有平台回归、开发／生产构建及交付检查。
 - [本轮适配审查记录](./doc/miniprogram-review-2026-10-27.md)：App 兼容对照、边界修复及自动化结果。
-- [小程序平台支持调研与开发方案](./doc/miniprogram-support-development-plan.md)：八个平台的调研、分批实施与验收门槛；微信和支付宝首批代码已实现，其余平台待实施。
+- [小程序平台支持调研与开发方案](./doc/miniprogram-support-development-plan.md)：八个平台的调研、分批实施与验收门槛；八端基础代码已实现，端侧验收后补。
 - [uni 小程序与原生宿主打通设计](./doc/unimp-native-hybrid-design.md)：含 [module 详细契约](./doc/unimp-native-bridge-contract.md) 和 [设计自审](./doc/unimp-native-hybrid-review.md)，覆盖运行模式、消息与恢复规则、实施验收及 uni-app x 扩展；尚未实现。
 - [传统 uni-app 无埋点方案](./doc/uniapp-autotrack-design.md)：模板事件标识、插桩、隐私、去重和验收口径。
 - [安装与发布](./doc/release.md)：npm、uni_modules 接入、版本渠道和自动发布配置。
