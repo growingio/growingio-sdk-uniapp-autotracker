@@ -142,6 +142,8 @@ type UniMPReply = HelloReply | OperationReply | RejectedReply | UnknownReply
 | 原生版本 / events | 版本字符串非空且最长 64 字符；v1 必须支持上述五种事件；是否允许身份写入由 identityWrite 另行限定 |
 | 请求和应答 | JSON 的 UTF-8 编码各不超过 256 KiB；只序列化经过白名单构建的对象，不把整个组件 / 原生事件 JSON.stringify |
 
+JS 在原始关联字段匹配后，复制有界、枚举自有的数据快照，不调用应答对象的 getter 或 toJSON。非枚举字段、属性访问器、稀疏数组及超限内容作为非法应答处理；随后对独立快照再次校验关联字段和完整 schema，并使用这同一份结果。拒绝应答不能因序列化丢掉 status 而变成成功，hello 也不能交付缺少 payload 的成功对象。
+
 Native 对来源尚无法确认或关联字段本身非法的请求，不回显任意输入。可返回最小错误对象 `{ version: 1, status: 'rejected', code: 'invalid_payload' }`；它不属于合法关联应答，JS 不据此结束其他在途请求。正常 SDK 不会生成此类请求。未知版本可在关联字段合法时返回 v1 的 unsupported_version 拒绝；JS 明确终止不兼容连接。
 
 ### 3.3 hello 的原生执行步骤
@@ -394,7 +396,7 @@ onError 报告握手轮最终失败、同步合法身份意图的入队失败、
 
 HybridErrorCode 是 NativeErrorCode、native_result_unknown 加以下 JS 固定码：`invalid_config / module_missing / invalid_module / handshake_timeout / invoke_error / invalid_reply / response_timeout / queue_expired / connection_reset / identity_blocked / page_unavailable / local_collection_disabled / local_background / local_queue_full / payload_too_large / location_owned_by_host / unsupported_runtime / metadata_too_large / counter_exhausted`。同名码共用；callback_error 仅内部日志。合法身份命令因任一拒绝失败都走身份阻断。业务遇到未知未来错误码按连接失败处理，不当成功。
 
-duplicate_request 对本 SDK 是异常：从不重投业务请求，正常不应出现；按连接失效处理，原执行结果 unknown，不能把重复拒绝当成第一次肯定未执行。identity_not_allowed 导致本地关闭 identityWrite，普通事件可以继续；如果本次是已进入流程的身份命令，先按阻断终止本轮。需要支持该权限的业务应修正宿主授权后再恢复。
+duplicate_request 对本 SDK 是异常：从不重投业务请求，正常不应出现；按连接失效处理，原执行结果 unknown，不能把重复拒绝当成第一次肯定未执行。identity_not_allowed 导致本地关闭 identityWrite，尚未交付的用户属性以 not_sent 结束，普通事件可以继续；如果当前或队列中存在已进入流程的身份命令，必须在业务错误回调执行前同步阻断并终止本轮，未发送项不能改记为结果未知。需要支持该权限的业务应修正宿主授权后再恢复。
 
 ## 10. 后续实现的测试向量
 

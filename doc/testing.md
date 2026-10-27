@@ -48,6 +48,7 @@ pnpm run bench:sdk
 | 高级身份与 H5 | forceLogin 暂存、identify 保序 / 原子失败、旧 SDK 显式迁移、重启恢复、停采与查询串 | `test/unit/advanced-identity.test.ts`；`public-hybrid.test.ts` |
 | 可选原生标识 | 默认不读、平台过滤、VISIT 白名单、超时 / 异常 / 晚到回调、停采失效 | `test/unit/native-identifiers.test.ts` |
 | uniMP JS 托管 | 单 FIFO、身份阻断、PAGE 依赖、前台代次、限额、时钟、协议验证、module 与公开入口 | `test/unit/{unimp-runtime,unimp-contract,unimp-native-module,public-hybrid}.test.ts`；`test/support/unimp-host.ts` |
+| 扩展复审边界 | Web 接收端停采互通、空宿主标识、兼具内置角色的客户插件、框架缓存／隐藏页元信息预算、权限撤销后的待发写入、应答快照一致性与资源限制 | `test/unit/{embedded-web-interop,public-plugin-regression,unimp-adapter-boundaries,unimp-page-metadata,unimp-permission-revocation,unimp-reply-snapshot-regression}.test.ts` |
 | 会话和事件序列 | 冷启动、后台 30 秒边界、身份/同意变化、序列跨会话恢复、APP_CLOSED 无序列 | `test/unit/{session,event-sequence,session-persistence,meta-persistence}.test.ts`；`test/protocol-contract/event-sequence.fixture.test.ts` |
 | App / Page 生命周期 | 入口和页面上下文、页面可见性、卸载、动态标题、方向、后台事件、宿主异常隔离 | `test/unit/{app-lifecycle,page-lifecycle,page-store,app-bridge,page-bridge,uniapp-installer,orientation}.test.ts` |
 | 事件协议、属性与位置 | 所有事件类型的字段白名单、公共上下文、属性清洗、0/false、事件名校验、经纬度及清除位置 | `test/unit/{protocol,event-composer,event-dispatcher,location-state}.test.ts`；`test/protocol-contract/*.test.ts` |
