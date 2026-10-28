@@ -2,7 +2,8 @@
   <scroll-view class="page" scroll-y>
     <view class="section">
       <text class="title">用户身份 / setUserId</text>
-      <text class="hint">demo 已在初始化时启用 idMapping，因此 userKey 会随身份保存。不同非空账号之间切换会建立新的 session 边界；清除身份后回到同一账号会保留 session。</text>
+      <text class="hint">idMapping 以 main.ts 首次初始化配置为准：true 时保存并上报 userKey，false 时忽略 userKey。修改后需停止运行并重新启动；重复 init 和 setOptions 不会切换此配置。</text>
+      <text class="hint">设置成功后用 review_identity_set 核对新身份。按钮的 VIEW_CLICK 发生在设置前，使用此前身份；已生成的事件不会随身份更新而改变。</text>
     </view>
     <view class="section">
       <text class="label">用户 ID</text>
@@ -40,10 +41,16 @@ export default {
   methods: {
     /** 保留业务输入完成监听，不主动读取身份输入原文。 */
     onInputBlur() {},
-    /** 提交页面中的用户身份与可选 userKey，展示命令接纳结果。 */
+    /** 更新身份后发送核对事件，避免用设置前的自动点击判断新身份。 */
     setUser() {
       const ok = gdp('setUserId', this.userId, this.userKey || null)
-      this.result = ok ? '身份已更新；空字符串会清除身份，下一条事件使用当前身份。' : '身份未更新：参数无效或 SDK 尚未就绪。'
+      if (!ok) {
+        this.result = '身份未更新：参数无效或 SDK 尚未就绪。'
+        return false
+      }
+      const queued = gdp('track', 'review_identity_set')
+      this.result = queued ? '身份已更新；review_identity_set 已入队，请在该事件核对 userId/userKey。' : '身份已更新，但核对事件未入队；请开启采集后重试。'
+      return queued
     },
     /** 清除登录身份并展示结果。 */
     clearUser() {

@@ -10,6 +10,10 @@
 
 边界场景归属于对应功能页：自定义事件页验证空事件名、未知命令和属性过滤；用户页验证非字符串身份、位置设置/清除与越界位置；生命周期页验证初始化后不能再注册插件；采集开关页验证 `setOptions` 只接受 `{ dataCollect: boolean }`。属性过滤是不同于失败的边界：事件成功入队，但嵌套对象和非有限数不会进入 collector。`pnpm test` 中的 demo 场景会覆盖：`main.ts` 的唯一接入点与菜单页面映射、实际无埋点页面的编译输出、以及从 `gdp` 初始化到生命周期、隐私开关、身份、属性、自定义事件、普通无埋点和敏感值拦截的完整 mock-collector 链路。它不替代 HBuilderX/真机上的页面点击、切后台或截图验证。
 
+`idMapping` 只在首次成功的 `init` 中读取。修改 `main.ts` 后需停止运行并重新启动，使 SDK 进入新的 JS 运行期；再次 `init` 或调用 `setOptions({ idMapping: ... })` 都返回 `false`，继续使用首次配置。`false` 时 `setUserId(userId, userKey)` 仍接纳 userId，但忽略 userKey；`true` 时才保存并上报两者。此前关闭映射时被忽略的 userKey 不会自动恢复，开启后应重新调用 `setUserId` 传入 userKey。
+
+用户页的“设置用户身份”会在设置成功后发送 `review_identity_set`。请用这条事件核对更新后的 `userId` / `userKey`；按钮自身的 `VIEW_CLICK` 在业务处理前生成，使用更新前的身份，`setUserId` 也不会改写已生成的事件。若采集关闭，身份仍可更新，页面会明确提示核对事件未入队。
+
 本次审查修复新增的实机场景：
 
 | 入口 | 操作 | 核对依据 |
