@@ -42,7 +42,7 @@ pnpm run bench:sdk
 
 | 功能 | 验证行为 | 主要测试文件（相对仓库根目录） |
 |---|---|---|
-| 公共 API、配置与插件 | 所有 gdp 命令、非法输入、未初始化调用、重复 init、注册原子性、失败 init 后重试、安装顺序及插件异常隔离 | `test/integration/sdk-public-contract.test.ts`；`test/unit/{public-api,config,plugin-registry,tracker-lifecycle}.test.ts` |
+| 公共 API、配置与插件 | 所有 gdp 命令、非法必填项拒绝、非法可选值回退默认且继续采集、未初始化调用、重复 init、注册原子性、失败 init 后重试、安装顺序及插件异常隔离 | `test/integration/sdk-public-contract.test.ts`；`test/unit/{public-api,config,plugin-registry,tracker-lifecycle}.test.ts` |
 | 启动与采集同意 | 异步恢复顺序、不可变快照、条数/UTF-8 字节上限、生命周期独立缓冲、关闭采集不读取业务值、恢复后 VISIT/PAGE | `test/unit/{bootstrap-buffer,hydration,tracker-event-gate,tracker}.test.ts` |
 | 匿名/登录身份 | deviceId 生成、旧格式迁移、加密记录、userId/userKey、切换用户后的会话、清除身份 | `test/unit/{identity,identity-codec,identity-persistence}.test.ts`；`test/integration/sdk-public-contract.test.ts` |
 | 高级身份与 H5 | forceLogin 暂存、identify 保序 / 原子失败、旧 SDK 显式迁移、重启恢复、停采与查询串 | `test/unit/advanced-identity.test.ts`；`public-hybrid.test.ts` |

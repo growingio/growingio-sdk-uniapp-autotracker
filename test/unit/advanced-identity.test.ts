@@ -136,13 +136,13 @@ describe('forceLogin and embedded identity', () => {
 describe('explicit standalone mini-program identity migration', () => {
   const legacy = new Map<string, unknown>([['_growing_uid_', 'old-device'], ['_growing_userId_', 'old-user'], ['_growing_userKey_', 'old-key']])
   const port = { read: (key: string) => legacy.get(key) }
-  it('validates explicit source ownership and rejects App or unknown options', () => {
-    expect(normalizeInitOptions({ ...source, legacyMiniProgramIdentity: source })).toMatchObject({ ok: false })
-    expect(normalizeInitOptions({ ...source, legacyMiniProgramIdentity: source }, 'mp-weixin')).toMatchObject({ ok: true })
+  it('enables migration only for a valid mini-program source and defaults invalid optional values', () => {
+    expect(normalizeInitOptions({ ...source, legacyMiniProgramIdentity: source })).toEqual(normalizeInitOptions(source))
+    expect(normalizeInitOptions({ ...source, legacyMiniProgramIdentity: source }, 'mp-weixin')).toMatchObject({ ok: true, config: { legacyMiniProgramIdentity: source } })
     for (const change of [{ accountId: 'other' }, { dataSourceId: 'other' }, { appId: 'other' }, { plugin: 1 }, { storagePrefix: '/' }, { storagePrefix: 'x'.repeat(129) }, { unknown: true }]) {
-      expect(normalizeInitOptions({ ...source, legacyMiniProgramIdentity: { ...source, ...change } }, 'mp-weixin')).toMatchObject({ ok: false })
+      expect(normalizeInitOptions({ ...source, legacyMiniProgramIdentity: { ...source, ...change } }, 'mp-weixin')).toEqual(normalizeInitOptions(source, 'mp-weixin'))
     }
-    expect(normalizeInitOptions({ ...config, forceLogin: null })).toMatchObject({ ok: false, code: 'invalid_force_login' })
+    expect(normalizeInitOptions({ ...config, forceLogin: null })).toEqual(normalizeInitOptions(config))
   })
   it('migrates only once into a missing namespace, preserves current identity and never alters old keys', async () => {
     const storage = new RuntimeStorage(false)

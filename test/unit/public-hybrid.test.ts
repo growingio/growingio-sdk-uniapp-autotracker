@@ -7,6 +7,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 
 describe('public advanced and uniMP entry', () => {
   it('initializes Native mode without probing App storage, requests or system APIs and ignores component lifecycle', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const native = new NativeExecutor()
     const host: Record<string, unknown> = { requireNativePlugin: vi.fn(() => ({ invoke: native.request.bind(native) })) }
     for (const name of ['getStorageSync', 'setStorageSync', 'removeStorageSync', 'request', 'getDeviceInfo', 'getSystemInfoSync', 'getAppBaseInfo', 'getNetworkType']) {
@@ -44,6 +45,7 @@ describe('public advanced and uniMP entry', () => {
     hook.onLoad!.call(nestedPage, {}); hook.onShow!.call(nestedPage, {}); await hybridFlush(); native.reply(); await hybridFlush()
     expect(native.events.at(-1)).toMatchObject({ eventType: 'PAGE', path: longRoute })
     expect(gdp('init', 'account', 'source', { runtime: 'unimp', appId: '__UNI__test', uniVue: { mixin: () => undefined } })).toBe(false)
+    expect(warning).toHaveBeenCalledExactlyOnceWith('[GrowingIO]：SDK重复初始化，请检查是否重复加载SDK或接入其他平台SDK导致冲突!')
     hook.onHide!.call(app)
   })
 

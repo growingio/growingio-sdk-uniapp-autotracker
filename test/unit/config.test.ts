@@ -18,7 +18,7 @@ describe('normalizeInitOptions', () => {
     } finally { normalize.mockRestore() }
   })
 
-  it('rejects non-ASCII collectors safely when Unicode property escapes are unavailable', () => {
+  it('uses the default collector safely when Unicode property escapes are unavailable', () => {
     vi.stubGlobal('URL', undefined)
     const NativeRegExp = RegExp
     vi.stubGlobal('RegExp', new Proxy(NativeRegExp, {
@@ -27,7 +27,7 @@ describe('normalizeInitOptions', () => {
         return Reflect.construct(target, args)
       },
     }))
-    expect(normalizeInitOptions({ ...required, serverUrl: 'https://收集.example' })).toStrictEqual({ ok: false, code: 'invalid_server_url' })
+    expect(normalizeInitOptions({ ...required, serverUrl: 'https://收集.example' })).toStrictEqual(normalizeInitOptions(required))
     expect(normalizeInitOptions({ ...required, serverUrl: 'https://COLLECTOR.EXAMPLE' })).toMatchObject({
       ok: true, config: { serverUrl: 'https://collector.example' },
     })
@@ -73,9 +73,9 @@ describe('normalizeInitOptions', () => {
     'https://[::ffff:192.168.001.1]', 'https://[::ffff:1.2.3]',
     'https://\u0301example.com', 'https://\ud800.example',
     `https://${'中'.repeat(64)}.example`, `https://${'中a'.repeat(30)}.example`,
-  ])('rejects invalid App collector %s without global URL', (serverUrl) => {
+  ])('uses the default for invalid App collector %s without global URL', (serverUrl) => {
     vi.stubGlobal('URL', undefined)
-    expect(normalizeInitOptions({ ...required, serverUrl })).toStrictEqual({ ok: false, code: 'invalid_server_url' })
+    expect(normalizeInitOptions({ ...required, serverUrl })).toStrictEqual(normalizeInitOptions(required))
   })
 
   it.each(['https://收集.example', 'https://faß.de', 'https://ΟΣ.example', 'https://collector.example:', 'https://%63ollector.example'])('preserves the host URL implementation for legal origin %s', (serverUrl) => {
@@ -85,11 +85,11 @@ describe('normalizeInitOptions', () => {
 
   it('does not let a failing host URL implementation fall back to weaker validation', () => {
     vi.stubGlobal('URL', class { constructor() { throw new Error('invalid') } })
-    expect(normalizeInitOptions({ ...required, serverUrl: 'https://collector.example' })).toStrictEqual({ ok: false, code: 'invalid_server_url' })
+    expect(normalizeInitOptions({ ...required, serverUrl: 'https://collector.example' })).toStrictEqual(normalizeInitOptions(required))
   })
 
-  it('rejects session durations whose millisecond conversion overflows', () => {
-    expect(normalizeInitOptions({ ...required, sessionExpires: Number.MAX_VALUE })).toStrictEqual({ ok: false, code: 'invalid_session_expires' })
+  it('uses the default session duration when millisecond conversion would overflow', () => {
+    expect(normalizeInitOptions({ ...required, sessionExpires: Number.MAX_VALUE })).toStrictEqual(normalizeInitOptions(required))
   })
   it.each(['\ud800', '\udc00', 'a\ud800b', '\ud83d\ude00\udc00'])('rejects unpaired UTF-16 in mandatory identifiers: %s', (value) => {
     expect(normalizeInitOptions({ ...required, accountId: value })).toStrictEqual({ ok: false, code: 'invalid_account_id' })
@@ -114,7 +114,7 @@ describe('normalizeInitOptions', () => {
     expect(access).not.toHaveBeenCalled()
     expect(normalizeInitOptions({ ...required, [field]: '修正😀' })).toMatchObject({ ok: true })
   })
-  it('normalizes every App-owned option once and drops appId', () => {
+  it.each([[0.5, 30_000], [360, 21_600_000]])('normalizes every App-owned option with sessionExpires %s and drops appId', (sessionExpires, timeoutMs) => {
     expect(
       normalizeInitOptions({
         ...required,
@@ -122,7 +122,7 @@ describe('normalizeInitOptions', () => {
         appId: 'web-only-id',
         appChannel: ' channel ',
         appVersion: ' 2.3.4 ',
-        sessionExpires: 0.5,
+        sessionExpires,
         dataCollect: false,
         idMapping: true,
         debug: true,
@@ -135,7 +135,7 @@ describe('normalizeInitOptions', () => {
         serverUrl: 'https://collector.example.com',
         appChannel: 'channel',
         appVersionFallback: '2.3.4',
-        sessionPolicy: { timeoutMs: 30_000 },
+        sessionPolicy: { timeoutMs },
         dataCollect: false,
         idMapping: true,
         debug: true,
@@ -161,24 +161,49 @@ describe('normalizeInitOptions', () => {
   })
 
   it.each([
+    [null, 'invalid_options'],
+    [[], 'invalid_options'],
     [{}, 'invalid_account_id'],
     [{ accountId: 'a' }, 'invalid_data_source_id'],
-    [{ ...required, serverUrl: 'ftp://collector.example.com' }, 'invalid_server_url'],
-    [{ ...required, serverUrl: 'https://collector.example.com/v3/projects/a/collect' }, 'invalid_server_url'],
-    [{ ...required, serverUrl: 'https://collector.example.com?unsafe=true' }, 'invalid_server_url'],
-    [{ ...required, sessionExpires: 0 }, 'invalid_session_expires'],
-    [{ ...required, sessionExpires: Number.NaN }, 'invalid_session_expires'],
-    [{ ...required, dataCollect: 'false' }, 'invalid_data_collect'],
-    [{ ...required, idMapping: 1 }, 'invalid_id_mapping'],
-    [{ ...required, debug: null }, 'invalid_debug'],
+    [{ ...required, accountId: '' }, 'invalid_account_id'],
+    [{ ...required, dataSourceId: null }, 'invalid_data_source_id'],
+    [{ ...required, runtime: 'unimp' }, 'invalid_options'],
   ])('rejects %o with %s and no partial configuration', (options, code) => {
     expect(normalizeInitOptions(options)).toStrictEqual({ ok: false, code })
   })
 
+  it.each([
+    { serverUrl: 'ftp://collector.example.com' },
+    { serverUrl: 'https://collector.example.com/v3/projects/a/collect' },
+    { serverUrl: 'https://collector.example.com?unsafe=true' },
+    { serverUrl: '' }, { serverUrl: 1 },
+    { sessionExpires: null }, { sessionExpires: -1 }, { sessionExpires: 0 },
+    { sessionExpires: 360.001 }, { sessionExpires: 361 },
+    { sessionExpires: Number.NaN }, { sessionExpires: Infinity }, { sessionExpires: '1' },
+    { appChannel: 1 }, { appChannel: '\ud800' }, { appVersion: {} }, { appVersion: '\udc00' },
+    { dataCollect: 'false' }, { idMapping: 1 }, { debug: null }, { forceLogin: 'true' },
+    { legacyMiniProgramIdentity: {} }, { runtime: 'unknown' },
+  ])('defaults invalid optional input %o without failing initialization', options => {
+    expect(normalizeInitOptions({ ...required, ...options })).toStrictEqual(normalizeInitOptions(required))
+  })
+
+  it('defaults only invalid fields and preserves explicit consent and other valid options', () => {
+    expect(normalizeInitOptions({
+      ...required, serverUrl: 'bad url', sessionExpires: -1, appChannel: 1,
+      dataCollect: false, idMapping: true, debug: true, appVersion: ' 2.0 ',
+    })).toMatchObject({
+      ok: true,
+      config: {
+        serverUrl: 'https://napi.growingio.com', sessionPolicy: { timeoutMs: 30_000 },
+        appChannel: null, dataCollect: false, idMapping: true, debug: true, appVersionFallback: '2.0',
+      },
+    })
+  })
+
   it('allows a corrected retry because the normalizer does not preserve failed input', () => {
-    expect(normalizeInitOptions({ ...required, serverUrl: 'bad url' })).toStrictEqual({
+    expect(normalizeInitOptions({ ...required, accountId: '' })).toStrictEqual({
       ok: false,
-      code: 'invalid_server_url',
+      code: 'invalid_account_id',
     })
     expect(normalizeInitOptions({ ...required, serverUrl: 'https://collector.example.com' })).toMatchObject({
       ok: true,

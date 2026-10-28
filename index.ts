@@ -56,7 +56,7 @@ export type GioPluginRegistration = GioBuiltinPlugin | GioPlugin
 export interface GdpCommand {
   /** 首次 init 前声明内置或客户插件，重复名称使整批注册失败。 */
   (command: 'registerPlugins', plugins: readonly GioPluginRegistration[]): boolean
-  /** 校验配置并启动异步初始化；同一运行期只允许首次成功初始化。 */
+  /** 校验配置并启动异步初始化；重复调用输出警告并返回 false，保留首次实例与配置。 */
   (command: 'init', accountId: string, dataSourceId: string, options: GioGdpInitOptions): boolean
   /** 提交手动事件；true 表示本地接纳或暂存，不代表服务端接收成功。 */
   (command: 'track', eventName: string, attributes?: GioAttributes): boolean
@@ -145,7 +145,12 @@ function registerGdpPlugins(value: unknown): boolean {
 export const gdp = ((command: unknown, ...args: readonly unknown[]): boolean | string | null => {
   if (command === 'registerPlugins') return registerGdpPlugins(args[0])
   if (command === 'init') {
-    if (gdpTracker !== null || typeof args[0] !== 'string' || typeof args[1] !== 'string') return false
+    if (gdpTracker !== null) {
+      try { globalThis.console?.warn('[GrowingIO]：SDK重复初始化，请检查是否重复加载SDK或接入其他平台SDK导致冲突!') }
+      catch { /* 诊断输出异常不应打断后续业务调用。 */ }
+      return false
+    }
+    if (typeof args[0] !== 'string' || typeof args[1] !== 'string') return false
     const input = record(args[2])
     if (input === null || !isUniVueApp(input.uniVue)) return false
     const { uniVue, sdkVersion: _ignoredVersion, ...init } = input
@@ -162,7 +167,6 @@ export const gdp = ((command: unknown, ...args: readonly unknown[]): boolean | s
       installCustomerPlugins(tracker)
       return true
     }
-    if (input.runtime !== undefined && input.runtime !== 'app') return false
     const runtime = runtimeHost()
     if (runtime === null || pendingGdpPlugins.some(plugin => isBuiltinPlugin(plugin) && plugin.name === 'gioHybridAdapter')) return false
     const { host, target } = runtime

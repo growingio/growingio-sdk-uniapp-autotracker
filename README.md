@@ -49,6 +49,8 @@ export function createApp() {
 }
 ```
 
+初始化时，非必填配置缺省、类型错误或超出范围都回退各自默认值，不阻断 SDK 初始化。App 的 `sessionExpires` 默认 0.5 分钟，支持正小数且最大 360 分钟；`-1`、NaN、Infinity、超限等非法值使用默认值。必填的账户、数据源和 `uniVue` 仍需有效；小程序还需真实平台 `appId`。
+
 业务侧只通过 `gdp()` 调用 SDK，例如 `gdp('track', 'purchase', { sku: 'sku-1' })`。SDK 不向页面暴露 tracker 或 `$gio`；只有显式通过 `gdp('registerPlugins', [...])` 注册的客户插件会在 `install(growingio)` 中收到内部实例。自动页面/App 生命周期不再要求页面代码配合。
 
 ## TypeScript 类型

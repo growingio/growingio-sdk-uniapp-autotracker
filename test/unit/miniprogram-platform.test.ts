@@ -22,23 +22,31 @@ describe.each(miniTargets)('%s platform and protocol', target => {
   it('normalizes mini defaults without changing App defaults or consuming mini-only App inputs', () => {
     expect(normalizeInitOptions(input, target)).toMatchObject({ ok: true, config: { sessionPolicy: { timeoutMs: 300000 }, miniprogram: { target, appId: 'fixture', uploadIntervalMs: 1000 } } })
     expect(normalizeInitOptions({ ...input, keepAlive: 2, sessionExpires: 1, uploadInterval: 50 }, target)).toMatchObject({ ok: true, config: { sessionPolicy: { timeoutMs: 120000, activityTimeoutMs: 60000 }, miniprogram: { uploadIntervalMs: 50 } } })
+    expect(normalizeInitOptions({ ...input, keepAlive: 361, sessionExpires: 0.5 }, target)).toMatchObject({ ok: true, config: { sessionPolicy: { timeoutMs: 21660000, activityTimeoutMs: 30000 } } })
+    expect(normalizeInitOptions({ ...input, sessionExpires: 360 }, target)).toMatchObject({ ok: true, config: { sessionPolicy: { timeoutMs: 300000, activityTimeoutMs: 21600000 } } })
     expect(normalizeInitOptions({ ...input, sessionExpires: -1 }, target).ok).toBe(true)
     const app = normalizeInitOptions({ ...input, keepAlive: null, uploadInterval: NaN })
     expect(app).toMatchObject({ ok: true, config: { sessionPolicy: { timeoutMs: 30000 } } })
     if (app.ok) expect(app.config).not.toHaveProperty('miniprogram')
-    expect(normalizeInitOptions({ ...input, sessionExpires: -1 }).ok).toBe(false)
+    expect(normalizeInitOptions({ ...input, sessionExpires: -1 })).toMatchObject({ ok: true, config: { sessionPolicy: { timeoutMs: 30000 } } })
   })
   it.each([undefined, null, '', ' ', '__UNI__123', '\ud800'])('rejects invalid mini appId %s', appId => {
     expect(normalizeInitOptions({ ...input, appId }, target)).toEqual({ ok: false, code: 'invalid_app_id' })
   })
-  it.each([null, 0, -1, NaN, Infinity, Number.MAX_VALUE, '5'])('rejects invalid keepAlive %s', keepAlive => {
-    expect(normalizeInitOptions({ ...input, keepAlive }, target)).toEqual({ ok: false, code: 'invalid_keep_alive' })
+  it.each([[0, 0], [0.5, 30000], [1440, 86400000]])('preserves mini SDK keepAlive %s as %s ms', (keepAlive, timeoutMs) => {
+    expect(normalizeInitOptions({ ...input, keepAlive }, target)).toMatchObject({ ok: true, config: { sessionPolicy: { timeoutMs } } })
   })
-  it.each([null, 0, -2, NaN, Infinity, '1'])('rejects invalid activity timeout %s', sessionExpires => {
-    expect(normalizeInitOptions({ ...input, sessionExpires }, target)).toEqual({ ok: false, code: 'invalid_session_expires' })
+  it.each([null, -1, 1440.001, 1441, NaN, Infinity, Number.MAX_VALUE, '5'])('defaults invalid keepAlive %s', keepAlive => {
+    expect(normalizeInitOptions({ ...input, keepAlive }, target)).toEqual(normalizeInitOptions(input, target))
   })
-  it.each([null, 0, -1, 0.5, NaN, Infinity, 2147483648, '1000'])('rejects invalid uploadInterval %s', uploadInterval => {
-    expect(normalizeInitOptions({ ...input, uploadInterval }, target)).toEqual({ ok: false, code: 'invalid_upload_interval' })
+  it.each([null, 0, -2, NaN, Infinity, 360.001, 361, Number.MAX_VALUE, '1'])('disables activity timeout for invalid sessionExpires %s', sessionExpires => {
+    expect(normalizeInitOptions({ ...input, sessionExpires }, target)).toEqual(normalizeInitOptions(input, target))
+  })
+  it.each([[0, 0], [0.4, 0], [0.5, 1], [50.5, 51], [3000, 3000], [3000.4, 3000], [3000.5, 1000]])('rounds mini SDK uploadInterval %s to %s ms', (uploadInterval, uploadIntervalMs) => {
+    expect(normalizeInitOptions({ ...input, uploadInterval }, target)).toMatchObject({ ok: true, config: { miniprogram: { uploadIntervalMs } } })
+  })
+  it.each([null, -1, 3001, NaN, Infinity, 2147483648, '1000'])('defaults invalid uploadInterval %s', uploadInterval => {
+    expect(normalizeInitOptions({ ...input, uploadInterval }, target)).toEqual(normalizeInitOptions(input, target))
   })
   it('reads actual appId and host version without requiring App-only methods', async () => {
     const fixture = miniHost(target)

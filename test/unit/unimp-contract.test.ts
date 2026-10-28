@@ -13,7 +13,8 @@ describe('Native v1 protocol validation', () => {
   it('normalizes explicit Native mode without App defaults and supports an arbitrary real appId', () => {
     expect(normalizeUniMPConfig({ ...unimpConfig, appId: '  real-app/😀  ' })).toEqual({ ...unimpResolved, appId: 'real-app/😀' })
     expect(normalizeUniMPConfig({ ...unimpConfig, appId: '😀'.repeat(256), serverUrl: undefined })).not.toBeNull()
-    for (const input of [null, [], { ...unimpConfig, runtime: 'app' }, { ...unimpConfig, appId: '\ud800' }, { ...unimpConfig, appId: 'a'.repeat(257) }, { ...unimpConfig, dataCollect: 1 },
+    expect(normalizeUniMPConfig({ ...unimpConfig, dataCollect: 1, idMapping: 'true', debug: 1 })).toMatchObject({ dataCollect: true, idMapping: false, debug: false })
+    for (const input of [null, [], { ...unimpConfig, runtime: 'app' }, { ...unimpConfig, appId: '\ud800' }, { ...unimpConfig, appId: 'a'.repeat(257) },
       { ...unimpConfig, accountId: 'a'.repeat(300000) }, ...['serverUrl', 'sessionExpires', 'appChannel', 'appVersion', 'keepAlive', 'uploadInterval', 'forceLogin', 'legacyMiniProgramIdentity'].map(key => ({ ...unimpConfig, [key]: null }))]) {
       expect(normalizeUniMPConfig(input)).toBeNull()
     }

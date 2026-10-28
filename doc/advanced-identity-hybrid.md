@@ -47,7 +47,7 @@ gdp('init', 'account-id', 'data-source-id', {
 })
 ```
 
-来源的 appId / accountId / dataSourceId 必须与本次初始化完全一致。旧独立 SDK 的设备键本身未记录项目归属，这份配置是接入方对来源归属的明确确认；SDK 不推断跨项目关系。
+来源的 appId / accountId / dataSourceId 必须与本次初始化完全一致。旧独立 SDK 的设备键本身未记录项目归属，这份配置是接入方对来源归属的明确确认；SDK 不推断跨项目关系。迁移配置非法、来源不匹配或在 App 中传入时，按默认关闭迁移处理，不阻断 SDK 初始化，也不读取旧身份键。
 
 只有当前 SDK 的身份键缺失时才读取 `_growing_uid_`、`_growing_userId_`、`_growing_userKey_`；插件模式使用 `_growing_plugin_*`，子实例前缀仅作用于用户字段。支持旧 `{ value, expiredAt }` 信封，过期或损坏值不迁入。userKey 仅在 `idMapping` 开启且有 userId 时迁移。
 

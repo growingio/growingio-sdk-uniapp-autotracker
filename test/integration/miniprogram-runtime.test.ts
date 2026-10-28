@@ -15,6 +15,46 @@ beforeEach(() => {
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
 describe.each(miniTargets)('%s complete runtime', target => {
+  it('initializes with defaults for invalid optional values and leaves identity migration disabled', async () => {
+    const f = miniHost(target)
+    expect(f.init({
+      keepAlive: 1441, sessionExpires: 361, uploadInterval: 3000.5, dataCollect: 'false',
+      forceLogin: 'true', legacyMiniProgramIdentity: { appId: 'other-app' },
+    })).toBe(true)
+    expect(await f.tracker.whenReady()).toBe(true)
+    f.show()
+    expect(f.tracker.track('optional_defaults')).toBe(true)
+    expect(f.host.request).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(999)
+    expect(f.host.request).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(f.sent.map(event => event.eventType)).toEqual(['VISIT', 'PAGE', 'CUSTOM'])
+    vi.setSystemTime(Date.now() + 60001)
+    expect(f.tracker.track('same_session')).toBe(true)
+    const events = [...f.sent, ...f.tracker.queuedEvents()]
+    expect(events.filter(event => event.eventType === 'VISIT')).toHaveLength(1)
+    expect(events.at(-1)).toMatchObject({ eventType: 'CUSTOM', sessionId: f.sent[0]!.sessionId })
+    expect(f.host.getStorageSync.mock.calls.every(([key]) => key.startsWith('gio:mp:v1:'))).toBe(true)
+  })
+
+  it('honors zero mini SDK intervals with immediate upload and a new visit after background time passes', async () => {
+    const f = miniHost(target)
+    expect(f.init({ keepAlive: 0, uploadInterval: 0 })).toBe(true)
+    expect(await f.tracker.whenReady()).toBe(true)
+    f.show()
+    expect(f.sent.map(event => event.eventType)).toEqual(['VISIT', 'PAGE'])
+    const sessionId = f.sent[0]!.sessionId
+    f.tracker.onPageHide('home-1')
+    f.tracker.onAppHide()
+    vi.setSystemTime(Date.now() + 1)
+    f.tracker.onAppShow({ path: 'pages/home', query: '', scene: '1001' })
+    f.tracker.onPageShow('home-1', '首页')
+    const visits = f.sent.filter(event => event.eventType === 'VISIT')
+    expect(visits).toHaveLength(2)
+    expect(visits[1]!.sessionId).not.toBe(sessionId)
+    expect(f.tracker.queuedEvents()).toEqual([])
+  })
+
   it('builds mini wire events, persists only identity and sequence, and starts a fresh session after restart', async () => {
     const f = miniHost(target)
     expect(f.init()).toBe(true)
@@ -227,6 +267,7 @@ describe.each(miniTargets)('%s complete runtime', target => {
   })
   it('can retry public initialization after an invalid appId without installing hooks or writing storage', async () => {
     vi.resetModules()
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const f = miniHost(target)
     vi.stubGlobal('uni', f.host)
     const { gdp } = await import('../../index.js')
@@ -236,10 +277,12 @@ describe.each(miniTargets)('%s complete runtime', target => {
     expect(gdp('init', 'account', 'source', { uniVue: { mixin }, appId: 'wrong' })).toBe(false)
     expect(mixin).not.toHaveBeenCalled()
     expect(f.host.setStorageSync).not.toHaveBeenCalled()
+    expect(warning).not.toHaveBeenCalled()
     expect(gdp('init', 'account', 'source', { uniVue: { mixin }, appId: f.appId })).toBe(true)
     expect(await tracker!.whenReady()).toBe(true)
     expect(mixin).toHaveBeenCalledOnce()
     expect(gdp('init', 'account', 'source', { uniVue: { mixin }, appId: f.appId })).toBe(false)
+    expect(warning).toHaveBeenCalledExactlyOnceWith('[GrowingIO]：SDK重复初始化，请检查是否重复加载SDK或接入其他平台SDK导致冲突!')
     expect(gdp('track', 'early')).toBe(true)
   })
 })

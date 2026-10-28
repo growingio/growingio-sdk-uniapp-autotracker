@@ -12,18 +12,20 @@ export type LegacyMiniProgramIdentity = Readonly<{
   plugin?: boolean
 }>
 
+/** 必填标识严格校验；可选配置缺省或非法时使用对应平台的默认值。 */
 export type GioInitOptions = Readonly<{
   accountId: string
   dataSourceId: string
   serverUrl?: string | null
   /** 小程序的真实平台 appId；App 不消费此字段。 */
   appId?: string | null
-  /** 小程序后台保活分钟数，默认 5。App 不消费。 */
+  /** 小程序后台保活分钟数，范围 0–1440，默认 5。App 不消费。 */
   keepAlive?: number
-  /** 小程序聚合上报间隔毫秒数，默认 1000。App 不消费。 */
+  /** 小程序聚合上报间隔毫秒数，先四舍五入，范围 0–3000，默认 1000。App 不消费。 */
   uploadInterval?: number
   appChannel?: string | null
   appVersion?: string | null
+  /** 会话过期分钟数，支持正小数，最大 360；非法值回退默认，小程序默认 -1（关闭活动超时）。 */
   sessionExpires?: number
   dataCollect?: boolean
   idMapping?: boolean
@@ -55,18 +57,7 @@ export type ConfigErrorCode =
   | 'invalid_options'
   | 'invalid_account_id'
   | 'invalid_data_source_id'
-  | 'invalid_server_url'
-  | 'invalid_app_channel'
-  | 'invalid_app_version'
-  | 'invalid_session_expires'
-  | 'invalid_data_collect'
-  | 'invalid_id_mapping'
-  | 'invalid_debug'
   | 'invalid_app_id'
-  | 'invalid_keep_alive'
-  | 'invalid_upload_interval'
-  | 'invalid_force_login'
-  | 'invalid_identity_migration'
 
 export type ConfigResult =
   | Readonly<{ ok: true; config: ResolvedGioConfig }>
@@ -74,13 +65,18 @@ export type ConfigResult =
 
 const DEFAULT_SERVER_URL = 'https://napi.growingio.com'
 const APP_DEFAULT_SESSION_TIMEOUT_MS = 30_000
+const MINI_PROGRAM_DEFAULT_KEEP_ALIVE_MS = 5 * 60_000
+const MINI_PROGRAM_MAX_KEEP_ALIVE_MINUTES = 60 * 24
+const MINI_PROGRAM_DEFAULT_UPLOAD_INTERVAL_MS = 1000
+const MINI_PROGRAM_MAX_UPLOAD_INTERVAL_MS = 3000
+const MAX_SESSION_EXPIRES_MINUTES = 60 * 6
 
 /** 确认初始化参数是普通对象形态，拒绝数组与空值。 */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-/** 归一化必填标识并拒绝未配对代理项，避免后续 URI 或 UTF-8 编码失败。 */
+/** 归一化非空字符串并拒绝未配对代理项，避免后续 URI 或 UTF-8 编码失败。 */
 function nonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
@@ -93,17 +89,10 @@ function nonEmptyString(value: unknown): string | null {
   return trimmed === '' ? null : trimmed
 }
 
-/** 清理可选字符串的首尾空白，将未提供或空白值统一为 null。 */
-function optionalTrimmedString(value: string | null | undefined): string | null {
-  if (value === undefined || value === null) return null
-  const trimmed = value.trim()
-  return trimmed === '' ? null : trimmed
-}
-
-/** 规范采集服务基础地址，拒绝凭据、接口路径、查询参数和片段；兼容缺少 URL 的 App 运行时。 */
-function normalizeServerUrl(value: unknown): string | ConfigErrorCode {
+/** 规范采集服务基础地址；非法可选值回退默认地址，兼容缺少 URL 的 App 运行时。 */
+function normalizeServerUrl(value: unknown): string {
   if (value === undefined || value === null) return DEFAULT_SERVER_URL
-  if (typeof value !== 'string' || value.trim() === '') return 'invalid_server_url'
+  if (typeof value !== 'string' || value.trim() === '') return DEFAULT_SERVER_URL
 
   // 部分 App 运行时没有浏览器的 URL 构造器，因此仅解析采集服务基础地址。
   // 不接受凭据、接口路径、查询参数、片段或转义主机。
@@ -112,40 +101,38 @@ function normalizeServerUrl(value: unknown): string | ConfigErrorCode {
     try {
       const url = new globalThis.URL(candidate)
       if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.hostname === '' || url.pathname !== '/'
-        || url.search !== '' || url.hash !== '' || url.username !== '' || url.password !== '') return 'invalid_server_url'
+        || url.search !== '' || url.hash !== '' || url.username !== '' || url.password !== '') return DEFAULT_SERVER_URL
       return url.origin
-    } catch { return 'invalid_server_url' }
+    } catch { return DEFAULT_SERVER_URL }
   }
   const match = /^(https?):\/\/(\[[a-f\d:.]+\]|[^\s/:?#@\[\]\\%]+)(?::(\d+))?\/?$/i.exec(candidate)
-  if (match === null) return 'invalid_server_url'
+  if (match === null) return DEFAULT_SERVER_URL
   const protocol = match[1]!.toLowerCase()
   const host = normalizeCollectorHost(match[2]!)
-  if (host === null) return 'invalid_server_url'
+  if (host === null) return DEFAULT_SERVER_URL
   const port = match[3] === undefined ? null : Number(match[3])
-  if (port !== null && (!Number.isInteger(port) || port > 65535)) return 'invalid_server_url'
+  if (port !== null && (!Number.isInteger(port) || port > 65535)) return DEFAULT_SERVER_URL
   const suffix = port === null || (protocol === 'https' && port === 443) || (protocol === 'http' && port === 80) ? '' : `:${port}`
   return `${protocol}://${host}${suffix}`
 }
 
-/** 仅对未提供的布尔配置补默认值，显式非法值返回对应错误。 */
-function normalizeBoolean(value: unknown, fallback: boolean, error: ConfigErrorCode): boolean | ConfigErrorCode {
-  if (value === undefined) return fallback
-  return typeof value === 'boolean' ? value : error
+/** 布尔配置仅接受实际布尔值；缺省或非法值统一回退默认。 */
+function normalizeBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback
 }
 
-/** 将分钟单位的会话配置换算为毫秒，拒绝非正数及换算溢出。 */
-function normalizeSessionPolicy(value: unknown): SessionPolicy | ConfigErrorCode {
-  if (value === undefined) return { timeoutMs: APP_DEFAULT_SESSION_TIMEOUT_MS }
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return 'invalid_session_expires'
+/** 校验分钟值并换算为毫秒；keepAlive 允许零，非法值由对应配置回退默认。 */
+function normalizeSessionTimeout(value: unknown, maxMinutes: number, allowZero = false): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || (!allowZero && value === 0) || value > maxMinutes) return null
   const timeoutMs = value * 60_000
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return 'invalid_session_expires'
-  return { timeoutMs }
+  return Number.isFinite(timeoutMs) && (allowZero || timeoutMs > 0) ? timeoutMs : null
 }
 
-/** 统一读取和校验原始初始化配置；失败不产生副作用，修正参数后可再次尝试初始化。 */
+/** 统一校验必填项并归一化可选项；可选值非法时回退默认，不阻断初始化。 */
 export function normalizeInitOptions(input: unknown, target?: MiniProgramTarget): ConfigResult {
   if (!isRecord(input)) return { ok: false, code: 'invalid_options' }
-  if (input.runtime !== undefined && input.runtime !== 'app') return { ok: false, code: 'invalid_options' }
+  // 显式托管模式由独立入口处理；其他非法 runtime 值使用默认的本地采集模式。
+  if (input.runtime === 'unimp') return { ok: false, code: 'invalid_options' }
 
   const accountId = nonEmptyString(input.accountId)
   if (accountId === null) return { ok: false, code: 'invalid_account_id' }
@@ -153,47 +140,38 @@ export function normalizeInitOptions(input: unknown, target?: MiniProgramTarget)
   if (dataSourceId === null) return { ok: false, code: 'invalid_data_source_id' }
 
   const serverUrl = normalizeServerUrl(input.serverUrl)
-  if (serverUrl === 'invalid_server_url') return { ok: false, code: serverUrl }
+  const appChannel = nonEmptyString(input.appChannel)
+  const appVersionFallback = nonEmptyString(input.appVersion)
 
-  if (input.appChannel !== undefined && input.appChannel !== null && typeof input.appChannel !== 'string') {
-    return { ok: false, code: 'invalid_app_channel' }
+  let sessionPolicy: SessionPolicy = {
+    timeoutMs: target === undefined
+      ? normalizeSessionTimeout(input.sessionExpires, MAX_SESSION_EXPIRES_MINUTES) ?? APP_DEFAULT_SESSION_TIMEOUT_MS
+      : normalizeSessionTimeout(input.keepAlive, MINI_PROGRAM_MAX_KEEP_ALIVE_MINUTES, true) ?? MINI_PROGRAM_DEFAULT_KEEP_ALIVE_MS,
   }
-  const appChannel = optionalTrimmedString(input.appChannel)
-  if (input.appVersion !== undefined && input.appVersion !== null && typeof input.appVersion !== 'string') {
-    return { ok: false, code: 'invalid_app_version' }
-  }
-  const appVersionFallback = optionalTrimmedString(input.appVersion)
-
-  let sessionPolicy = normalizeSessionPolicy(target === undefined ? input.sessionExpires : input.keepAlive === undefined ? 5 : input.keepAlive)
-  if (typeof sessionPolicy === 'string') return { ok: false, code: target === undefined ? sessionPolicy : 'invalid_keep_alive' }
   let miniprogram: ResolvedGioConfig['miniprogram']
   if (target !== undefined) {
     const appId = nonEmptyString(input.appId)
     if (appId === null || appId.startsWith('__UNI__')) return { ok: false, code: 'invalid_app_id' }
-    if (input.sessionExpires !== undefined && input.sessionExpires !== -1) {
-      const activity = normalizeSessionPolicy(input.sessionExpires)
-      if (typeof activity === 'string') return { ok: false, code: activity }
-      sessionPolicy = { ...sessionPolicy, activityTimeoutMs: activity.timeoutMs }
+    const activityTimeoutMs = normalizeSessionTimeout(input.sessionExpires, MAX_SESSION_EXPIRES_MINUTES)
+    if (activityTimeoutMs !== null) {
+      sessionPolicy = { ...sessionPolicy, activityTimeoutMs }
     }
-    const interval = input.uploadInterval === undefined ? 1000 : input.uploadInterval
-    if (typeof interval !== 'number' || !Number.isSafeInteger(interval) || interval <= 0 || interval > 2147483647) return { ok: false, code: 'invalid_upload_interval' }
-    miniprogram = { target, appId, uploadIntervalMs: interval }
+    const rawInterval = input.uploadInterval
+    const interval = typeof rawInterval === 'number' ? Math.round(rawInterval) : NaN
+    const uploadIntervalMs = Number.isFinite(interval) && interval >= 0 && interval <= MINI_PROGRAM_MAX_UPLOAD_INTERVAL_MS
+      ? interval : MINI_PROGRAM_DEFAULT_UPLOAD_INTERVAL_MS
+    miniprogram = { target, appId, uploadIntervalMs }
   }
-  const dataCollect = normalizeBoolean(input.dataCollect, true, 'invalid_data_collect')
-  if (typeof dataCollect === 'string') return { ok: false, code: dataCollect }
-  const idMapping = normalizeBoolean(input.idMapping, false, 'invalid_id_mapping')
-  if (typeof idMapping === 'string') return { ok: false, code: idMapping }
-  const debug = normalizeBoolean(input.debug, false, 'invalid_debug')
-  if (typeof debug === 'string') return { ok: false, code: debug }
-  if (input.forceLogin !== undefined && typeof input.forceLogin !== 'boolean') return { ok: false, code: 'invalid_force_login' }
+  const dataCollect = normalizeBoolean(input.dataCollect, true)
+  const idMapping = normalizeBoolean(input.idMapping, false)
+  const debug = normalizeBoolean(input.debug, false)
   let migration: LegacyMiniProgramIdentity | undefined
-  if (input.legacyMiniProgramIdentity !== undefined) {
-    const source = input.legacyMiniProgramIdentity
-    if (miniprogram === undefined || !isRecord(source)
-      || Object.keys(source).some(key => !['appId', 'accountId', 'dataSourceId', 'storagePrefix', 'plugin'].includes(key))
-      || source.appId !== miniprogram.appId || source.accountId !== accountId || source.dataSourceId !== dataSourceId
-      || (source.storagePrefix !== undefined && (typeof source.storagePrefix !== 'string' || source.storagePrefix.length > 128 || !/^[A-Za-z0-9_-]*$/.test(source.storagePrefix)))
-      || (source.plugin !== undefined && typeof source.plugin !== 'boolean')) return { ok: false, code: 'invalid_identity_migration' }
+  const source = input.legacyMiniProgramIdentity
+  if (miniprogram !== undefined && isRecord(source)
+    && Object.keys(source).every(key => ['appId', 'accountId', 'dataSourceId', 'storagePrefix', 'plugin'].includes(key))
+    && source.appId === miniprogram.appId && source.accountId === accountId && source.dataSourceId === dataSourceId
+    && (source.storagePrefix === undefined || (typeof source.storagePrefix === 'string' && source.storagePrefix.length <= 128 && /^[A-Za-z0-9_-]*$/.test(source.storagePrefix)))
+    && (source.plugin === undefined || typeof source.plugin === 'boolean')) {
     migration = { appId: source.appId, accountId: source.accountId, dataSourceId: source.dataSourceId,
       ...(source.storagePrefix === undefined ? {} : { storagePrefix: source.storagePrefix }), ...(source.plugin === undefined ? {} : { plugin: source.plugin }) }
   }

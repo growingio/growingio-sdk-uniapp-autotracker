@@ -83,7 +83,7 @@ C05 会缩小自动采集范围：`@click="save"`、`ready ? save : cancel` 等�
 
 | 编号 | 可复现问题 | 修复及回归 |
 |---|---|---|
-| U09 | 有限但极大的 sessionExpires 换算成毫秒后为 Infinity，会话失去超时边界。 | `src/constants/config.ts` 检查换算结果，非法值原子拒绝；Number.MAX_VALUE 回归。 |
+| U09 | 有限但极大的 sessionExpires 换算成毫秒后为 Infinity，会话失去超时边界。 | `src/constants/config.ts` 检查会话上限及换算结果，非法可选值回退默认会话时长，不阻断初始化；Number.MAX_VALUE 回归。 |
 | U10 | 超时/取消调用 abort 后，宿主同步回调先结算，覆盖权威 timeout/aborted 结果。 | `src/core/uploader.ts` 先锁定结果，再 abort；两类同步回调均仅结算一次。 |
 | U11 | 网络查询已同步完成但 Promise 回调未执行时收到新断网通知，随后旧 WIFI 结果覆盖新状态。 | `src/core/growingIO.ts` 为通知和查询完成回调增加 revision 优先级保护；实际 App 装配复现此间隙，后续事件维持 UNKNOWN 与离线暂停。 |
 | U12 | userId/userKey 密文解码失败与合法 null 混同，损坏记录被错误恢复为匿名身份。 | `src/core/userStore.ts` 区分合法 null 与解码失败，损坏字段拒绝恢复；deviceId、userId、userKey、lastUserId 均有损坏记录回归。 |

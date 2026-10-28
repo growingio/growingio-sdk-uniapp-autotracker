@@ -271,7 +271,7 @@ export const gdp: GdpCommand
 
 `gdp()` 与小程序 SDK 使用同一命令式接入形态：先注册插件，再初始化。业务侧只传账户、数据源、采集配置和 `createSSRApp(App)` 得到的 `uniVue`。SDK 自己读取全局 `uni`、创建内部 tracker 与全局 Vue mixin；业务 `App.vue` 和页面不必引入 bridge。`deviceId` 由 SDK 首次启动生成并以 SDK storage namespace 持久化；`sessionId` 也由 SDK 自己按首次访问、超时、用户切换和恢复采集等会话边界创建。宿主对象、device/session ID 工厂都是内部依赖，绝不要求客户传入。
 
-`src/constants/config.ts` 是唯一允许读取 `GioInitOptions` 的位置：`accountId`、`dataSourceId` 必须是非空且 UTF-16 合法的字符串，拒绝未配对代理字符，保留合法中文与 emoji；`serverUrl` 未传时固定补为 `https://napi.growingio.com`，传入时 trim、仅域名自动补 `https://`、去掉末尾 `/`，且必须是有效 HTTP(S) **基础地址**，不得传入既有接口路径或 query。必填项或显式地址非法时，`init()` 返回 `false` 并记录受控诊断：不创建实例、不读写 SDK storage、不采集；接入方修正配置后可再次主动调用 `init()`。首次成功后，后续 `init()` 返回 `false` 并记录 `already_initialized`，原实例不变。`appId` 是保留的跨端输入：当前 App profile 接受但在此边界直接剥离，不校验其内容、不写入 `ResolvedGioConfig`、storage、日志或采集报文，也绝不用于覆盖 App `domain`；未来 Web / 小程序 profile 才各自定义并消费它。`appChannel` 是 App 三端完全一致的可选 init 字段：非空字符串 trim 后写为 `ResolvedGioConfig.appChannel`，未传或空白时为 `null`；不读取 `uni.getAppBaseInfo().channel` 等平台专属渠道，也不做端侧猜测。它是 init 期固定值，`setOptions()` 不得修改，也不写 storage。`urlScheme` 不属于基础 init：一期没有 Deep Link 或圈选插件，基础 SDK 不读取、存储或上报它；以后只能由相应插件的专属配置提供。`dataCollect` 默认 `true`，`idMapping`、`debug` 默认 `false`，三者都是 init 输入；只有 `dataCollect` 可由 `setOptions()` 在运行时改变。`sessionExpires` 与 Web SDK 同名、同单位，单位为分钟：必须是大于 `0` 的有限数，允许小数，换算后的毫秒值也必须有限且大于 `0`；传入 `0`、负数、NaN、Infinity 或非数字时 `init()` 失败。未传时由 profile 补默认值，App 为 `0.5`（30 秒）、Web 为 `30`、小程序为 `5`。它不支持 `setOptions()` 热修改。请求超时 5000ms、队列上限 200，都是内部固定策略。App 和 Web 事件入队后立即尝试发送；20 条/5000ms 的聚合节流仅适用于小程序，不应用到 App/Web。并发槽位占满、明确断网或失败重试时按各自策略等待，后台与重连可立即发送。`appVersion` 是用户可选的 fallback：非空时归一化为 `appVersionFallback`，不是最终上报值。其余 core 模块、平台适配器和插件不得再对可选字段各自补默认值。
+`src/constants/config.ts` 是唯一允许读取 `GioInitOptions` 的位置：`accountId`、`dataSourceId` 必须是非空且 UTF-16 合法的字符串，拒绝未配对代理字符，保留合法中文与 emoji；`serverUrl` 未传时固定补为 `https://napi.growingio.com`，传入时 trim、仅域名自动补 `https://`、去掉末尾 `/`，且必须是有效 HTTP(S) **基础地址**，不得传入既有接口路径或 query。必填项非法时，`init()` 返回 `false` 并记录受控诊断：不创建实例、不读写 SDK storage、不采集；接入方修正配置后可再次主动调用 `init()`。可选配置缺省、类型错误或超出有效范围时回退对应默认值，不阻断初始化；非法 `serverUrl` 使用默认采集地址，非法 `runtime` 使用默认本地采集模式，显式 `unimp` 模式仍须满足托管接入约定。首次成功后，后续 `init()` 返回 `false` 并记录 `already_initialized`，原实例不变。`appId` 是保留的跨端输入：当前 App profile 接受但在此边界直接剥离，不校验其内容、不写入 `ResolvedGioConfig`、storage、日志或采集报文，也绝不用于覆盖 App `domain`；未来 Web / 小程序 profile 才各自定义并消费它。`appChannel` 是 App 三端完全一致的可选 init 字段：非空字符串 trim 后写为 `ResolvedGioConfig.appChannel`，未传、空白或非法值时为 `null`；不读取 `uni.getAppBaseInfo().channel` 等平台专属渠道，也不做端侧猜测。它是 init 期固定值，`setOptions()` 不得修改，也不写 storage。`urlScheme` 不属于基础 init：一期没有 Deep Link 或圈选插件，基础 SDK 不读取、存储或上报它；以后只能由相应插件的专属配置提供。`dataCollect` 默认 `true`，`idMapping`、`debug` 默认 `false`，三者都是 init 输入；只有 `dataCollect` 可由 `setOptions()` 在运行时改变。`sessionExpires` 与 Web SDK 同名、同单位，单位为分钟：必须是大于 `0` 且不超过 `360`（6 小时）的有限数，允许小数，换算后的毫秒值也必须有限且大于 `0`；传入 `0`、负数、超过 `360`、NaN、Infinity 或非数字时回退 profile 默认值。上限及非法值回退默认的处理参照 Web SDK，保留 uni-app 的小数分钟精度。未传或非法时，App 为 `0.5`（30 秒），未来 Web profile 为 `30`；小程序默认关闭额外活动超时（`-1`），后台超时由 `keepAlive` 单独控制，未传或非法时为 `5` 分钟。它不支持 `setOptions()` 热修改。请求超时 5000ms、队列上限 200，都是内部固定策略。App 和 Web 事件入队后立即尝试发送；20 条/5000ms 的聚合节流仅适用于小程序，不应用到 App/Web。并发槽位占满、明确断网或失败重试时按各自策略等待，后台与重连可立即发送。`appVersion` 是用户可选的 fallback：非空时归一化为 `appVersionFallback`，不是最终上报值。其余 core 模块、平台适配器和插件不得再对可选字段各自补默认值。
 
 调用顺序也固定：先 `gdp('registerPlugins', ...)`，再 `gdp('init', ...)`。业务侧所有事件、身份、属性和位置操作都只能通过 `gdp('xxx')`；SDK 不向页面暴露 tracker 或 `$gio`。只有客户显式注册的插件在 `install(growingio)` 中得到内部实例。首次 `init()` 返回 `true` 后，tracker 可短暂处于 `initializing`，该期间发生的事件才进入 bootstrap buffer，待 identity、session 和 SystemContext 完成后按发生顺序构建。这样既保留独立 SDK 的“插件先声明、初始化时统一安装”语义，也不会丢失合法初始化后的首屏事件。
 
@@ -466,19 +466,17 @@ export function createApp() {
 3. 已登录用户从 A 切换为不同的已登录用户 B；
 4. `dataCollect` 从 `false` 恢复为 `true`。
 
-`App:onLaunch` 是 App 冷启动边界：它出现时即使持久化的 `lastCloseTime` 距今不足 30 秒，也必须替换 session 并在紧随的 `onShow` 发 `VISIT`。只有没有新的 `onLaunch` 的后台恢复才比较 `lastCloseTime` 与当前时间。profile 提供默认值，`init({ sessionExpires })` 可统一覆盖。该字段与 Web SDK 同名、同为分钟单位：App（Android/iOS/HarmonyOS）默认 **0.5 分钟（30 秒）**，Web profile 默认 **30 分钟**，小程序 profile 默认 **5 分钟**。一期仅交付 App profile；其余两项是未来 profile 的已定默认值，不属于 App 的降级或兼容分支。Android/iOS/HarmonyOS 独立 SDK 虽使用秒单位的 `sessionInterval`，但传统 uni-app 在对外 API 边界统一采用 Web 的 `sessionExpires`，随后一次换算为 core 毫秒策略。未来小程序若要兼容既有 `keepAlive`（分钟）入口，只能在小程序 profile 的接入边界映射为统一的 `sessionExpires`，不得把别名带进 core。为让 `0.5` 能在全端表达，Web profile 接入时必须保留正的小数分钟值，不能沿用现有 Web 实现“取整且最小 1 分钟”的旧 normalizer。App 不沿用小程序“场景值变化即新访问”的规则。使用默认 App 值时，30 秒内从不同 Deep Link、分享或入口 query 回到 App 不新建 session、不补 `VISIT`；后续页面只按自身 `onLoad` 的 query 建快照。
+`App:onLaunch` 是 App 冷启动边界：它出现时即使持久化的 `lastCloseTime` 距今不足 30 秒，也必须替换 session 并在紧随的 `onShow` 发 `VISIT`。只有没有新的 `onLaunch` 的后台恢复才比较 `lastCloseTime` 与当前时间。profile 提供默认值，`init({ sessionExpires })` 可统一覆盖。该字段与 Web SDK 同名、同为分钟单位：App（Android/iOS/HarmonyOS）默认 **0.5 分钟（30 秒）**，Web profile 默认 **30 分钟**，小程序由 `keepAlive` 控制默认 **5 分钟**的后台超时，`sessionExpires` 默认 `-1` 关闭额外活动超时。当前交付 App 与小程序 profile，Web 是未来规划；非法可选值统一回退对应默认值。Android/iOS/HarmonyOS 独立 SDK 虽使用秒单位的 `sessionInterval`，但传统 uni-app 在对外 API 边界统一采用 Web 的 `sessionExpires`，随后一次换算为 core 毫秒策略。小程序的 `keepAlive` 与 `sessionExpires` 分别在 profile 边界归一为 `timeoutMs` 与 `activityTimeoutMs`，不得把原始分钟配置带进 core。为让 `0.5` 能在全端表达，Web profile 接入时必须保留正的小数分钟值，不能沿用现有 Web 实现“取整且最小 1 分钟”的旧 normalizer。App 不沿用小程序“场景值变化即新访问”的规则。使用默认 App 值时，30 秒内从不同 Deep Link、分享或入口 query 回到 App 不新建 session、不补 `VISIT`；后续页面只按自身 `onLoad` 的 query 建快照。
 
 ```ts
-const appSessionPolicy: SessionPolicy = { timeoutMs: 30 * 1000 }
-const webSessionPolicy: SessionPolicy = { timeoutMs: 30 * 60 * 1000 }
-const miniprogramSessionPolicy: SessionPolicy = { timeoutMs: 5 * 60 * 1000 }
+// 可选值非法时继续初始化，使用当前 profile 的默认策略。
+const app = normalizeInitOptions({ accountId: 'account', dataSourceId: 'source', sessionExpires: -1 })
+if (app.ok) app.config.sessionPolicy // { timeoutMs: 30_000 }
 
-function resolveSessionPolicy(
-  sessionExpires: number | undefined,
-  fallback: SessionPolicy,
-): SessionPolicy {
-  return { timeoutMs: (sessionExpires ?? fallback.timeoutMs / 60_000) * 60_000 }
-}
+const mini = normalizeInitOptions({
+  accountId: 'account', dataSourceId: 'source', appId: 'wx-real-app-id', sessionExpires: 361,
+}, 'mp-weixin')
+if (mini.ok) mini.config.sessionPolicy // { timeoutMs: 300_000 }，不启用额外活动超时
 ```
 
 `sessionId` 在新 session 产生时更新；同一 session 内的 `PAGE`、`CUSTOM`、`VIEW_*` 必须使用相同值。`onHide` 只记录关闭时间，不立即销毁 session，以便热启动续接。
