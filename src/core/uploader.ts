@@ -143,6 +143,8 @@ export class Uploader {
     private readonly onBeforeDispatch?: (events: readonly ProtocolEvent[]) => void,
     private readonly canDispatch: () => boolean = () => true,
     private readonly uploadIntervalMs = 0,
+    /** 请求发现网络错误时，允许运行时刷新可能过期的连接状态。 */
+    private readonly onNetworkFailure: () => void = () => undefined,
   ) {}
 
   /** App 事件入队后立即具备发送资格，仅传输槽位与重试可能使派发延后。 */
@@ -257,6 +259,7 @@ export class Uploader {
     dispatchWithFinalizer(this.transport, this.runtime, requestResult.request, (rawResult) => {
       const result = normalizeCollectorResult(rawResult)
       this.active -= 1
+      if (result.kind === 'network' || result.kind === 'timeout') this.onNetworkFailure()
       if (result.kind === 'success') {
         this.queue.remove(requestIds)
         this.releaseReserved(requestIds)

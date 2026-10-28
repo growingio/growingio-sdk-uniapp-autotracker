@@ -53,11 +53,13 @@ pnpm run bench:sdk
 | App / Page 生命周期 | 入口和页面上下文、页面可见性、卸载、动态标题、方向、后台事件、宿主异常隔离 | `test/unit/{app-lifecycle,page-lifecycle,page-store,app-bridge,page-bridge,uniapp-installer,orientation}.test.ts` |
 | 事件协议、属性与位置 | 所有事件类型的字段白名单、公共上下文、属性清洗、0/false、事件名校验、经纬度及清除位置 | `test/unit/{protocol,event-composer,event-dispatcher,location-state}.test.ts`；`test/protocol-contract/*.test.ts` |
 | 队列与持久化 | FIFO、容量、字节边界、并发领取、重试状态、App 缓存 7 天到期清理与冷启动恢复、损坏记录隔离、写入失败后的后续恢复 | `test/unit/{queue,queue-persistence,persistence-boundaries}.test.ts`；`test/integration/app-queue-retention.test.ts` |
-| 上传与网络 | POST/JSON 协议、200/204 接收、4xx 丢弃、5xx/网络重试、最多 3 个并发、断网保留、超时/取消只结算一次 | `test/unit/{collector,uploader,transport-finalizer,app-request,app-network}.test.ts`；`test/integration/mock-collector.test.ts` |
+| 上传与网络 | POST/JSON 协议、200/204 接收、4xx 丢弃、5xx/网络重试、最多 3 个并发、断网保留、三端联网自动补发、通知缺失/未送达、后台取消恢复检查、超时/取消只结算一次 | `test/unit/{collector,uploader,transport-finalizer,app-request,app-network}.test.ts`；`test/integration/{mock-collector,app-offline-recovery}.test.ts` |
 | 无埋点编译 | Vue AST、三种组件写法、条件分支、参数/this/返回值/异常、幂等性、复杂表达式警告与安全跳过 | `test/unit/{autotrack-vite,autotrack-semantics}.test.ts`；`test/integration/autotrack-hbuilderx.test.ts` |
 | 无埋点运行时 | schema、id#eventName、各 change 组件、敏感与 ignore、去重、tabBar、正式能力开关、编译到 HTTP 收集的完整链路 | `test/unit/{autotrack-contract,autotrack-dispatch,capabilities}.test.ts`；`test/integration/autotrack-pipeline.test.ts` |
 | 三端宿主装配 | Android/iOS/HarmonyOS 公共 API 到真实 SDK 运行时、协议与受控请求；系统信息、网络和存储降级 | `test/integration/sdk-public-contract.test.ts`；`test/unit/{app-runtime,app-system-context,app-storage}.test.ts` |
 | 打包发布 | 失败停止后续步骤、发布前再检查、版本渠道、npm 重试、两种安装包内容与真实消费者导入 | `test/integration/release-gate.test.ts`；`test/unit/{release-policy,npm-publisher}.test.ts`；`scripts/check-{release,package-consumers}.ts` |
+
+2026-10-28 联网补发回归：1824 项自动化测试通过，覆盖 Android / iOS / HarmonyOS 的正常通知、监听缺失、订阅抛错、通知未送达，以及断网通知遗漏、后台取消检查和回前台恢复。另在鸿蒙 Mate 60、HBuilderX 5.33 上重建安装 demo，以独立合成数据源和 USB 转发的本机 collector 验证：关闭 WLAN 后原生点击生成离线标记，断网期间未收到；恢复 WLAN 后未点击恢复标记，collector 通过 HTTP 204 接收同一 `runId` 的原事件且仅一次。设备证据位于本机忽略目录 `test-results/harmony-offline-recovery-20261028/`。Android / iOS 本轮为受控宿主验证。
 
 ## 覆盖率与报告
 

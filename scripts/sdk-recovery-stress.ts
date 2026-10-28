@@ -41,7 +41,7 @@ export async function runRecoveryStress(rounds = 75, eventsPerRound = 150) {
     let writeEpoch = 0
     let timerId = 0
     let notifyNetwork: (state: NetworkState) => void = () => undefined
-    const timers = new Map<number, () => void>()
+    const timers = new Map<number, { callback: () => void; delayMs: number }>()
     const completions: Array<(result: TransportResult) => void> = []
     const storage: StoragePort = {
       persistentQueue: true,
@@ -75,7 +75,7 @@ export async function runRecoveryStress(rounds = 75, eventsPerRound = 150) {
       upload: {
         runtime: {
           now: () => now, random: () => 0.5,
-          setTimeout: callback => { const id = ++timerId; timers.set(id, callback); return id },
+          setTimeout: (callback, delayMs) => { const id = ++timerId; timers.set(id, { callback, delayMs }); return id },
           clearTimeout: handle => { timers.delete(handle as number) },
         },
         transport: { dispatch: (request, done) => {
@@ -130,7 +130,18 @@ export async function runRecoveryStress(rounds = 75, eventsPerRound = 150) {
     return {
       tracker, timers, completions, settleStorage,
       reconnect: () => { connected = true; notifyNetwork('WIFI') },
-      seal: () => { assert.equal(pendingWrites, 0); assert.equal(timers.size, 0); sealed = true; notifyNetwork = () => undefined },
+      seal: () => {
+        assert.equal(pendingWrites, 0)
+        // 离线前台仅允许一个网络恢复检查；模拟进程退出时由宿主一起销毁。
+        const pending = [...timers.values()]
+        if (!connected && tracker.queuedEvents().length > 0) {
+          assert.equal(pending.length, 1)
+          assert.equal(pending[0]!.delayMs, 2_000)
+        } else assert.equal(pending.length, 0)
+        timers.clear()
+        sealed = true
+        notifyNetwork = () => undefined
+      },
     }
   }
 

@@ -23,12 +23,12 @@
 | 用户身份 | 分别运行 A→退出→A、A→退出→B | 同一 `runId` 下三条 `review_identity_step`：同账号保持 session，不同账号更新 session，退出事件不携带 userId；不额外生成 PAGE |
 | 用户身份 | 运行非法编码身份场景 | 非法参数被拒绝；两条 `review_identity_encoding` 仍为 A 且 session 相同 |
 | 采集开关 | 先开启采集，第 1 步暂停，等几秒后在本页执行第 2 步恢复 | `review_collection_blocked` 不入队；新 PAGE.timestamp 为恢复时刻；`review_collection_resumed` 使用新 sessionId 和当前页 path |
-| 生命周期 | 断网冷启动发送离线标记，退后台恢复网络，回前台发送恢复标记 | collector 最终接收到同一 `runId` 的两条 `review_network_step`；局域网 collector 要恢复同一 Wi-Fi |
+| 生命周期 | 断网后发送离线标记，恢复网络后停留本页等待，可选再发送恢复标记 | 未按恢复按钮前 collector 已收到 `phase=offline` 的 `review_network_step`；可选用同一 `runId` 对照恢复标记；局域网 collector 要恢复同一 Wi-Fi |
 | 生命周期 | 读取屏幕信息并发送核对事件 | `review_screen_context` 的 screenWidth / screenHeight 等于逻辑尺寸 × 有效 DPR 后的物理短边 / 长边；例如 390×844、DPR=3 对应 1170×2532 |
 
 上述控制按钮均忽略自动点击采集，避免干扰标记事件；箭头与隐私控件则保留待验收的自动采集。身份场景使用固定演示账号并改变当前身份，结束后可手动清除。所有成功提示只确认命令或入队结果，最终接收结果需查看请求或 collector。按同一 `runId` 对照 SDK Debug JSON，collector 默认仅保留脱敏统计，不保存这些原始事件字段。当前 App 事件即时进入发送调度；断网、请求槽位或失败重试可能延后发送。首次异步网络查询前 `networkState=UNKNOWN` 不等于事件丢失。
 
-真机断网恢复场景能验证实际前后台路径；网络监听 API 缺失/抛错、迟到回调等宿主异常由受控集成测试覆盖，不在 demo 中改写宿主 API。屏幕读取失败或没有有效 DPR 时页面会明确提示无法核对，不将推测值当成通过。折叠或显示配置变化后应重新启动再核对初始化时的屏幕上下文。
+Android、iOS 和 HarmonyOS 共用联网补发策略：宿主通知到达时立即尝试发送；前台明确断网且有待发缓存时，每 2 秒重新查询网络，恢复连接后自动补发。缓存清空、切后台或等待 `identify` 时停止这项检查，回前台立即刷新网络。网络请求失败也会主动重新查询，覆盖断网通知未送达的情况。真机断网恢复场景同时验证停留原页和前后台两条路径；网络监听 API 缺失/抛错/未送达、迟到回调等宿主异常由受控集成测试覆盖，不在 demo 中改写宿主 API。屏幕读取失败或没有有效 DPR 时页面会明确提示无法核对，不将推测值当成通过。折叠或显示配置变化后应重新启动再核对初始化时的屏幕上下文。
 
 开发机启动脱敏 collector：
 

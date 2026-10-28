@@ -11,12 +11,12 @@
       <text class="result">{{ result }}</text>
     </view>
     <view class="section">
-      <text class="title">断网启动 / 回前台恢复（本次修复）</text>
-      <text class="hint">1. 关闭 Wi-Fi 和移动数据，彻底退出后重新打开 App，进入本页并发送离线标记。若连的是局域网 collector，请恢复同一 Wi-Fi。</text>
+      <text class="title">断网缓存 / 联网自动补发</text>
+      <text class="hint">1. 关闭 Wi-Fi 和移动数据，在本页发送离线标记；也可断网冷启动后再发送。若连的是局域网 collector，请恢复同一 Wi-Fi。</text>
       <button id="network-offline" data-growing-ignore @click="offlineScenario($event)">发送离线标记</button>
-      <text class="hint">2. 把 App 切到后台，在系统设置恢复网络，再回到本页。不要重新启动 App，发送恢复标记。</text>
-      <button id="network-recovered" data-growing-ignore :disabled="!networkRunId" @click="recoveredScenario($event)">发送恢复标记</button>
-      <text class="hint">预期：联网后两条 review_network_step 最终发送成功，phase 分别为 offline / recovered。在 Debug JSON / 请求中按同一 runId 对照，collector 确认接收结果。离线时返回 true 只表示入队；首次异步网络查询完成前 networkState 可能是 UNKNOWN。</text>
+      <text class="hint">2. 恢复网络后停留本页等待，无需再点击或重启，先确认离线标记自动补发。也可到系统设置恢复网络后再回 App。前台断网且有待发缓存时每 2 秒检查网络。</text>
+      <button id="network-recovered" data-growing-ignore :disabled="!networkRunId" @click="recoveredScenario($event)">发送恢复对照标记（可选）</button>
+      <text class="hint">预期：未按恢复按钮前，collector 已接收到 phase=offline 的 review_network_step。可选发送 phase=recovered，用同一 runId 对照。离线时返回 true 只表示入队；首次异步网络查询完成前 networkState 可能是 UNKNOWN。</text>
       <text class="result">{{ networkResult }}</text>
     </view>
     <view class="section">
@@ -46,7 +46,7 @@ export default {
       const runId = `network-${Date.now()}-${++this.networkRunCount}`
       if (!gdp('track', 'review_network_step', { runId, phase: 'offline' })) { this.networkResult = '离线标记未入队：请开启采集并等待 SDK 就绪。'; return false }
       this.networkRunId = runId
-      this.networkResult = `${runId}：离线标记已入队。请到系统设置恢复网络，再回到 App 发送恢复标记。`
+      this.networkResult = `${runId}：离线标记已入队。恢复网络后无需点击即可自动补发；可选发送恢复标记做对照。`
       return true
     },
     /** 发送同组恢复标记，供在请求与采集服务中核对离线补发。 */

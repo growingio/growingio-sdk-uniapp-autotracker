@@ -18,6 +18,8 @@ import { appCapabilityProfile, miniProgramCapabilityProfile, type AutoTrackCapab
 
 declare const __GIO_AUTOTRACK_VERIFICATION__: boolean
 
+const APP_NETWORK_RECOVERY_INTERVAL_MS = 2_000
+
 export type LocalTrackerRuntimeDependencies = Readonly<{
   target?: MiniProgramTarget
   storage: StoragePort
@@ -56,6 +58,8 @@ type RuntimeState = Readonly<{
   stopNetwork: (() => void) | null
   /** 合并网络刷新请求，可要求在当前查询后补一次新读取。 */
   refreshNetwork: (requireFresh?: boolean) => void
+  /** 仅当前台存在明确断网的 App 缓存时保留一次网络恢复检查。 */
+  scheduleNetworkRecovery: () => void
   platform: string
   domain: string
   newDevice: boolean
@@ -405,10 +409,14 @@ export class LocalTrackerRuntime {
       config.serverUrl,
       config.accountId,
       (drop) => this.log('warn', `[GrowingIO]: upload dropped (${drop.reason})`),
-      () => { if (!this.awaitingIdentify) void queuePersistence?.persist(queue) },
+      () => {
+        if (!this.awaitingIdentify) void queuePersistence?.persist(queue)
+        scheduleNetworkRecovery()
+      },
       config.debug ? (events) => this.debugEvents(events) : undefined,
       () => !this.awaitingIdentify && this.dependencies.network?.isConnected() !== false,
       config.miniprogram?.uploadIntervalMs ?? 0,
+      () => { if (config.miniprogram === undefined) refreshNetwork(true) },
     )
     const appWithFlush = new AppLifecycle({
       miniprogram: config.miniprogram?.target,
@@ -426,6 +434,26 @@ export class LocalTrackerRuntime {
     })
     let connected = this.dependencies.network?.isConnected()
     let networkRevision = 0
+    let recoveryPending = false
+    let recoveryTimer: unknown
+    const scheduler = this.dependencies.upload?.runtime
+    /** 用一个可取消的定时器弥补宿主未送达的联网通知，不在后台或空队列时轮询。 */
+    const scheduleNetworkRecovery = (): void => {
+      const needed = config.miniprogram === undefined && this.foreground && !this.awaitingIdentify
+        && queue.size() > 0 && this.dependencies.network?.isConnected() === false
+      if (!needed) {
+        if (recoveryPending) scheduler?.clearTimeout(recoveryTimer)
+        recoveryPending = false
+        return
+      }
+      if (recoveryPending || scheduler === undefined) return
+      recoveryPending = true
+      recoveryTimer = scheduler.setTimeout(() => {
+        recoveryPending = false
+        refreshNetwork(true)
+        scheduleNetworkRecovery()
+      }, APP_NETWORK_RECOVERY_INTERVAL_MS)
+    }
     /** 应用最新网络状态并优先保护通知版本，恢复连接时重新派发待传事件。 */
     const updateNetwork = (next: NetworkState): void => {
       networkRevision++
@@ -435,8 +463,8 @@ export class LocalTrackerRuntime {
       if (connected === false && nextConnected !== false) uploader?.flush()
       else uploader?.schedule()
       connected = nextConnected
+      scheduleNetworkRecovery()
     }
-    const stopNetwork = this.dependencies.network === undefined ? null : this.dependencies.network.subscribe(updateNetwork)
     let readingNetwork = false
     let refreshPending = false
     /** 合并并发网络查询；前台期间要求的新读取不会被旧查询吞掉。 */
@@ -463,10 +491,11 @@ export class LocalTrackerRuntime {
         }
       })
     }
+    const stopNetwork = this.dependencies.network === undefined ? null : this.dependencies.network.subscribe(updateNetwork)
     refreshNetwork()
     this.state = {
       identity, identityPersistence, sessionPersistence, metaPersistence, queuePersistence, queue, sequence, sessions, location,
-      app: appWithFlush, page, dispatcher, pages, uploader, stopNetwork, refreshNetwork,
+      app: appWithFlush, page, dispatcher, pages, uploader, stopNetwork, refreshNetwork, scheduleNetworkRecovery,
       platform: hydrated.state.systemContext.platform, domain: hydrated.state.systemContext.domain,
       newDevice: hydrated.state.identity.source === 'generated' || hydrated.state.identity.source === 'corrupt',
       nativeIdentifiers,
@@ -641,6 +670,7 @@ export class LocalTrackerRuntime {
     if (!this.awaitingIdentify) void state.queuePersistence?.persist(state.queue)
     void state.metaPersistence.persist(state.sequence.current())
     state.uploader?.schedule()
+    state.scheduleNetworkRecovery()
   }
 
   /** 沿用小程序 SDK 的生命周期诊断形式，协议事件 JSON 仅在实际派发时输出。 */
