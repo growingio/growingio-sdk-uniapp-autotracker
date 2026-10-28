@@ -51,7 +51,7 @@ export function createUniTracker(host: UniRuntimeHost, options: AppRuntimeOption
     storage,
     ...(target === undefined ? { nativeIdentifiers: new AppNativeIdentifiersPort(host as NativePluginHost) } : {}),
     ...(target === undefined ? {} : { legacyIdentity: { read: (key: string) => host.getStorageSync(key) } }),
-    /** 按当前配置创建系统读取端口，版本回退由初始化参数提供。 */
+    /** 按当前配置创建系统读取端口，显式应用版本由初始化参数提供。 */
     systemContext: (config: ResolvedGioConfig) => ({
       /** 读取基础系统信息并后台刷新网络，避免慢网络回调阻塞首批事件。 */
       load: async () => {

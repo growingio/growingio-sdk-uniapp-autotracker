@@ -204,7 +204,7 @@ describe('createAppTracker', () => {
     ]))
   })
 
-  it('assembles App ports and reads appVersion fallback only after init config is available', async () => {
+  it('assembles App ports and reads configured appVersion only after init config is available', async () => {
     vi.useFakeTimers()
     const requests: string[] = []
     const tracker = createAppTracker({

@@ -24,6 +24,7 @@ export type GioInitOptions = Readonly<{
   /** 小程序聚合上报间隔毫秒数，先四舍五入，范围 0–3000，默认 1000。App 不消费。 */
   uploadInterval?: number
   appChannel?: string | null
+  /** 显式应用版本；非空时优先使用，否则由平台读取应用版本。 */
   appVersion?: string | null
   /** 会话过期分钟数，支持正小数，最大 360；非法值回退默认，小程序默认 -1（关闭活动超时）。 */
   sessionExpires?: number
@@ -43,6 +44,7 @@ export type ResolvedGioConfig = Readonly<{
   dataSourceId: string
   serverUrl: string
   appChannel: string | null
+  /** 保存归一化后的显式应用版本，存在时优先于平台读取值。 */
   appVersionFallback: string | null
   sessionPolicy: SessionPolicy
   dataCollect: boolean

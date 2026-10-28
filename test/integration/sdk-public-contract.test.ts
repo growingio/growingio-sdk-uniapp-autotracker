@@ -44,6 +44,18 @@ async function sdk(platform = 'android') {
 }
 
 describe('SDK 公共命令与完整核心链路', () => {
+  it.each(['android', 'ios', 'harmonyos'])('%s 显式 appVersion 优先于安装包版本并用于所有事件', async platform => {
+    const { gdp, host, received, start } = await sdk(platform)
+    host.getAppBaseInfo = () => ({ appVersion: '0.1.0' })
+    const tracker = await start({ appVersion: ' 1.0.0 ' })
+    tracker.onAppShow({ path: '/pages/index', query: '' })
+    tracker.onPageLoad({ instanceId: 'index', route: 'pages/index', query: '', referralPage: null })
+    tracker.onPageShow('index', '首页')
+    expect(gdp('track', 'configured_version')).toBe(true)
+    expect(received.map(event => event.eventType)).toEqual(['VISIT', 'PAGE', 'CUSTOM'])
+    for (const event of received) expect(event.appVersion).toBe('1.0.0')
+  })
+
   describe.each(['android', 'ios', 'harmonyos'])('%s 非必填初始化配置容错', platform => {
     it.each([
       { sessionExpires: -1 },

@@ -89,8 +89,8 @@ function androidDeviceType(screenWidth: number): AppSystemContext['deviceType'] 
 
 /** 将标准 uni 系统信息转换为协议上下文，不向核心暴露原始宿主对象。 */
 export class AppSystemContextPort implements SystemContextPort {
-  /** 绑定系统 API、SDK 版本及业务应用版本回退值。 */
-  public constructor(private readonly api: AppSystemApi, private readonly sdkVersion: string, private readonly appVersionFallback: string | null) {}
+  /** 绑定系统 API、SDK 版本及优先使用的业务应用版本。 */
+  public constructor(private readonly api: AppSystemApi, private readonly sdkVersion: string, private readonly configuredAppVersion: string | null) {}
 
   /** 安全合并设备、系统和应用信息，转换物理屏幕尺寸并输出纯协议上下文。 */
   public async load(): Promise<AppSystemContext> {
@@ -120,7 +120,7 @@ export class AppSystemContextPort implements SystemContextPort {
       deviceBrand: text(device.deviceBrand ?? device.brand ?? system.deviceBrand ?? system.brand, 'UNKNOWN'),
       deviceModel: text(device.deviceModel ?? device.model ?? system.deviceModel ?? system.model, 'UNKNOWN'),
       deviceType: targetPlatform === 'Android' ? androidDeviceType(Math.min(width, height)) : deviceType(device.deviceType),
-      appVersion: text(app.appVersion, text(system.appVersion, this.appVersionFallback ?? '')),
+      appVersion: text(this.configuredAppVersion, text(app.appVersion, text(system.appVersion))),
       language: language(app.appLanguage ?? app.language),
       sdkVersion: this.sdkVersion,
     }

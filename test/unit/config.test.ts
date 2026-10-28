@@ -180,7 +180,8 @@ describe('normalizeInitOptions', () => {
     { sessionExpires: null }, { sessionExpires: -1 }, { sessionExpires: 0 },
     { sessionExpires: 360.001 }, { sessionExpires: 361 },
     { sessionExpires: Number.NaN }, { sessionExpires: Infinity }, { sessionExpires: '1' },
-    { appChannel: 1 }, { appChannel: '\ud800' }, { appVersion: {} }, { appVersion: '\udc00' },
+    { appChannel: 1 }, { appChannel: '\ud800' },
+    { appVersion: null }, { appVersion: '' }, { appVersion: '   ' }, { appVersion: 42 }, { appVersion: {} }, { appVersion: '\udc00' },
     { dataCollect: 'false' }, { idMapping: 1 }, { debug: null }, { forceLogin: 'true' },
     { legacyMiniProgramIdentity: {} }, { runtime: 'unknown' },
   ])('defaults invalid optional input %o without failing initialization', options => {

@@ -41,13 +41,30 @@ describe('AppSystemContextPort', () => {
     await expect(port.load()).resolves.toMatchObject({ screenWidth: 1080, screenHeight: 2340, deviceType: 'PHONE' })
   })
 
-  it.each(['android', 'ios', 'harmonyos'])('使用 %s 的真实版本和宿主包字段，不能把引擎版本当应用版本', async (platform) => {
+  it.each(['android', 'ios', 'harmonyos'])('未配置应用版本时使用 %s 的真实版本和宿主包字段，不能把引擎版本当应用版本', async (platform) => {
     const port = new AppSystemContextPort({
       getDeviceInfo: () => ({ platform, osVersion: '18.1', platformVersion: 'incorrect' }),
       getSystemInfoSync: () => ({}),
       getAppBaseInfo: () => ({ appVersion: '2.3.4', version: 'engine', hostPackageName: 'com.gio.host' }),
-    }, '0.1.0', 'fallback')
+    }, '0.1.0', null)
     await expect(port.load()).resolves.toMatchObject({ platformVersion: '18.1', appVersion: '2.3.4', domain: 'com.gio.host' })
+  })
+
+  it.each([
+    [' 1.0.0 ', '0.1.0', '0.0.9', '1.0.0'],
+    ['1.0.0', undefined, undefined, '1.0.0'],
+    [null, ' 0.1.0 ', '0.0.9', '0.1.0'],
+    [null, '   ', ' 0.0.9 ', '0.0.9'],
+    [null, 42, '0.0.9', '0.0.9'],
+    [null, undefined, undefined, ''],
+    [null, '   ', 42, ''],
+  ] as const)('按显式配置 %j、应用信息 %j、系统信息 %j 的顺序解析 appVersion', async (configured, appVersion, systemVersion, expected) => {
+    const port = new AppSystemContextPort({
+      getDeviceInfo: () => ({ platform: 'harmonyos' }),
+      getSystemInfoSync: () => ({ appVersion: systemVersion }),
+      getAppBaseInfo: () => ({ appVersion }),
+    }, 'sdk-version', configured)
+    await expect(port.load()).resolves.toMatchObject({ appVersion: expected, sdkVersion: 'sdk-version' })
   })
 
   it('HarmonyOS 与原生 SDK 一致，使用产品显示版本而非纯数字系统版本', async () => {
@@ -79,7 +96,7 @@ describe('AppSystemContextPort', () => {
     await expect(port.load()).resolves.toMatchObject({ platformVersion: '18.1' })
   })
 
-  it('Android 包信息缺失时使用 Native.js，应用版本缺失才使用 fallback', async () => {
+  it('Android 包信息缺失时使用 Native.js，仍保留显式配置的应用版本', async () => {
     const activity = {}
     const invoke = vi.fn((value, method) => value === activity && method === 'getPackageName' ? 'com.native.android' : '')
     vi.stubGlobal('plus', { android: { runtimeMainActivity: () => activity, invoke } })
@@ -101,7 +118,7 @@ describe('AppSystemContextPort', () => {
       getDeviceInfo: () => ({ platform: 'android', platformVersion: '14', screenWidth: 360, screenHeight: 640, brand: 'Google', model: 'Pixel', deviceType: 'PHONE' }),
       getSystemInfoSync: () => ({}),
       getAppBaseInfo: () => ({ packageName: 'com.example', appName: 'Example', appVersion: '2.0', version: 'engine', appLanguage: 'zh_hans_cn' }),
-    }, '0.1.0', 'fallback')
+    }, '0.1.0', null)
     await expect(port.load()).resolves.toMatchObject({
       platform: 'Android', domain: 'com.example', screenWidth: 360, screenHeight: 640, deviceType: 'PHONE', language: 'zh-Hans-CN', appVersion: '2.0', networkState: 'UNKNOWN',
     })

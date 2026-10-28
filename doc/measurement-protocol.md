@@ -52,7 +52,7 @@
 | `deviceModel` | string | — | ● | ● | 设备型号。App 保留系统原值；空、异常或不可用时写 `UNKNOWN` 并记录诊断。 |
 | `deviceType` | string | — | ● | ● | 设备类型。小程序：`Weixin-Android`/…；App 统一为 `PHONE` / `PAD` / `FOLD` / `UNKNOWN`：iOS `iPhone` / `iPad` 分别映射为 `PHONE` / `PAD`，Android 保留同名枚举，HarmonyOS 按系统类型映射；无法可靠识别时写 `UNKNOWN` 并记录诊断。 |
 | `operatingSystem` | string | — | ● | — | 同 `deviceType`（仅小程序保留，冗余字段） |
-| `appVersion` | string | ○ | ● | ● | 应用版本。App 优先读取安装包版本；读取失败才使用 init 的非空 fallback 配置；两者皆无时内部值为空字符串并记录诊断，出站清理时省略该字段，不阻断采集。 |
+| `appVersion` | string | ○ | ● | ● | 应用版本。App 优先使用 init 显式配置的非空字符串；未配置或无效时，依次读取标准应用信息和同步系统信息中的 appVersion；均不可用时内部值为空字符串并记录诊断，出站清理时省略该字段，不阻断采集。 |
 | `language` | string | ● | ● | ● | 语言标签。App 统一为规范化 BCP 47：将 `_` 转为 `-` 并规范大小写（如 `zh_CN` → `zh-CN`、`zh-hans` → `zh-Hans`）；原值只有 `zh` 时保留 `zh`，不补造地区或文字。App 读取失败或格式异常时写 `und` 并记录诊断。Web、小程序保持各自既有报文格式。 |
 | `timezoneOffset` | string | ● | ● | ● | 时区偏移（分钟），采用 `Date.getTimezoneOffset()` 口径：本地时间转换为 UTC 需增加的分钟数（如中国为 `"-480"`）。App 每条新事件读取；异常时写 `"0"` 并记录诊断。 |
 | `latitude` | double | — | ○ | ○ | 纬度（调用 setLocation 后；Web 不支持） |
