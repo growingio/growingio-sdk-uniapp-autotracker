@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { EventQueue } from '../../src/core/queue.js'
+import { APP_QUEUE_RETENTION_MS, EventQueue } from '../../src/core/queue.js'
 import type { TransportPort, TransportResult } from '../../src/types/index.js'
 import { Uploader, type UploaderRuntime } from '../../src/core/uploader.js'
 import type { ProtocolEvent } from '../../src/core/dataStore/protocol.js'
@@ -37,6 +37,72 @@ function runtime(): { value: UploaderRuntime; fireDelay: (delay: number) => void
 }
 
 describe('Uploader', () => {
+  it('重试批次等待重连跨过 7 天后，仅发送其中尚未到期的事件', () => {
+    let now = 100
+    let connected = true
+    const queue = new EventQueue(undefined, undefined, { maxAgeMs: APP_QUEUE_RETENTION_MS, now: () => now })
+    queue.enqueue({ ...event(1), timestamp: now })
+    queue.enqueue({ ...event(2), timestamp: now + 1 })
+    const clocks = runtime()
+    const sent: ProtocolEvent[][] = []
+    const callbacks: Array<(result: TransportResult) => void> = []
+    const changed = vi.fn()
+    const uploader = new Uploader(queue, { dispatch: (request, done) => {
+      sent.push(JSON.parse(request.body)); callbacks.push(done)
+    } }, { ...clocks.value, now: () => now }, 'https://collector.example', 'account', undefined, changed, undefined, () => connected)
+    uploader.flush()
+    callbacks[0]!({ kind: 'network' })
+    connected = false
+    clocks.fireDelay(800)
+    now += APP_QUEUE_RETENTION_MS
+    uploader.flush()
+    expect(sent).toHaveLength(1)
+    expect(queue.snapshot().map(entry => entry.event.eventSequenceId)).toEqual([2])
+    expect(changed).toHaveBeenCalledTimes(2)
+    connected = true
+    uploader.flush()
+    expect(sent[1]!.map(event => event.eventSequenceId)).toEqual([2])
+    callbacks[1]!({ kind: 'success', status: 204 })
+    expect(queue.size()).toBe(0)
+    expect(clocks.scheduledDelays()).toEqual([])
+  })
+
+  it('整批重试到期后不再派发，并能完成 forceFlush 等待', async () => {
+    let now = 100
+    const queue = new EventQueue(undefined, undefined, { maxAgeMs: APP_QUEUE_RETENTION_MS, now: () => now })
+    queue.enqueue({ ...event(1), timestamp: now })
+    const clocks = runtime()
+    const dispatch = vi.fn<TransportPort['dispatch']>((_request, done) => { done({ kind: 'network' }) })
+    const uploader = new Uploader(queue, { dispatch }, { ...clocks.value, now: () => now }, 'https://collector.example', 'account')
+    uploader.flush()
+    const forced = uploader.forceFlush()
+    now += APP_QUEUE_RETENTION_MS
+    clocks.fireDelay(800)
+    await expect(forced).resolves.toBe(true)
+    expect(dispatch).toHaveBeenCalledTimes(1)
+    expect(queue.size()).toBe(0)
+    expect(clocks.scheduledDelays()).toEqual([])
+  })
+
+  it('离线重试整批过期后立即释放待发副本，forceFlush 无需等待重连', async () => {
+    let now = 100
+    let connected = true
+    const queue = new EventQueue(undefined, undefined, { maxAgeMs: APP_QUEUE_RETENTION_MS, now: () => now })
+    queue.enqueue({ ...event(1), timestamp: now })
+    const clocks = runtime()
+    const dispatch = vi.fn<TransportPort['dispatch']>((_request, done) => { done({ kind: 'network' }) })
+    const uploader = new Uploader(queue, { dispatch }, { ...clocks.value, now: () => now },
+      'https://collector.example', 'account', undefined, undefined, undefined, () => connected)
+    uploader.flush()
+    connected = false
+    clocks.fireDelay(800)
+    now += APP_QUEUE_RETENTION_MS
+    await expect(uploader.forceFlush()).resolves.toBe(true)
+    expect(queue.size()).toBe(0)
+    expect(dispatch).toHaveBeenCalledTimes(1)
+    expect(clocks.scheduledDelays()).toEqual([])
+  })
+
   it('日志观察者修改收到的事件后，重试仍发送入队时的原始内容', () => {
     const queue = new EventQueue()
     queue.enqueue(event(1))

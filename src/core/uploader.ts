@@ -172,6 +172,7 @@ export class Uploader {
   private drain(): void {
     if (this.flushing) return
     this.flushing = true
+    this.pruneExpired()
     while (this.active < MAX_CONCURRENT_UPLOADS && this.canDispatch()) {
       const retry = this.readyRetries.shift()
       if (retry !== undefined) {
@@ -232,7 +233,10 @@ export class Uploader {
   }
 
   /** 构建并派发一个批次，按权威结果删除、延迟重试或保留离线事件，并释放对应资源。 */
-  private dispatch(batch: readonly QueueEntry[], attempt: number): void {
+  private dispatch(claimed: readonly QueueEntry[], attempt: number): void {
+    this.pruneExpired()
+    const batch = claimed.filter(entry => this.queue.has(entry.requestId))
+    if (batch.length === 0) return
     const requestResult = buildCollectorRequest(this.serverUrl, this.accountId, batch.map((entry) => entry.event), this.runtime.now())
     const requestIds = batch.map((entry) => entry.requestId)
     if (!requestResult.ok) {
@@ -284,6 +288,24 @@ export class Uploader {
       this.drain()
       this.notifyDrain()
     })
+  }
+
+  /** 离线时也清理过期缓存，并清除入队清理留下的调度标识。 */
+  private pruneExpired(): void {
+    const expired = this.queue.pruneExpired()
+    for (const requestId of this.readyRequests) {
+      if (!this.queue.has(requestId)) this.readyRequests.delete(requestId)
+    }
+    for (const requestId of this.reservedRequests) {
+      if (!this.queue.has(requestId)) this.reservedRequests.delete(requestId)
+    }
+    for (let index = this.readyRetries.length - 1; index >= 0; index--) {
+      const retry = this.readyRetries[index]!
+      const batch = retry.batch.filter(entry => this.queue.has(entry.requestId))
+      if (batch.length === 0) this.readyRetries.splice(index, 1)
+      else if (batch.length !== retry.batch.length) this.readyRetries[index] = { ...retry, batch }
+    }
+    if (expired.length > 0) this.onQueueChanged()
   }
 
   /** 在分阶段退避时间上加入受限随机抖动，避免客户端同时重试。 */

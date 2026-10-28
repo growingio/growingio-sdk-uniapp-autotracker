@@ -9,7 +9,7 @@ import { NativeIdentifierState, type NativeIdentifiersPort } from '../plugins/gi
 import { PageStore, type PageLoadInput, type PageOrientation, PageLifecycle } from './dataStore/page.js'
 import type { ClockPort, LoggerPort, MiniProgramTarget, NetworkPort, NetworkState, StoragePort, SystemContextPort, TimezonePort, TransportPort } from '../types/index.js'
 import { buildAppEvent, buildMiniProgramEvent, isValidCustomEventName, normalizeAttributes, type ProtocolEvent } from './dataStore/protocol.js'
-import { EventQueue } from './queue.js'
+import { APP_QUEUE_RETENTION_MS, EventQueue } from './queue.js'
 import { AppLifecycle, type AppEntrySnapshot } from './dataStore/app.js'
 import { Uploader, type UploaderRuntime } from './uploader.js'
 import type { AutoTrackCall, ChangeElement, NormalizedAutoTrackCall } from '../plugins/gioEventAutoTracking/contract.js'
@@ -333,7 +333,8 @@ export class LocalTrackerRuntime {
   /** 恢复各类持久状态并装配会话、页面、事件和上传组件，全部就绪后回放暂存调用。 */
   private async hydrate(config: NonNullable<ReturnType<TrackerLifecycle['config']>>): Promise<void> {
     const keys = storageKeys(config.dataSourceId, config.miniprogram === undefined ? undefined : { ...config.miniprogram, accountId: config.accountId })
-    const queue = new EventQueue(undefined, config.miniprogram === undefined ? buildAppEvent : buildMiniProgramEvent)
+    const queue = new EventQueue(undefined, config.miniprogram === undefined ? buildAppEvent : buildMiniProgramEvent,
+      config.miniprogram === undefined ? { maxAgeMs: APP_QUEUE_RETENTION_MS, now: () => this.dependencies.clock.now() } : undefined)
     const migration = config.legacyMiniProgramIdentity
     const identityPersistence = new IdentityPersistence(this.dependencies.storage, keys.identity, config.dataSourceId, this.dependencies.deviceIdFactory,
       migration === undefined || this.dependencies.legacyIdentity === undefined ? undefined
@@ -358,7 +359,6 @@ export class LocalTrackerRuntime {
       this.log('error', '[GrowingIO]：SDK初始化失败!')
       return
     }
-    for (const entry of queue.snapshot()) this.restoredRequests.add(entry.requestId)
     if (config.miniprogram !== undefined && hydrated.state.systemContext.appVersion === '') this.log('warn', '[GrowingIO]: mini-program appVersion unavailable')
 
     const sessions = new SessionManager(config.sessionPolicy, this.dependencies.sessionIdFactory, hydrated.state.session.snapshot,
@@ -366,7 +366,13 @@ export class LocalTrackerRuntime {
     // 队列和序号分别落盘，异常退出可能只保存其中一个；不能复用已分配给缓存事件的序号。
     const restoredSequence = queue.snapshot().reduce((largest, entry) => typeof entry.event.eventSequenceId === 'number'
       ? Math.max(largest, entry.event.eventSequenceId) : largest, hydrated.state.meta.snapshot.eventSequenceId)
+    // 先恢复已分配序号，再清理到期缓存；重启不能续期，也不能复用过期事件的序号。
     const sequence = new EventSequence(restoredSequence)
+    if (queue.pruneExpired().length > 0) {
+      await metaPersistence.persist(sequence.current())
+      void queuePersistence?.persist(queue)
+    }
+    for (const entry of queue.snapshot()) this.restoredRequests.add(entry.requestId)
     const location = new LocationState()
     const identity = { value: hydrated.state.identity.identity }
     if (!config.idMapping && identity.value.userKey !== null) {

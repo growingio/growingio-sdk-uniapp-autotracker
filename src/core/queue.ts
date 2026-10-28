@@ -5,6 +5,12 @@ export const MAX_QUEUE_PERSISTED_BYTES = 2 * 1024 * 1024
 export const MAX_EVENT_BYTES = 512 * 1024
 export const MAX_BATCH_EVENTS = 50
 export const MAX_BATCH_BYTES = 512 * 1024
+export const APP_QUEUE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+
+export type QueueRetention = Readonly<{
+  maxAgeMs: number
+  now: () => number
+}>
 
 export type QueueLimits = Readonly<{
   maxItems: number
@@ -99,8 +105,30 @@ export class EventQueue {
   private serializedSnapshot: string | null = null
   private nextRequestNumber = 1
 
-  /** 注入队列条数、事件字节和上传批次等内部限制。 */
-  public constructor(private readonly limits: QueueLimits = DEFAULT_LIMITS, private readonly buildEvent = buildAppEvent) {}
+  /** 注入容量限制与事件协议；仅 App 装配按事件时间清理的保留策略。 */
+  public constructor(
+    private readonly limits: QueueLimits = DEFAULT_LIMITS,
+    private readonly buildEvent = buildAppEvent,
+    private readonly retention?: QueueRetention,
+  ) {}
+
+  /** 清理到期或缺少产生时间的条目，同时释放条数、字节和上传占用。 */
+  public pruneExpired(): readonly string[] {
+    const retention = this.retention
+    if (retention === undefined) return []
+    let now: number
+    try { now = retention.now() } catch { return [] }
+    if (!Number.isFinite(now) || now < 0) return []
+    const expired = this.entries.filter(entry => typeof entry.event.timestamp !== 'number'
+      || now - entry.event.timestamp >= retention.maxAgeMs).map(entry => entry.requestId)
+    this.remove(expired)
+    return expired
+  }
+
+  /** 检查事件是否仍在队列，避免延迟重试重新发送已过期的批次副本。 */
+  public has(requestId: string): boolean {
+    return this.encoded.has(requestId)
+  }
 
   /** 依次校验事件和队列容量，成功后以独立 JSON 副本入队并分配请求标识。 */
   public enqueue(event: ProtocolEvent): EnqueueResult {
@@ -110,6 +138,7 @@ export class EventQueue {
     if (byteLength > this.limits.maxEventBytes || byteLength + 2 > this.limits.maxBatchBytes) {
       return { ok: false, code: 'event_too_large' }
     }
+    this.pruneExpired()
     if (this.entries.length >= this.limits.maxItems) return { ok: false, code: 'queue_full' }
     const normalized = cloneEvent(serialized)
     if (normalized === null) return { ok: false, code: 'event_not_serializable' }

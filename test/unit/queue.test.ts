@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { EventQueue } from '../../src/core/queue.js'
+import { APP_QUEUE_RETENTION_MS, EventQueue } from '../../src/core/queue.js'
 import type { ProtocolEvent } from '../../src/core/dataStore/protocol.js'
 
 /** 构造字段齐全且序号可控的协议事件，供容量和批次边界验证。 */
@@ -9,6 +9,59 @@ function event(number: number, value = ''): ProtocolEvent {
 }
 
 describe('EventQueue', () => {
+  it('App 事件满 7 天到期，较新的事件及回拨时钟下的事件仍保留', () => {
+    let now = 100
+    const queue = new EventQueue(undefined, undefined, { maxAgeMs: APP_QUEUE_RETENTION_MS, now: () => now })
+    queue.enqueue({ ...event(1), timestamp: 100 })
+    queue.enqueue({ ...event(2), timestamp: 101 })
+    queue.claimNextBatch()
+    now = 99
+    expect(queue.pruneExpired()).toEqual([])
+    now = 100 + APP_QUEUE_RETENTION_MS - 1
+    expect(queue.pruneExpired()).toEqual([])
+    now++
+    expect(queue.pruneExpired()).toEqual(['q1'])
+    expect(queue.has('q1')).toBe(false)
+    expect(queue.snapshot().map(entry => entry.event.eventSequenceId)).toEqual([2])
+    now++
+    expect(queue.pruneExpired()).toEqual(['q2'])
+    expect(queue.size()).toBe(0)
+  })
+
+  it.each(['count', 'bytes'])('入队前释放到期事件占用的 %s 容量', mode => {
+    let now = 1_700_000_000_000
+    const first = { ...event(1), timestamp: now }
+    const capacity = Buffer.byteLength(JSON.stringify({ version: 1, revision: Number.MAX_SAFE_INTEGER,
+      entries: [{ requestId: 'q1', event: first, retryCount: 0 }] }))
+    const queue = new EventQueue({ maxItems: mode === 'count' ? 1 : 10, maxPersistedBytes: mode === 'bytes' ? capacity : 5000,
+      maxEventBytes: 1000, maxBatchEvents: 50, maxBatchBytes: 1000 }, undefined,
+    { maxAgeMs: APP_QUEUE_RETENTION_MS, now: () => now })
+    expect(queue.enqueue(first).ok).toBe(true)
+    expect(queue.enqueue({ ...first, eventName: 'event_2' })).toEqual({ ok: false, code: 'queue_full' })
+    now += APP_QUEUE_RETENTION_MS
+    expect(queue.enqueue({ ...first, eventName: 'event_2', timestamp: now }).ok).toBe(true)
+    expect(queue.snapshot().map(entry => entry.event.eventName)).toEqual(['event_2'])
+  })
+
+  it('未装配 App 保留策略的队列不按时间清理', () => {
+    const queue = new EventQueue()
+    queue.enqueue({ ...event(1), timestamp: 0 })
+    expect(queue.pruneExpired()).toEqual([])
+    expect(queue.size()).toBe(1)
+  })
+
+  it.each([NaN, Infinity, -1, 'throw'])('时钟不可用（%s）时保留缓存', invalid => {
+    let now: number | string = 100
+    const queue = new EventQueue(undefined, undefined, { maxAgeMs: APP_QUEUE_RETENTION_MS, now: () => {
+      if (typeof now === 'string') throw new Error('clock_unavailable')
+      return now
+    } })
+    queue.enqueue({ ...event(1), timestamp: now })
+    now = invalid
+    expect(queue.pruneExpired()).toEqual([])
+    expect(queue.size()).toBe(1)
+  })
+
   it('批次与快照内容被外部改写后，内部队列及字节预算仍保持原值', () => {
     const queue = new EventQueue()
     const original: ProtocolEvent = { eventType: 'CUSTOM', eventName: 'immutable', eventSequenceId: 1, attributes: { value: 'original' } }
