@@ -695,7 +695,7 @@ export class LocalTrackerRuntime {
     if (this.lifecycle.config()?.debug !== true) return
     try {
       // App 调试基座可能只展示 console.log 的第一个参数，必须合成一条完整日志。
-      this.dependencies.logger?.debug(`[GrowingIO Debug]: ${JSON.stringify(events)}`)
+      this.dependencies.logger?.debug(`[GrowingIO Debug]: ${JSON.stringify(events, null, 2)}`)
     } catch {
       // 诊断输出异常不应改变采集流程。
     }
