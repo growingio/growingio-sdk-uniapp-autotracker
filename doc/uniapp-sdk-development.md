@@ -271,7 +271,7 @@ export const gdp: GdpCommand
 
 `gdp()` 与小程序 SDK 使用同一命令式接入形态：先注册插件，再初始化。业务侧只传账户、数据源、采集配置和 `createSSRApp(App)` 得到的 `uniVue`。SDK 自己读取全局 `uni`、创建内部 tracker 与全局 Vue mixin；业务 `App.vue` 和页面不必引入 bridge。`deviceId` 由 SDK 首次启动生成并以 SDK storage namespace 持久化；`sessionId` 也由 SDK 自己按首次访问、超时、用户切换和恢复采集等会话边界创建。宿主对象、device/session ID 工厂都是内部依赖，绝不要求客户传入。
 
-`src/constants/config.ts` 是唯一允许读取 `GioInitOptions` 的位置：`accountId`、`dataSourceId` 必须是非空且 UTF-16 合法的字符串，拒绝未配对代理字符，保留合法中文与 emoji；`serverUrl` 未传时固定补为 `https://napi.growingio.com`，传入时 trim、仅域名自动补 `https://`、去掉末尾 `/`，且必须是有效 HTTP(S) **基础地址**，不得传入既有接口路径或 query。必填项非法时，`init()` 返回 `false` 并记录受控诊断：不创建实例、不读写 SDK storage、不采集；接入方修正配置后可再次主动调用 `init()`。可选配置缺省、类型错误或超出有效范围时回退对应默认值，不阻断初始化；非法 `serverUrl` 使用默认采集地址，非法 `runtime` 使用默认本地采集模式，显式 `unimp` 模式仍须满足托管接入约定。首次成功后，后续 `init()` 返回 `false` 并记录 `already_initialized`，原实例不变。`appId` 是保留的跨端输入：当前 App profile 接受但在此边界直接剥离，不校验其内容、不写入 `ResolvedGioConfig`、storage、日志或采集报文，也绝不用于覆盖 App `domain`；未来 Web / 小程序 profile 才各自定义并消费它。`appChannel` 是 App 三端完全一致的可选 init 字段：非空字符串 trim 后写为 `ResolvedGioConfig.appChannel`，未传、空白或非法值时为 `null`；不读取 `uni.getAppBaseInfo().channel` 等平台专属渠道，也不做端侧猜测。它是 init 期固定值，`setOptions()` 不得修改，也不写 storage。`urlScheme` 不属于基础 init：一期没有 Deep Link 或圈选插件，基础 SDK 不读取、存储或上报它；以后只能由相应插件的专属配置提供。`dataCollect` 默认 `true`，`idMapping`、`debug` 默认 `false`，三者都是 init 输入；只有 `dataCollect` 可由 `setOptions()` 在运行时改变。`sessionExpires` 与 Web SDK 同名、同单位，单位为分钟：必须是大于 `0` 且不超过 `360`（6 小时）的有限数，允许小数，换算后的毫秒值也必须有限且大于 `0`；传入 `0`、负数、超过 `360`、NaN、Infinity 或非数字时回退 profile 默认值。上限及非法值回退默认的处理参照 Web SDK，保留 uni-app 的小数分钟精度。未传或非法时，App 为 `0.5`（30 秒），未来 Web profile 为 `30`；小程序默认关闭额外活动超时（`-1`），后台超时由 `keepAlive` 单独控制，未传或非法时为 `5` 分钟。它不支持 `setOptions()` 热修改。请求超时 5000ms、队列上限 200，都是内部固定策略。App 和 Web 事件入队后立即尝试发送；20 条/5000ms 的聚合节流仅适用于小程序，不应用到 App/Web。并发槽位占满、明确断网或失败重试时按各自策略等待，后台与重连可立即发送。`appVersion` 是用户可选的显式应用版本：非空时归一化为 `appVersionFallback`，优先于平台读取值；未传、空白或非法值时才读取平台应用版本。其余 core 模块、平台适配器和插件不得再对可选字段各自补默认值。
+`src/constants/config.ts` 是唯一允许读取 `GioInitOptions` 的位置：`accountId`、`dataSourceId` 必须是非空且 UTF-16 合法的字符串，拒绝未配对代理字符，保留合法中文与 emoji；`serverUrl` 未传时固定补为 `https://napi.growingio.com`，传入时 trim、仅域名自动补 `https://`、去掉末尾 `/`，且必须是有效 HTTP(S) **基础地址**，不得传入既有接口路径或 query。必填项非法时，`init()` 返回 `false` 并记录受控诊断：不创建实例、不读写 SDK storage、不采集；接入方修正配置后可再次主动调用 `init()`。可选配置缺省、类型错误或超出有效范围时回退对应默认值，不阻断初始化；非法 `serverUrl` 使用默认采集地址，非法 `runtime` 使用默认本地采集模式，显式 `unimp` 模式仍须满足托管接入约定。首次成功后，后续 `init()` 返回 `false` 并记录 `already_initialized`，原实例不变。`appId` 是保留的跨端输入：当前 App profile 接受但在此边界直接剥离，不校验其内容、不写入 `ResolvedGioConfig`、storage、日志或采集报文，也绝不用于覆盖 App `domain`；未来 Web / 小程序 profile 才各自定义并消费它。`appChannel` 是 App 三端完全一致的可选 init 字段：非空字符串 trim 后写为 `ResolvedGioConfig.appChannel`，未传、空白或非法值时为 `null`；不读取 `uni.getAppBaseInfo().channel` 等平台专属渠道，也不做端侧猜测。它是 init 期固定值，`setOptions()` 不得修改，也不写 storage。`urlScheme` 不属于基础 init：一期没有 Deep Link 或圈选插件，基础 SDK 不读取、存储或上报它；以后只能由相应插件的专属配置提供。`dataCollect` 默认 `true`，`idMapping`、`debug` 默认 `false`，三者都是 init 输入；只有 `dataCollect` 可由 `setOptions()` 在运行时改变。`sessionExpires` 与 Web SDK 同名、同单位，单位为分钟：必须是大于 `0` 且不超过 `360`（6 小时）的有限数，允许小数，换算后的毫秒值也必须有限且大于 `0`；传入 `0`、负数、超过 `360`、NaN、Infinity 或非数字时回退 profile 默认值。上限及非法值回退默认的处理参照 Web SDK，保留 uni-app 的小数分钟精度。未传或非法时，App 为 `0.5`（30 秒），未来 Web profile 为 `30`；小程序默认关闭额外活动超时（`-1`），后台超时由 `keepAlive` 单独控制，未传或非法时为 `5` 分钟。它不支持 `setOptions()` 热修改。请求超时固定为 5000ms；App 不设置积压总量门槛，小程序内存队列上限固定为 200 条、2MiB。App 和 Web 事件入队后立即尝试发送；20 条/5000ms 的聚合节流仅适用于小程序，不应用到 App/Web。并发槽位占满、明确断网或失败重试时按各自策略等待，后台与重连可立即发送。`appVersion` 是用户可选的显式应用版本：非空时归一化为 `appVersionFallback`，优先于平台读取值；未传、空白或非法值时才读取平台应用版本。其余 core 模块、平台适配器和插件不得再对可选字段各自补默认值。
 
 调用顺序也固定：先 `gdp('registerPlugins', ...)`，再 `gdp('init', ...)`。业务侧所有事件、身份、属性和位置操作都只能通过 `gdp('xxx')`；SDK 不向页面暴露 tracker 或 `$gio`。只有客户显式注册的插件在 `install(growingio)` 中得到内部实例。首次 `init()` 返回 `true` 后，tracker 可短暂处于 `initializing`，该期间发生的事件才进入 bootstrap buffer，待 identity、session 和 SystemContext 完成后按发生顺序构建。这样既保留独立 SDK 的“插件先声明、初始化时统一安装”语义，也不会丢失合法初始化后的首屏事件。
 
@@ -772,7 +772,7 @@ interface StoragePort {
 
 App 适配器的 `persistentQueue=true`，同一队列的读改写由 core 串行化并带 revision，成功落盘后才把它视为“已持久化”；发送中的项目不能被后续快照覆盖。Web/小程序适配器的 `persistentQueue=false`，core 只保留有界内存队列：失败可在当前运行期间重试，但刷新、退出、被回收或冷启动后不恢复。`dataCollect=false` 只阻止后续事件构建、入队和落盘；切换本身不删除既有 queue/state，也不取消已排程或进行中的上传。已存在的待发事件仍按 uploader 的既有生命周期处理；关闭采集不是清除历史数据的 API。身份、session 与序号也不因该开关变化而清理。
 
-`identity`、`session`、`meta` 和 `queue` 各自按键顺序写入，不能依赖宿主写入总是同步完成。每个键最多保留一份在写和一份待写快照：慢写入期间的新更新覆盖唯一待写项，并共用该次最新快照的写入结果；中间快照不会逐个落盘。当前写入失败后仍尝试最新待写项，键之间独立。队列 revision 仅在成功写入时递增，到达安全整数上限后从 1 继续，负值按损坏记录处理；revision 不作为跨运行期全局序号。
+`identity`、`session`、`meta` 和 `queue` 各自按键顺序写入，不能依赖宿主写入总是同步完成。每个键最多保留一份在写和一份待写快照：慢写入期间的新更新覆盖唯一待写项，并共用该次最新快照的写入结果；中间快照不会逐个落盘。队列在 persist 时捕获共享不可变链的末端，连续追加不复制整份积压数组；仅在实际占用写入槽位时编码完整 JSON，被合并掉的中间快照不重复编码整队列。删除、重试或恢复后重建下一份链，已经捕获的内容保持不变。当前写入失败后仍尝试最新待写项，键之间独立。队列 revision 仅在成功写入时递增，到达安全整数上限后从 1 继续，负值按损坏记录处理；revision 不作为跨运行期全局序号。
 
 ### 9.4 各端存储适配器
 
@@ -866,13 +866,13 @@ Web 和小程序适配器是后续能力，不进入 1.0 发布物；其接口�
          → 成功：删除；可重试失败：退回等待；不可重试：丢弃并计数
 ```
 
-持久化的每条事件必须是纯 JSON。App 队列最多 200 条且完整持久化 queue envelope 总量不超过 2MB；达到任一上限时保留最早的已有事件、丢弃新事件并记录 `queue_full`。写入失败、容量达到上限、JSON 序列化失败都应有可计数的 drop reason，不能无限重试或影响业务 UI。
+持久化的每条事件必须是纯 JSON。App 队列不设置总条数或总字节上限，积压超过 200 条或 2MiB 后继续接纳、尝试持久化，并按发送批次逐步排空；冷启动恢复使用同一策略，兼容原有 `queue:v1` 信封，不因积压量大而将合法缓存判为损坏。实际持久化能力取决于宿主存储，`track` 返回 `true` 仅表示本地接纳，写入失败不代表已可靠落盘。小程序内存队列继续最多 200 条、完整队列信封预算 2MiB，达到任一上限时保留已有事件、拒绝新事件并返回 `queue_full`。
 
 App 事件缓存自事件 `timestamp` 起保留 7 天（7 × 24 小时），到达有效期即丢弃；冷启动恢复、事件入队和上传调度时清理，释放过期事件的容量。重启、重试及后续队列写入不会延长有效期；延迟重试中的批次也必须在实际发送前排除过期事件。未运行期间不执行后台清理，下次启动时清除。旧缓存直接按原事件时间计算，无需变更存储格式；缺少时间戳、无法判定年龄的历史事件在清理时丢弃。有限重试、成功及不可重试失败的删除规则继续生效；小程序仍为当前运行期内的内存队列，不应用 App 的 7 天策略。
 
-容量判断包含 revision 字段的最长合法表示、条目包装、逗号及数组边界。事件 JSON 和字节数在接纳时冻结，批次按单事件字节累计；上传调度只读取请求标识和队列长度，不复制整份事件载荷。队列快照、领取批次及发送前观察回调接收独立数据，外部修改不得污染内部记录或后续重试报文。
+容量判断包含 revision 字段的最长合法表示、条目包装、逗号及数组边界。事件 JSON 和字节数在接纳时冻结，批次按单事件字节累计；上传调度只读取请求标识和队列长度，不复制整份事件载荷。未到最早到期时间时跳过过期扫描，请求标识通过索引检查冲突；离线时不重复登记整个队列的待发标识，仅在删除修订变化后清理调度引用。队列快照、领取批次及发送前观察回调接收独立数据，外部修改不得污染内部记录或后续重试报文。
 
-官方 storage 各端实现不同：App 是持久化存储，H5 和各小程序有自己的容量/清理语义。因此即便一期只做 App，队列接口也要从一开始具备条数和字节上限，为后续扩端留下正确边界。[Storage 文档](https://uniapp.dcloud.net.cn/api/storage/storage.html)
+App 继续使用现有 `uni` storage 队列快照，保留内存中的待发事件；取消 SDK 总量门槛不改变宿主的内存和存储容量。单事件与请求批次仍受字节上限约束，小程序按条数和字节限制内存队列。[Storage 文档](https://uniapp.dcloud.net.cn/api/storage/storage.html)
 
 ### 10.4 网络状态
 

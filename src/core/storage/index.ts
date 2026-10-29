@@ -19,22 +19,22 @@ export function storageKeys(dataSourceId: string, mini?: Readonly<{ target: stri
   return { identity: `${prefix}identity`, session: `${prefix}session`, meta: `${prefix}meta`, queue: `${prefix}queue:v1` }
 }
 
-type PendingWrite = {
-  value: string
+type PendingWrite<Value> = {
+  value: Value
   result: Promise<StorageWrite>
   resolve: (result: StorageWrite) => void
 }
 
 /** 每个键独占一个写入槽位；新快照合并到唯一待写项，避免乱序回退与无界 Promise 链。 */
-class LatestStorageWriter {
+class LatestStorageWriter<Value = string> {
   private writing = false
-  private pending: PendingWrite | null = null
+  private pending: PendingWrite<Value> | null = null
 
   /** 注入当前键的编码写入过程，键之间不互相等待。 */
-  public constructor(private readonly commit: (value: string) => Promise<StorageWrite>) {}
+  public constructor(private readonly commit: (value: Value) => Promise<StorageWrite>) {}
 
-  /** 捕获已编码的不可变值；同一待写批次共用最终最新快照的写入结果。 */
-  public persist(value: string): Promise<StorageWrite> {
+  /** 捕获不可变值；同一待写批次共用最终最新快照的写入结果。 */
+  public persist(value: Value): Promise<StorageWrite> {
     if (this.pending !== null) {
       this.pending.value = value
       return this.pending.result
@@ -51,7 +51,7 @@ class LatestStorageWriter {
   }
 
   /** 当前写入无论成功或失败，都继续处理最新待写值。 */
-  private async write(next: PendingWrite): Promise<void> {
+  private async write(next: PendingWrite<Value>): Promise<void> {
     try { next.resolve(await this.commit(next.value)) }
     catch { next.resolve({ kind: 'failed' }) }
     const pending = this.pending
@@ -271,7 +271,7 @@ function encodeQueue(revision: number, entries: string): string {
 /** 串行写入并合并尚未开始的快照；内存最多保留一份在写和一份待写内容。 */
 export class QueuePersistence {
   private revision = 0
-  private readonly writer = new LatestStorageWriter(entries => this.write(entries))
+  private readonly writer = new LatestStorageWriter<() => string>(snapshot => this.write(snapshot()))
 
   /** 绑定队列存储键，并建立按顺序执行的写入链。 */
   public constructor(private readonly storage: StoragePort, private readonly key: string) {}
@@ -297,9 +297,9 @@ export class QueuePersistence {
     }
   }
 
-  /** 捕获不可变 JSON；慢存储期间由最新快照覆盖待写内容，共用该次写入的结果。 */
+  /** 捕获不可变条目快照，仅在实际写入时编码；合并掉的中间快照不重复编码整队列。 */
   public persist(queue: EventQueue): Promise<StorageWrite> {
-    return this.writer.persist(queue.serializedEntries())
+    return this.writer.persist(queue.captureSerializedEntries())
   }
 
   /** 唯一写入槽位失败后仍继续最新待写快照，修订号保持安全整数。 */

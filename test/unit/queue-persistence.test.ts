@@ -35,6 +35,36 @@ function storage(initial: string | null = null): { port: StoragePort; values: ()
 }
 
 describe('QueuePersistence', () => {
+  it('延迟写入使用最后一次 persist 时的内容，后续未提交的移除和重试不改写快照', async () => {
+    let finish: () => void = () => { throw new Error('write_not_started') }
+    const values: string[] = []
+    const port: StoragePort = {
+      persistentQueue: true, read: async () => ({ kind: 'missing' }), remove: async () => ({ kind: 'ok' }),
+      write: async (_area, _key, value) => {
+        values.push(value)
+        if (values.length === 1) await new Promise<void>(resolve => { finish = resolve })
+        return { kind: 'ok' }
+      },
+    }
+    const queue = new EventQueue()
+    const persistence = new QueuePersistence(port, 'queue')
+    queue.enqueue(event(1))
+    const first = persistence.persist(queue)
+    queue.enqueue(event(2))
+    const pending = persistence.persist(queue)
+    queue.remove(['q1'])
+    queue.incrementRetries(['q2'])
+    expect(persistence.persist(queue)).toBe(pending)
+    queue.remove(['q2'])
+    queue.enqueue(event(3))
+    finish()
+    await Promise.all([first, pending])
+    expect(values).toHaveLength(2)
+    expect(JSON.parse(values[0]!).entries).toEqual([{ requestId: 'q1', event: event(1), retryCount: 0 }])
+    expect(JSON.parse(values[1]!).entries).toEqual([{ requestId: 'q2', event: event(2), retryCount: 1 }])
+    expect(queue.snapshot().map(entry => entry.event)).toEqual([event(3)])
+  })
+
   it('修订号到达安全整数上限后继续写入可恢复的记录', async () => {
     const backend = storage(JSON.stringify({ version: 1, revision: Number.MAX_SAFE_INTEGER, entries: [] }))
     const persistence = new QueuePersistence(backend.port, 'queue')

@@ -32,7 +32,7 @@ pnpm run test:stress
 pnpm run bench:sdk
 ```
 
-`test:stress` 运行真实 SDK 的一万次在线事件、两万次离线提交、三个固定种子各 5000 次故障交错，以及 75 轮模拟存储写入/冷启动恢复/重连；断言接纳/拒绝、序号、最多三个并发、重连排空、迟到回调与资源释放。冷启动场景逐项核对载荷、身份、会话与模拟宿主存储内容，封存的旧进程不得继续写入共享存储。队列单测另覆盖 5000 次固定种子的字节预算、批次和恢复交错。状态存储测试通过故意延迟旧写入，验证冷启动身份不回退，并检查每键最多一份在写和一份待写内容。
+`test:stress` 运行真实 SDK 的一万次在线事件、两万次离线提交、三个固定种子各 5000 次故障交错，以及 75 轮模拟存储写入/冷启动恢复/重连；App 两万次离线提交应全部接纳，加上 VISIT/PAGE 后按 401 批完整排空，最大并发为三个。另断言序号、迟到回调与资源释放。冷启动场景逐项核对载荷、身份、会话与模拟宿主存储内容，封存的旧进程不得继续写入共享存储。队列单测另覆盖 5000 次固定种子的字节预算、批次和恢复交错。状态存储测试通过故意延迟旧写入，验证冷启动身份不回退，并检查每键最多一份在写和一份待写内容。
 
 `bench:sdk` 输出 `test-results/stress-current.json`，记录队列入队、批次选择、离线调度、长属性、超长身份、无埋点长文本/多选值、2000 个监听器的 SFC 编译、慢存储堆保留量和写入量，以及完整运行时和冷启动压力场景。它预热后取 5 或 7 个样本，输出中位数和样本 P95；堆保留量在显式 GC 后读取。耗时只用于同机同环境对比，不设置跨硬件时间门槛，也不代表真实设备或网络吞吐。性能对照与全量测试应分开运行，减少 CPU 和 GC 争用。
 
@@ -52,7 +52,7 @@ pnpm run bench:sdk
 | 会话和事件序列 | 冷启动、后台 30 秒边界、身份/同意变化、序列跨会话恢复、APP_CLOSED 无序列 | `test/unit/{session,event-sequence,session-persistence,meta-persistence}.test.ts`；`test/protocol-contract/event-sequence.fixture.test.ts` |
 | App / Page 生命周期 | 入口和页面上下文、页面可见性、卸载、动态标题、方向、后台事件、宿主异常隔离 | `test/unit/{app-lifecycle,page-lifecycle,page-store,app-bridge,page-bridge,uniapp-installer,orientation}.test.ts` |
 | 事件协议、属性与位置 | 所有事件类型的字段白名单、公共上下文、属性清洗、0/false、事件名校验、经纬度及清除位置 | `test/unit/{protocol,event-composer,event-dispatcher,location-state}.test.ts`；`test/protocol-contract/*.test.ts` |
-| 队列与持久化 | FIFO、容量、字节边界、并发领取、重试状态、App 缓存 7 天到期清理与冷启动恢复、损坏记录隔离、写入失败后的后续恢复 | `test/unit/{queue,queue-persistence,persistence-boundaries}.test.ts`；`test/integration/app-queue-retention.test.ts` |
+| 队列与持久化 | FIFO、容量、字节边界、并发领取、重试状态、App 超过 200 条或 2MiB 后落盘、冷启动恢复和按 50 条/512KiB 分批补发、7 天到期清理、损坏记录隔离、写入失败后的后续恢复 | `test/unit/{queue,queue-persistence,persistence-boundaries}.test.ts`；`test/integration/{app-offline-recovery,app-queue-retention}.test.ts` |
 | 上传与网络 | POST/JSON 协议、200/204 接收、4xx 丢弃、5xx/网络重试、最多 3 个并发、断网保留、三端联网自动补发、通知缺失/未送达、后台取消恢复检查、超时/取消只结算一次 | `test/unit/{collector,uploader,transport-finalizer,app-request,app-network}.test.ts`；`test/integration/{mock-collector,app-offline-recovery}.test.ts` |
 | 无埋点编译 | Vue AST、三种组件写法、条件分支、参数/this/返回值/异常、幂等性、复杂表达式警告与安全跳过 | `test/unit/{autotrack-vite,autotrack-semantics}.test.ts`；`test/integration/autotrack-hbuilderx.test.ts` |
 | 无埋点运行时 | schema、id#eventName、各 change 组件、敏感与 ignore、去重、tabBar、正式能力开关、编译到 HTTP 收集的完整链路 | `test/unit/{autotrack-contract,autotrack-dispatch,capabilities}.test.ts`；`test/integration/autotrack-pipeline.test.ts` |

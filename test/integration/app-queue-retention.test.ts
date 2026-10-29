@@ -106,14 +106,14 @@ describe('App 缓存过期的运行时调度', () => {
     expect(JSON.parse(storage.values.get(keys.queue)!).entries).toEqual([])
   })
 
-  it('离线满队列到期后，新的事件仍可接纳并保存', async () => {
+  it('超过 200 条的离线积压到期后，新的事件仍可接纳并保存', async () => {
     const { tracker, storage, setNow } = runtimeFixture()
     tracker.init(config); tracker.onAppShow(entry); await tracker.whenReady()
-    for (let index = 0; index < 199; index++) expect(tracker.track('cached', { index })).toBe(true)
-    expect(tracker.track('overflow')).toBe(false)
+    for (let index = 0; index < 300; index++) expect(tracker.track('cached', { index })).toBe(true)
+    expect(tracker.queuedEvents()).toHaveLength(301)
     setNow(100 + APP_QUEUE_RETENTION_MS)
     expect(tracker.track('fresh')).toBe(true)
-    expect(tracker.queuedEvents()).toMatchObject([{ eventName: 'fresh', eventSequenceId: 201 }])
+    expect(tracker.queuedEvents()).toMatchObject([{ eventName: 'fresh', eventSequenceId: 302 }])
     expect(tracker.queuedEvents()).toHaveLength(1)
     await settleStorage()
     expect(JSON.parse(storage.values.get(keys.queue)!).entries).toHaveLength(1)

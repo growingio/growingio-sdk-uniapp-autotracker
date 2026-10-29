@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { APP_QUEUE_RETENTION_MS, EventQueue } from '../../src/core/queue.js'
+import { APP_QUEUE_LIMITS, APP_QUEUE_RETENTION_MS, EventQueue } from '../../src/core/queue.js'
 import type { ProtocolEvent } from '../../src/core/dataStore/protocol.js'
 
 /** 构造字段齐全且序号可控的协议事件，供容量和批次边界验证。 */
@@ -9,6 +9,56 @@ function event(number: number, value = ''): ProtocolEvent {
 }
 
 describe('EventQueue', () => {
+  it('移除最早到期事件后仍按新事件和恢复快照的时间清理', () => {
+    let now = 100
+    const queue = new EventQueue(APP_QUEUE_LIMITS, undefined, { maxAgeMs: 1000, now: () => now })
+    queue.enqueue({ eventType: 'CUSTOM', eventName: 'first', eventSequenceId: 1, timestamp: 100 })
+    queue.enqueue({ eventType: 'CUSTOM', eventName: 'second', eventSequenceId: 2, timestamp: 200 })
+    queue.remove(['q1'])
+    now = 1100
+    expect(queue.pruneExpired()).toEqual([])
+    queue.enqueue({ eventType: 'CUSTOM', eventName: 'earlier', eventSequenceId: 3, timestamp: 101 })
+    expect(queue.pruneExpired()).toEqual([])
+    now = 1101
+    expect(queue.pruneExpired()).toEqual(['q3'])
+    expect(queue.restore([{ requestId: 'q9', retryCount: 0,
+      event: { eventType: 'CUSTOM', eventName: 'restored', eventSequenceId: 9, timestamp: 100 } }])).toBe(true)
+    expect(queue.pruneExpired()).toEqual(['q9'])
+    queue.enqueue({ eventType: 'CUSTOM', eventName: 'fresh', eventSequenceId: 10, timestamp: now })
+    expect(queue.pruneExpired()).toEqual([])
+    now += 1000
+    expect(queue.pruneExpired()).toEqual(['q10'])
+  })
+
+  it('捕获的持久化内容不随后续追加、删除、重试或恢复而变化', () => {
+    const queue = new EventQueue(APP_QUEUE_LIMITS)
+    const first = { eventType: 'CUSTOM' as const, eventName: 'first', eventSequenceId: 1 }
+    const second = { eventType: 'CUSTOM' as const, eventName: 'second', eventSequenceId: 2 }
+    queue.enqueue(first)
+    const one = queue.captureSerializedEntries()
+    queue.enqueue(second)
+    const two = queue.captureSerializedEntries()
+    queue.remove(['q1'])
+    queue.incrementRetries(['q2'])
+    const retried = queue.captureSerializedEntries()
+    expect(queue.restore([{ requestId: 'q9', retryCount: 0, event: first }])).toBe(true)
+    expect(JSON.parse(one())).toEqual([{ requestId: 'q1', retryCount: 0, event: first }])
+    expect(JSON.parse(two())).toEqual([{ requestId: 'q1', retryCount: 0, event: first }, { requestId: 'q2', retryCount: 0, event: second }])
+    expect(JSON.parse(retried())).toEqual([{ requestId: 'q2', retryCount: 1, event: second }])
+    expect(JSON.parse(queue.captureSerializedEntries()())).toEqual([{ requestId: 'q9', retryCount: 0, event: first }])
+  })
+
+  it('App 恢复大积压时不受函数参数个数上限影响', () => {
+    const queue = new EventQueue(APP_QUEUE_LIMITS)
+    const entries = Array.from({ length: 150_000 }, (_, index) => ({
+      requestId: `q${index + 1}`, event: { eventType: 'CUSTOM' as const, eventName: 'cached', eventSequenceId: index + 1 }, retryCount: 0,
+    }))
+    expect(queue.restore(entries)).toBe(true)
+    expect(queue.size()).toBe(150_000)
+    expect(queue.nextBatch().map(entry => entry.event.eventSequenceId)).toEqual(Array.from({ length: 50 }, (_, index) => index + 1))
+    expect(queue.enqueue(event(150_001))).toEqual({ ok: true, requestId: 'q150001' })
+  })
+
   it('App 事件满 7 天到期，较新的事件及回拨时钟下的事件仍保留', () => {
     let now = 100
     const queue = new EventQueue(undefined, undefined, { maxAgeMs: APP_QUEUE_RETENTION_MS, now: () => now })

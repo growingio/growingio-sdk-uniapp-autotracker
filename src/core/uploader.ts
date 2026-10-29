@@ -125,6 +125,7 @@ export class Uploader {
   private pendingRetries = 0
   private readonly readyRetries: Array<{ batch: readonly QueueEntry[]; attempt: number }> = []
   private flushing = false
+  private lastRemovalRevision = -1
   /** 已接纳且正在等待空闲传输槽位的事件标识。 */
   private readonly readyRequests = new Set<string>()
   private readonly reservedRequests = new Set<string>()
@@ -164,6 +165,7 @@ export class Uploader {
       this.runtime.clearTimeout(this.aggregateTimer)
       this.aggregationPending = false
     }
+    if (!this.canDispatch()) { this.drain(); return }
     for (const requestId of this.queue.requestIds()) {
       if (!this.reservedRequests.has(requestId)) this.readyRequests.add(requestId)
     }
@@ -296,6 +298,9 @@ export class Uploader {
   /** 离线时也清理过期缓存，并清除入队清理留下的调度标识。 */
   private pruneExpired(): void {
     const expired = this.queue.pruneExpired()
+    const revision = this.queue.removalRevision()
+    if (revision === this.lastRemovalRevision) return
+    this.lastRemovalRevision = revision
     for (const requestId of this.readyRequests) {
       if (!this.queue.has(requestId)) this.readyRequests.delete(requestId)
     }

@@ -9,7 +9,7 @@ import { NativeIdentifierState, type NativeIdentifiersPort } from '../plugins/gi
 import { PageStore, type PageLoadInput, type PageOrientation, PageLifecycle } from './dataStore/page.js'
 import type { ClockPort, LoggerPort, MiniProgramTarget, NetworkPort, NetworkState, StoragePort, SystemContextPort, TimezonePort, TransportPort } from '../types/index.js'
 import { buildAppEvent, buildMiniProgramEvent, isValidCustomEventName, normalizeAttributes, type ProtocolEvent } from './dataStore/protocol.js'
-import { APP_QUEUE_RETENTION_MS, EventQueue } from './queue.js'
+import { APP_QUEUE_LIMITS, APP_QUEUE_RETENTION_MS, EventQueue } from './queue.js'
 import { AppLifecycle, type AppEntrySnapshot } from './dataStore/app.js'
 import { Uploader, type UploaderRuntime } from './uploader.js'
 import type { AutoTrackCall, ChangeElement, NormalizedAutoTrackCall } from '../plugins/gioEventAutoTracking/contract.js'
@@ -337,7 +337,8 @@ export class LocalTrackerRuntime {
   /** 恢复各类持久状态并装配会话、页面、事件和上传组件，全部就绪后回放暂存调用。 */
   private async hydrate(config: NonNullable<ReturnType<TrackerLifecycle['config']>>): Promise<void> {
     const keys = storageKeys(config.dataSourceId, config.miniprogram === undefined ? undefined : { ...config.miniprogram, accountId: config.accountId })
-    const queue = new EventQueue(undefined, config.miniprogram === undefined ? buildAppEvent : buildMiniProgramEvent,
+    const queue = new EventQueue(config.miniprogram === undefined ? APP_QUEUE_LIMITS : undefined,
+      config.miniprogram === undefined ? buildAppEvent : buildMiniProgramEvent,
       config.miniprogram === undefined ? { maxAgeMs: APP_QUEUE_RETENTION_MS, now: () => this.dependencies.clock.now() } : undefined)
     const migration = config.legacyMiniProgramIdentity
     const identityPersistence = new IdentityPersistence(this.dependencies.storage, keys.identity, config.dataSourceId, this.dependencies.deviceIdFactory,

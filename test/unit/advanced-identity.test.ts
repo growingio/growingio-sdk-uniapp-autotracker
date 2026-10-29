@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { runtimeFixture, RuntimeStorage } from '../support/runtime-fixture.js'
 import { IdentityPersistence, storageKeys } from '../../src/core/storage/index.js'
+import type { ProtocolEvent } from '../../src/core/dataStore/protocol.js'
 import { assignedDeviceId, readIdentityRecord } from '../../src/core/userStore.js'
 import { readLegacyMiniProgramIdentity } from '../../src/core/storage/legacyIdentity.js'
 import { normalizeInitOptions } from '../../src/constants/config.js'
@@ -113,10 +114,25 @@ describe('forceLogin and embedded identity', () => {
     await flush()
     expect(readIdentityRecord(storage.values.get(storageKeys('source').identity)!, 'source')).toMatchObject({ identity: { deviceIdAssigned: true } })
   })
-  it('rejects a device ID expansion exceeding queue capacity atomically, allowing a corrected identity', async () => {
-    const { tracker } = runtimeFixture(); tracker.init({ ...config, forceLogin: true }); tracker.onAppShow(show); await tracker.whenReady()
+  it('assigns App identity after the backlog exceeds 200 events and 2MiB', async () => {
+    const { tracker, storage } = runtimeFixture(); tracker.init({ ...config, forceLogin: true }); tracker.onAppShow(show); await tracker.whenReady()
     const properties = Object.fromEntries(Array.from({ length: 10 }, (_, n) => [`key${n}`, 'a'.repeat(1000)]))
-    for (let n = 0; n < 250; n++) if (!tracker.track('full', properties)) break
+    for (let n = 0; n < 250; n++) expect(tracker.track('full', properties)).toBe(true)
+    const before = tracker.queuedEvents()
+    expect(before).toHaveLength(251)
+    expect(Buffer.byteLength(JSON.stringify(before))).toBeGreaterThan(2 * 1024 * 1024)
+    const deviceId = '😀'.repeat(1000)
+    expect(tracker.identify(deviceId)).toBe(true)
+    expect(tracker.queuedEvents()).toEqual(before.map(event => ({ ...event, deviceId })))
+    expect(tracker.getGioInfo()).not.toBeNull()
+    await flush()
+    expect(JSON.parse(storage.values.get(storageKeys('source').queue)!).entries.map((entry: { event: ProtocolEvent }) => entry.event))
+      .toEqual(tracker.queuedEvents())
+  })
+  it('rejects a device ID expansion exceeding one event budget atomically, allowing a corrected identity', async () => {
+    const { tracker } = runtimeFixture(); tracker.init({ ...config, forceLogin: true }); tracker.onAppShow(show); await tracker.whenReady()
+    const properties = Object.fromEntries(Array.from({ length: 516 }, (_, n) => [`key${n}`, 'a'.repeat(1000)]))
+    expect(tracker.track('full', properties)).toBe(true)
     const before = tracker.queuedEvents()
     expect(tracker.identify('😀'.repeat(1000))).toBe(false)
     expect(tracker.queuedEvents()).toEqual(before)

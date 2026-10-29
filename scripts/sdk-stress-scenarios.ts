@@ -87,7 +87,7 @@ async function setup(initiallyConnected: boolean, synchronous: boolean) {
   }
 }
 
-/** 检查大流量接纳、满队列拒绝、重连排空、并发和迟到回调；耗时仅做基线，不作硬件相关断言。 */
+/** 检查大流量接纳、离线积压、重连排空、并发和迟到回调；耗时仅做基线，不作硬件相关断言。 */
 export async function runRuntimeStress(onlineEvents = 10_000, offlineAttempts = 20_000) {
   const online = await setup(true, true)
   let start = performance.now()
@@ -110,8 +110,8 @@ export async function runRuntimeStress(onlineEvents = 10_000, offlineAttempts = 
   start = performance.now()
   for (let event = 0; event < offlineAttempts; event++) if (offline.tracker.track('stress_event', { index: event })) accepted++
   const offlineMs = performance.now() - start
-  assert.equal(accepted, 198)
-  assert.equal(offline.tracker.queuedEvents().length, 200)
+  assert.equal(accepted, offlineAttempts)
+  assert.equal(offline.tracker.queuedEvents().length, offlineAttempts + 2)
   assert.equal(offline.stats().requests, 0)
   offline.reconnect()
   assert.equal(offline.stats().active, 3)
@@ -121,15 +121,15 @@ export async function runRuntimeStress(onlineEvents = 10_000, offlineAttempts = 
     // 宿主重复回调不能触发重试、占用槽位或再次结算。
     complete({ kind: 'network' })
   }
-  assert.equal(offline.stats().received, 200)
-  assert.equal(offline.stats().lastSequence, 200)
+  assert.equal(offline.stats().received, offlineAttempts + 2)
+  assert.equal(offline.stats().lastSequence, offlineAttempts + 2)
   assert.equal(offline.stats().active, 0)
   assert.equal(offline.tracker.queuedEvents().length, 0)
   assert.equal(offline.timers.size, 0)
   // 等待有界写入槽位结算，检查最终落盘而非只检查内存。
   for (let step = 0; step < 12; step++) await Promise.resolve()
   assert.deepEqual(online.persisted(), { entries: 0, sequence: onlineEvents + 4 })
-  assert.deepEqual(offline.persisted(), { entries: 0, sequence: 200 })
+  assert.deepEqual(offline.persisted(), { entries: 0, sequence: offlineAttempts + 2 })
   return {
     online: { events: onlineEvents, elapsedMs: onlineMs, ...online.stats() },
     offline: { attempts: offlineAttempts, accepted, rejected: offlineAttempts - accepted, elapsedMs: offlineMs, ...offline.stats() },

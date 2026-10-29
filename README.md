@@ -53,6 +53,8 @@ export function createApp() {
 
 App 的 `appVersion` 优先使用初始化时显式传入的非空字符串，去掉首尾空白；未传、空白或非法值时，依次读取 `uni.getAppBaseInfo().appVersion`、`uni.getSystemInfoSync().appVersion`。均不可用时省略该字段，不影响采集。例如配置 `appVersion: '1.0.0'` 后，即使安装包版本为 `0.1.0`，新事件也会上报 `1.0.0`。
 
+App 离线积压超过 200 条或 2MiB 后仍可继续接纳并尝试持久化；成功落盘的事件可在冷启动后恢复，联网后每批最多发送 50 条、512KiB。缓存按原事件时间保留 7 天，实际可保存量受宿主存储容量约束。小程序使用当前运行期内的有界内存队列。
+
 业务侧只通过 `gdp()` 调用 SDK，例如 `gdp('track', 'purchase', { sku: 'sku-1' })`。SDK 不向页面暴露 tracker 或 `$gio`；只有显式通过 `gdp('registerPlugins', [...])` 注册的客户插件会在 `install(growingio)` 中收到内部实例。自动页面/App 生命周期不再要求页面代码配合。
 
 ## TypeScript 类型

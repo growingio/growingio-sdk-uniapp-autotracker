@@ -13,10 +13,9 @@ beforeEach(() => {
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
 /** 通过真实 App 网络、存储、请求适配器装配 SDK，仅替换宿主能力。 */
-function app(platform: string, mode: NotificationMode, initialNetwork = 'none') {
+function app(platform: string, mode: NotificationMode, initialNetwork = 'none', storage = new Map<string, string>()) {
   let networkType = initialNetwork
   let listener: ((value: NetworkNotification) => void) | undefined
-  const storage = new Map<string, string>()
   const received: ProtocolEvent[] = []
   const host: AppRuntimeHost = {
     getStorageSync: key => storage.get(key),
@@ -52,6 +51,75 @@ function app(platform: string, mode: NotificationMode, initialNetwork = 'none') 
 }
 
 describe.each(['android', 'ios', 'harmonyos'])('%s App 自动补发', platform => {
+  it('宿主容量不足时保留内存和已落盘事件，存储恢复后可保存完整积压', async () => {
+    const f = app(platform, 'normal')
+    let quotaReached = true
+    const write = f.host.setStorageSync
+    f.host.setStorageSync = (key, value) => {
+      if (quotaReached && key.endsWith(':queue:v1') && Buffer.byteLength(value) > 2 * 1024 * 1024) {
+        throw new Error('storage quota full')
+      }
+      write(key, value)
+    }
+    f.tracker.init({ accountId: 'account', dataSourceId: 'source' })
+    await f.tracker.whenReady()
+    f.tracker.onAppShow({ path: 'pages/home', query: '' })
+    await vi.advanceTimersByTimeAsync(0)
+    const saved = f.tracker.queuedEvents()
+    const attributes = Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`field_${index}`, '中😀'.repeat(500)]))
+    for (let index = 0; index < 20; index++) expect(f.tracker.track('offline_event', { ...attributes, index })).toBe(true)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(f.tracker.queuedEvents()).toHaveLength(21)
+    const persisted = f.storage.get('gio:v1:source:queue:v1')!
+    const persistedEvents = JSON.parse(persisted).entries.map((entry: { event: ProtocolEvent }) => entry.event)
+    expect(Buffer.byteLength(persisted)).toBeLessThanOrEqual(2 * 1024 * 1024)
+    expect(persistedEvents.length).toBeLessThan(21)
+    expect(persistedEvents.slice(0, saved.length)).toEqual(saved)
+    quotaReached = false
+    expect(f.tracker.track('storage_recovered')).toBe(true)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(JSON.parse(f.storage.get('gio:v1:source:queue:v1')!).entries.map((entry: { event: ProtocolEvent }) => entry.event))
+      .toEqual(f.tracker.queuedEvents())
+    expect(f.received).toEqual([])
+  })
+
+  it.each(['count', 'bytes'] as const)('超过原 %s 总量限制后继续落盘，冷启动后按批次完整补发', async limit => {
+    const f = app(platform, 'normal')
+    f.tracker.init({ accountId: 'account', dataSourceId: 'source' })
+    await f.tracker.whenReady()
+    f.tracker.onAppShow({ path: 'pages/home', query: '' })
+    const attributes = limit === 'bytes'
+      ? Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`field_${index}`, '中😀'.repeat(500)]))
+      : {}
+    const count = limit === 'count' ? 260 : 20
+    for (let index = 0; index < count; index++) {
+      expect(f.tracker.track('offline_event', { ...attributes, index })).toBe(true)
+    }
+    await vi.advanceTimersByTimeAsync(0)
+    const cached = f.tracker.queuedEvents()
+    expect(cached).toHaveLength(count + 1)
+    const persisted = f.storage.get('gio:v1:source:queue:v1')!
+    expect(JSON.parse(persisted).entries.map((entry: { event: ProtocolEvent }) => entry.event)).toEqual(cached)
+    if (limit === 'bytes') expect(Buffer.byteLength(persisted)).toBeGreaterThan(2 * 1024 * 1024)
+    expect(f.received).toEqual([])
+
+    const restarted = app(platform, 'normal', 'none', f.storage)
+    restarted.tracker.init({ accountId: 'account', dataSourceId: 'source' })
+    expect(await restarted.tracker.whenReady()).toBe(true)
+    expect(restarted.tracker.queuedEvents()).toEqual(cached)
+    restarted.reconnect()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(restarted.received).toEqual(cached)
+    expect(restarted.tracker.queuedEvents()).toEqual([])
+    const requests = vi.mocked(restarted.host.request).mock.calls
+    expect(requests.length).toBeGreaterThan(1)
+    for (const [request] of requests) {
+      expect(JSON.parse(request.data).length).toBeLessThanOrEqual(50)
+      expect(Buffer.byteLength(request.data)).toBeLessThanOrEqual(512 * 1024)
+    }
+    expect(JSON.parse(f.storage.get('gio:v1:source:queue:v1')!).entries).toEqual([])
+  })
+
   it.each<NotificationMode>(['normal', 'missing', 'throws', 'silent'])('网络通知 %s 时，不操作页面也能在联网后补发缓存', async mode => {
     const f = app(platform, mode)
     f.tracker.init({ accountId: 'account', dataSourceId: 'source' })

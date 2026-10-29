@@ -1,5 +1,6 @@
 import { buildAppEvent, type ProtocolEvent } from './dataStore/protocol.js'
 
+// 非持久化内存队列的总量预算；App 积压由有效期和宿主存储容量约束。
 export const MAX_QUEUE_ITEMS = 200
 export const MAX_QUEUE_PERSISTED_BYTES = 2 * 1024 * 1024
 export const MAX_EVENT_BYTES = 512 * 1024
@@ -38,9 +39,17 @@ const DEFAULT_LIMITS: QueueLimits = {
   maxBatchBytes: MAX_BATCH_BYTES,
 }
 
+/** App 不按总条数或总字节拒绝积压事件，单事件和发送批次仍受限。 */
+export const APP_QUEUE_LIMITS: QueueLimits = {
+  ...DEFAULT_LIMITS,
+  maxItems: Infinity,
+  maxPersistedBytes: Infinity,
+}
+
 // 为持久化信封预留最长合法修订号，容量判断包含实际落盘字段。
 const QUEUE_ENVELOPE_BYTES = '{"version":1,"revision":9007199254740991,"entries":[]}'.length
 type EncodedEvent = Readonly<{ json: string; bytes: number; entryBytes: number }>
+type QueueSnapshotNode = Readonly<{ entry: QueueEntry; json: string; previous: QueueSnapshotNode | null }>
 
 /** 拼接内部生成的条目包装；事件已经是独立 JSON，不能再次执行业务序列化逻辑。 */
 function encodeEntry(entry: QueueEntry, eventJson: string): string {
@@ -103,6 +112,10 @@ export class EventQueue {
   private readonly encoded = new Map<string, EncodedEvent>()
   private persistedBytes = QUEUE_ENVELOPE_BYTES
   private serializedSnapshot: string | null = null
+  private persistenceTail: QueueSnapshotNode | null = null
+  private persistenceDirty = false
+  private nextExpiryAt = Infinity
+  private removedRevision = 0
   private nextRequestNumber = 1
 
   /** 注入容量限制与事件协议；仅 App 装配按事件时间清理的保留策略。 */
@@ -118,11 +131,28 @@ export class EventQueue {
     if (retention === undefined) return []
     let now: number
     try { now = retention.now() } catch { return [] }
-    if (!Number.isFinite(now) || now < 0) return []
-    const expired = this.entries.filter(entry => typeof entry.event.timestamp !== 'number'
-      || now - entry.event.timestamp >= retention.maxAgeMs).map(entry => entry.requestId)
+    if (!Number.isFinite(now) || now < 0 || now < this.nextExpiryAt) return []
+    const expired: string[] = []
+    let nextExpiryAt = Infinity
+    for (const entry of this.entries) {
+      if (typeof entry.event.timestamp !== 'number' || now - entry.event.timestamp >= retention.maxAgeMs) expired.push(entry.requestId)
+      else nextExpiryAt = Math.min(nextExpiryAt, this.eventExpiry(entry.event))
+    }
     this.remove(expired)
+    this.nextExpiryAt = nextExpiryAt
     return expired
+  }
+
+  /** 仅对可精确计算的到期时间跳过扫描，未知时间和超出安全整数的值继续逐项判断。 */
+  private eventExpiry(event: ProtocolEvent): number {
+    if (this.retention === undefined) return Infinity
+    const expiresAt = typeof event.timestamp === 'number' ? event.timestamp + this.retention.maxAgeMs : NaN
+    return Number.isSafeInteger(expiresAt) ? expiresAt : -Infinity
+  }
+
+  /** 只有删除或替换队列才推进修订号，上传器无需在每次追加时检查全部旧标识。 */
+  public removalRevision(): number {
+    return this.removedRevision
   }
 
   /** 检查事件是否仍在队列，避免延迟重试重新发送已过期的批次副本。 */
@@ -152,6 +182,8 @@ export class EventQueue {
     }
     this.entries.push(entry)
     this.encoded.set(requestId, { json: serialized, bytes: byteLength, entryBytes })
+    if (!this.persistenceDirty) this.persistenceTail = { entry, json: serialized, previous: this.persistenceTail }
+    this.nextExpiryAt = Math.min(this.nextExpiryAt, this.eventExpiry(normalized))
     this.persistedBytes = nextBytes
     this.serializedSnapshot = null
     return { ok: true, requestId }
@@ -197,6 +229,7 @@ export class EventQueue {
   public remove(requestIds: readonly string[]): void {
     if (requestIds.length === 0) return
     const ids = new Set(requestIds)
+    let removed = false
     for (let index = this.entries.length - 1; index >= 0; index -= 1) {
       if (ids.has(this.entries[index]!.requestId)) {
         const requestId = this.entries[index]!.requestId
@@ -204,8 +237,13 @@ export class EventQueue {
         this.encoded.delete(requestId)
         this.claimed.delete(requestId)
         this.entries.splice(index, 1)
-        this.serializedSnapshot = null
+        removed = true
       }
+    }
+    if (removed) {
+      this.invalidateSnapshots()
+      this.advanceRemovalRevision()
+      if (this.entries.length === 0) this.nextExpiryAt = Infinity
     }
   }
 
@@ -223,7 +261,7 @@ export class EventQueue {
         this.entries[index] = next
         this.encoded.set(entry.requestId, { ...encoded, entryBytes: encoded.entryBytes + extraBytes })
         this.persistedBytes += extraBytes
-        this.serializedSnapshot = null
+        this.invalidateSnapshots()
       }
     }
   }
@@ -244,11 +282,14 @@ export class EventQueue {
     }))
     const persistedBytes = QUEUE_ENVELOPE_BYTES + [...encoded.values()].reduce((sum, entry) => sum + entry.entryBytes, 0) + Math.max(0, normalized.length - 1)
     if (encoded.size !== normalized.length || persistedBytes > this.limits.maxPersistedBytes) return false
-    this.entries.splice(0, this.entries.length, ...normalized)
+    this.entries.length = 0
+    for (const entry of normalized) this.entries.push(entry)
     this.encoded.clear()
     for (const [id, value] of encoded) this.encoded.set(id, value)
     this.persistedBytes = persistedBytes
-    this.serializedSnapshot = null
+    this.invalidateSnapshots()
+    this.advanceRemovalRevision()
+    this.nextExpiryAt = normalized.length === 0 ? Infinity : -Infinity
     this.claimed.clear()
     const largestRequestNumber = normalized.reduce((largest, entry) => {
       const match = /^q(\d+)$/.exec(entry.requestId)
@@ -264,7 +305,7 @@ export class EventQueue {
     do {
       requestId = `q${this.nextRequestNumber}`
       this.nextRequestNumber = this.nextRequestNumber === Number.MAX_SAFE_INTEGER ? 1 : this.nextRequestNumber + 1
-    } while (this.entries.some((entry) => entry.requestId === requestId))
+    } while (this.encoded.has(requestId))
     return requestId
   }
 
@@ -283,10 +324,39 @@ export class EventQueue {
     return this.entries.length
   }
 
-  /** 只在队列内容变化后生成新的不可变 JSON 快照，供持久化合并使用。 */
+  /** 只在队列内容变化后生成新的不可变 JSON，供诊断快照读取。 */
   public serializedEntries(): string {
     this.serializedSnapshot ??= `[${this.entries.map(entry => encodeEntry(entry, this.encoded.get(entry.requestId)!.json)).join(',')}]`
     return this.serializedSnapshot
+  }
+
+  /** 不可变链共享已有条目，连续追加时只捕获链尾，不逐次复制整个积压数组。 */
+  public captureSerializedEntries(): () => string {
+    if (this.persistenceDirty) {
+      this.persistenceTail = null
+      for (const entry of this.entries) {
+        this.persistenceTail = { entry, json: this.encoded.get(entry.requestId)!.json, previous: this.persistenceTail }
+      }
+      this.persistenceDirty = false
+    }
+    const tail = this.persistenceTail
+    return () => {
+      const parts: string[] = []
+      for (let node = tail; node !== null; node = node.previous) parts.push(encodeEntry(node.entry, node.json))
+      return `[${parts.reverse().join(',')}]`
+    }
+  }
+
+  /** 删除、重试或恢复后重建下一份快照，已经捕获的链仍保持原内容。 */
+  private invalidateSnapshots(): void {
+    this.serializedSnapshot = null
+    this.persistenceTail = null
+    this.persistenceDirty = this.entries.length > 0
+  }
+
+  /** 修订号仅供当前进程识别删除，不能增长到不精确的整数。 */
+  private advanceRemovalRevision(): void {
+    this.removedRevision = this.removedRevision === Number.MAX_SAFE_INTEGER ? 0 : this.removedRevision + 1
   }
 
   /** 校验缓存条目、请求标识、重试次数和完整协议，阻止损坏数据恢复。 */
