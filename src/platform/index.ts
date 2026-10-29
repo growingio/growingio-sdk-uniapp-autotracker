@@ -81,8 +81,14 @@ export function createUniTracker(host: UniRuntimeHost, options: AppRuntimeOption
       warn: (message) => globalThis.console?.warn(message),
       /** 向宿主控制台输出运行失败诊断。 */
       error: (message) => globalThis.console?.error(message),
-      /** 按是否携带数据选择控制台参数，保留已裁剪的调试信息。 */
-      debug: (message, data) => data === undefined ? globalThis.console?.log(message) : globalThis.console?.log(message, data),
+      /** App 调试基座会转义字符串中的换行，逐行输出以保留 JSON 缩进。 */
+      debug: (message, data) => {
+        if (data !== undefined) {
+          globalThis.console?.log(message, data)
+          return
+        }
+        for (const line of message.split('\n')) globalThis.console?.log(line)
+      },
     },
     network,
     upload: {
