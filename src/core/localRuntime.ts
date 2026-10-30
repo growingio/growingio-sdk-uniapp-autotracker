@@ -558,7 +558,8 @@ export class LocalTrackerRuntime {
     const payload = record(intent.payload)
     if (payload === null) return false
     const mini = this.lifecycle.config()?.miniprogram !== undefined
-    if (mini && intent.kind === 'page-show' && !this.foreground) {
+    // App 与小程序的页面都可能先于 App.onShow 到达，须等待前台会话确定后再生成 PAGE。
+    if (intent.kind === 'page-show' && !this.foreground) {
       if (typeof payload.instanceId !== 'string' || (typeof payload.title !== 'string' && payload.title !== null)) return false
       this.pendingPageShow = intent
       return true
@@ -608,7 +609,7 @@ export class LocalTrackerRuntime {
       }
       case 'app-hide':
         this.foreground = false
-        if (mini) this.pendingPageShow = null
+        this.pendingPageShow = null
         emitted = state.app.onHide(intent.observedAt).appClosedQueued
         lifecycleHandled = true
         break
@@ -616,6 +617,9 @@ export class LocalTrackerRuntime {
       case 'page-title':
         if (typeof payload.instanceId !== 'string' || typeof payload.title !== 'string') return false
         state.pages.setTitle(payload.instanceId, payload.title)
+        if (this.pendingPageShow?.payload.instanceId === payload.instanceId) {
+          this.pendingPageShow = { ...this.pendingPageShow, payload: { ...this.pendingPageShow.payload, title: payload.title } }
+        }
         return true
       case 'page-show': emitted = typeof payload.instanceId === 'string' && (typeof payload.title === 'string' || payload.title === null)
         ? state.page.onShow(payload.instanceId, payload.title).pageQueued : false; lifecycleHandled = typeof payload.instanceId === 'string' && (typeof payload.title === 'string' || payload.title === null); break
