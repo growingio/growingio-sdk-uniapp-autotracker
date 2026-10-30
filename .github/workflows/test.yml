@@ -1,0 +1,32 @@
+name: SDK Code Tests
+on:
+  pull_request:
+  push:
+    branches: ['**']
+permissions:
+  contents: read
+concurrency:
+  group: sdk-tests-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: 核心代码测试、覆盖率及交付包验收
+        run: pnpm run release:prepare
+      - name: 保存代码测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-code-tests
+          path: |
+            coverage/
+            test-results/
+          retention-days: 14

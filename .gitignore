@@ -1,0 +1,11 @@
+node_modules/
+dist/
+release/
+.pnpm-store/
+coverage/
+test-results/
+demo/unpackage/
+demo/dist/
+demo/uni_modules/
+demo/.hbuilderx/
+demo/env.js

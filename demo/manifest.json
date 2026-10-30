@@ -1,0 +1,35 @@
+{
+    "name" : "gio-uniapp-autotracker-showcase",
+    "appid" : "__UNI__GIO_SHOWCASE__",
+    "description" : "Traditional uni-app SDK feature showcase",
+    "versionName" : "0.1.0",
+    "versionCode" : "100",
+    "app-plus" : {
+        "usingComponents" : true
+    },
+    "vueVersion" : "3",
+    "mp-weixin" : { "appid" : "", "usingComponents" : true },
+    "mp-alipay" : { "appid" : "", "usingComponents" : true },
+    "mp-baidu" : { "appid" : "", "usingComponents" : true },
+    "mp-toutiao" : { "appid" : "", "usingComponents" : true },
+    "mp-qq" : { "appid" : "", "usingComponents" : true },
+    "mp-kuaishou" : { "appid" : "", "usingComponents" : true },
+    "mp-jd" : { "appid" : "", "usingComponents" : true },
+    "mp-xhs" : { "appid" : "", "usingComponents" : true },
+    "app-harmony" : {
+        "distribute" : {
+            "bundleName" : "com.growingio.analytics",
+            "signingConfigs" : {
+                "default" : {
+                    "certpath" : "/Users/anoiv/Library/Application Support/HBuilder X/extensions/launcher/agc-certs/1788506185817.cer",
+                    "keyAlias" : "debugKey",
+                    "keyPassword" : "0000001BDED0A5C5B02458726054A3A81DBBBF1A4C751C6CF3D377EFB73068817AEA1CF576750BD713AEE0",
+                    "profile" : "/Users/anoiv/Library/Application Support/HBuilder X/extensions/launcher/agc-certs/1788506185817.p7b",
+                    "signAlg" : "SHA256withECDSA",
+                    "storeFile" : "/Users/anoiv/Library/Application Support/HBuilder X/extensions/launcher/agc-certs/1788504809419.p12",
+                    "storePassword" : "0000001BDED0A5C5B02458726054A3A81DBBBF1A4C751C6CF3D377EFB73068817AEA1CF576750BD713AEE0"
+                }
+            }
+        }
+    }
+}

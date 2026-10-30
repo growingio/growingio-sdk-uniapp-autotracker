@@ -1,0 +1,59 @@
+{
+  "name": "gio-uniapp-autotracker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Traditional uni-app Vue 3 App and mini-program analytics SDK",
+  "type": "module",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "check": "pnpm run typecheck && pnpm run test",
+    "typecheck": "tsc --noEmit -p tsconfig.dev.json",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:release": "pnpm run typecheck && pnpm run test:coverage",
+    "test:contract": "vitest run test/protocol-contract test/integration",
+    "test:stress": "vitest run test/integration/sdk-stress.test.ts test/integration/uploader-soak.test.ts test/integration/sdk-recovery-stress.test.ts",
+    "bench:sdk": "node --expose-gc --import tsx scripts/stress-sdk.ts --output test-results/stress-current.json",
+    "build:sdk": "tsx scripts/build-sdk.ts",
+    "demo:check": "pnpm run build:sdk && tsc --noEmit -p test/type/tsconfig.compiled-consumer.json && tsx scripts/check-demo.ts",
+    "mock:collector": "tsx scripts/mock-collector.ts",
+    "release:prepare": "pnpm run test:release && pnpm run build:sdk && tsx scripts/prepare-release.ts && pnpm run release:check",
+    "release:check": "tsx scripts/check-release.ts && tsx scripts/check-package-consumers.ts && tsc --noEmit -p test/type/tsconfig.compiled-consumer.json && tsx scripts/check-demo.ts && pnpm run test:miniprogram:compile",
+    "release:publish": "pnpm run test:release && pnpm run release:check && tsx scripts/publish-release.ts",
+    "test:miniprogram:compile": "tsx scripts/check-miniprogram.ts",
+    "test:app:compile": "tsx scripts/check-app.ts"
+  },
+  "dependencies": {
+    "@babel/parser": "^7.29.8",
+    "@vue/compiler-dom": "3.4.21",
+    "@vue/compiler-sfc": "3.4.21"
+  },
+  "devDependencies": {
+    "@dcloudio/types": "3.4.32",
+    "@dcloudio/uni-app": "3.0.0-5020420260812001",
+    "@dcloudio/uni-components": "3.0.0-5020420260812001",
+    "@dcloudio/uni-mp-alipay": "3.0.0-5020420260812001",
+    "@dcloudio/uni-mp-baidu": "3.0.0-5020420260812001",
+    "@dcloudio/uni-mp-jd": "3.0.0-5020420260812001",
+    "@dcloudio/uni-mp-kuaishou": "3.0.0-5020420260812001",
+    "@dcloudio/uni-mp-qq": "3.0.0-5020420260812001",
+    "@dcloudio/uni-mp-toutiao": "3.0.0-5020420260812001",
+    "@dcloudio/uni-mp-weixin": "3.0.0-5020420260812001",
+    "@dcloudio/uni-mp-xhs": "3.0.0-5020420260812001",
+    "@dcloudio/vite-plugin-uni": "3.0.0-5020420260812001",
+    "@types/node": "^22.15.24",
+    "@types/semver": "7.7.0",
+    "@vitest/coverage-v8": "3.2.7",
+    "esbuild": "0.21.5",
+    "semver": "7.7.2",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "vite": "5.2.8",
+    "vitest": "^3.1.4",
+    "vue": "3.4.21"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "license": "GPL-3.0-only"
+}

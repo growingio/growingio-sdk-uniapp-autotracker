@@ -1,0 +1,57 @@
+name: Publish SDK
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: sdk-publish
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: pnpm
+      - run: npm install --global npm@11.5.1
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run release:prepare
+      - name: 保存已验证交付包，供失败重跑时核对
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-${{ github.ref_name }}
+          path: dist/release/
+          if-no-files-found: error
+          overwrite: true
+      - run: pnpm run release:publish
+      - name: 创建 Release 并上传同一批交付文件
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          flags=()
+          if node -e "process.exit(JSON.parse(require('fs').readFileSync('dist/release/release.json')).prerelease ? 0 : 1)"; then
+            flags+=(--prerelease)
+          fi
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --generate-notes "${flags[@]}"
+          fi
+          gh release upload "$RELEASE_TAG" dist/release/*.tgz dist/release/release.json --clobber
+      - name: 保存发布前代码测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-test-${{ github.ref_name }}
+          path: |
+            coverage/
+            test-results/
+          retention-days: 14
+          overwrite: true
