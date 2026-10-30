@@ -214,9 +214,11 @@ describe.each(miniTargets)('%s complete runtime', target => {
       fixture.fire(1, 'onBlur', { type: 'blur', timeStamp: 3, currentTarget: { dataset: { growingTrack: true } }, detail: { value: 'secret' } })
       expect(business).toHaveBeenCalledTimes(4)
       const views = f.tracker.queuedEvents().filter(event => String(event.eventType).startsWith('VIEW_'))
-      expect(views.map(event => event.eventType)).toEqual(['VIEW_CLICK', 'VIEW_CHANGE'])
+      expect(views.map(event => event.eventType)).toEqual(['VIEW_CLICK', 'VIEW_CHANGE', 'VIEW_CHANGE'])
       expect(views[0]!.xpath).toBe('save#business')
       expect(views[1]!.textValue).toBe('allowed')
+      expect(views[2]).toMatchObject({ xpath: '#business' })
+      expect(views[2]).not.toHaveProperty('textValue')
       expect(JSON.stringify(f.tracker.queuedEvents())).not.toContain('secret')
     } finally { fixture.unmount() }
   })

@@ -50,7 +50,7 @@ MOCK_COLLECTOR_HOST=0.0.0.0 pnpm mock:collector
 pnpm demo:check
 ```
 
-无埋点页按真机验收顺序分为六组，包含有/无 id 的 click 与 tap、严格主目标、动态 id/metadata、无 id 列表、`v-if` / `v-show`、条件 handler、Options API、`<script setup>`、普通 `setup()` 返回别名、input/textarea 完成事件、所有已支持 change 组件、`uni-link` 与 tabBar。页面会显示业务 handler 执行次数和每项预期 xpath，便于同时确认业务没有被重复调用。此 demo 的 vite.config.ts 显式设置 `__GIO_AUTOTRACK_VERIFICATION__: true`，用于开放三端待验收的无埋点链路；它不会把生产能力表标为已验收，正式应用不要复制。密码、显式 sensitive、currentTarget/target 任一 ignore 和未放行的 autoplay 不生成自动事件。生产开放必须以逐端真机请求和 collector 接收证据为准。
+无埋点页按真机验收顺序分为六组，包含有/无 id 的 click 与 tap、严格主目标、动态 id/metadata、无 id 列表、`v-if` / `v-show`、条件 handler、Options API、`<script setup>`、普通 `setup()` 返回别名、input/textarea 完成事件、所有已支持 change 组件、`uni-link` 与 tabBar。页面会显示业务 handler 执行次数和每项预期 xpath，便于同时确认业务没有被重复调用。此 demo 的 vite.config.ts 显式设置 `__GIO_AUTOTRACK_VERIFICATION__: true`，用于开放三端待验收的无埋点链路；它不会把生产能力表标为已验收，正式应用不要复制。密码框保留不含 `textValue` 的 `VIEW_CHANGE`，即使带 track 也不读取密码值；显式 sensitive、currentTarget/target 任一 ignore 和未放行的 autoplay 不生成自动事件。生产开放必须以逐端真机请求和 collector 接收证据为准。
 
 函数引用及条件返回函数等不安全写法不会插桩，编译器会给出告警；当前页面的条件调用和括号箭头场景应无告警。列表动态元数据从原生 dataset 获取；动态 picker range 回退下标，不能再按显示文案验收。
 
@@ -60,7 +60,8 @@ pnpm demo:check
 | --- | --- | --- |
 | 动态隐私 | 第 4 组反复切换 ignore、sensitive、track，再点击 / 输入 | 隐私标记优先；关闭隐私后恢复采集；track 关闭时不读取 / 上报输入原文 |
 | 禁用标记 | 第 4 组选择 false、0、"0"、"false" | 四种值都不启用 ignore / sensitive / track；点击保留，输入事件不含值 |
-| 敏感类型 | 静态 password，动态 type / password 切换后失焦 | 动态类型始终保守拦截，业务照常执行，不生成自动事件 |
+| 密码保护 | 静态 password，动态 password 切换后失焦 | 产生 `VIEW_CHANGE`，始终无 `textValue`；track 不能放行，业务照常执行 |
+| 敏感类型 | 显式 sensitive 的普通 / 密码输入，动态 type 切换后失焦 | 整条忽略，不生成自动事件，业务照常执行 |
 | 完成事件 | 独立 confirm；input / textarea 三事件控件 | 三事件只为 blur 插桩，失焦生成一条 VIEW_CHANGE；独立 confirm 正常采集，其他原业务回调保留 |
 | 冒泡 | 第 1 组点击父层中的子按钮 | 父子不同 xpath 各保留一次，业务总计数增加 2 |
 | 去重与切页 | 连续独立点击重复按钮，去路由页后通过导航返回再点 | 独立操作保留，页面返回后不被此前的去重记录误吞 |

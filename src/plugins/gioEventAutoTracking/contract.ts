@@ -22,6 +22,8 @@ export type TemplateAutoTrackProbe = Readonly<{
   ignored?: unknown
   trackValue?: unknown
   sensitive?: unknown
+  /** 仅保留输入完成事件，禁止读取或上报任何输入文案；track 不能覆盖。 */
+  redactValue?: unknown
 }>
 
 export type TabBarAutoTrackProbe = Readonly<{

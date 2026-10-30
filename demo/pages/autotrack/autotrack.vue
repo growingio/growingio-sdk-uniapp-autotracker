@@ -88,10 +88,13 @@
       <input id="untracked-input" v-model="untrackedText" placeholder="输入后失焦" @blur="onInputComplete($event)" />
       <text class="expected">预期：仍有 VIEW_CHANGE，但没有 textValue</text>
 
-      <text class="case-title">密码和显式敏感输入</text>
-      <input id="password" v-model="password" password data-growing-track placeholder="仅填演示值：密码不会生成自动事件" @blur="onInputComplete($event)" />
+      <text class="case-title">密码：保留变化事件，不采集值</text>
+      <input id="password" v-model="password" password data-growing-track placeholder="仅填演示值：失焦采集事件，不采集密码值" @blur="onInputComplete($event)" />
+      <text class="expected">预期：password#onInputComplete 产生 VIEW_CHANGE，不包含 textValue；data-growing-track 也不能放行密码值。</text>
+      <text class="case-title">显式 sensitive：整条忽略</text>
       <input id="sensitive-input" v-model="sensitiveText" data-growing-sensitive data-growing-track placeholder="敏感标记不会生成自动事件" @blur="onInputComplete($event)" />
-      <text class="expected">预期：两个业务 handler 都执行，但没有 VIEW_CHANGE，日志不出现输入原文</text>
+      <input id="password-sensitive" password data-growing-sensitive data-growing-track placeholder="仅填演示值：密码加 sensitive 不生成事件" @blur="onInputComplete($event)" />
+      <text class="expected">预期：显式 sensitive 的普通输入与密码输入都没有 VIEW_CHANGE；所有业务 handler 照常执行，日志不出现输入原文。</text>
 
       <text class="case-title">数字 1 与字符串 '1' 的隐私标记（本次修复）</text>
       <input id="track-string-one" data-growing-track="1" placeholder="仅填演示值：字符串 1 放行" @blur="onInputComplete($event)" />
@@ -128,12 +131,12 @@
       <input id="false-marker-input" :data-growing-track="falseMarkers[falseMarkerIndex]" placeholder="仅填演示值：禁用标记不放行原文" @blur="onInputComplete($event)" />
       <text class="expected">四种值都不阻止点击；输入有 VIEW_CHANGE，但没有 textValue。</text>
 
-      <text class="case-title">动态 type / password 的保守拦截</text>
+      <text class="case-title">动态 type / password 的隐私规则</text>
       <view class="toggle-row"><text>动态 type：{{ dynamicInputType }}</text><switch id="dynamic-type-toggle" :checked="numericInput" data-growing-ignore @change="toggleInputType($event)" /></view>
       <input id="dynamic-type-input" :type="dynamicInputType" data-growing-track placeholder="仅填演示值：动态 type 始终拦截" @blur="onInputComplete($event)" />
       <view class="toggle-row"><text>动态 password：{{ maskPassword }}</text><switch id="dynamic-password-toggle" :checked="maskPassword" data-growing-ignore @change="togglePassword($event)" /></view>
-      <input id="dynamic-password-input" :password="maskPassword" data-growing-track placeholder="仅填演示值：动态 password 始终拦截" @blur="onInputComplete($event)" />
-      <text class="expected">编译器无法固定类型的输入保守视为敏感；无论开关状态，业务执行但没有 VIEW_CHANGE。</text>
+      <input id="dynamic-password-input" :password="maskPassword" data-growing-track placeholder="仅填演示值：动态 password 始终不采集值" @blur="onInputComplete($event)" />
+      <text class="expected">动态 type 无法确认安全类型，仍不生成事件；动态 password 无论开关状态，均产生不含 textValue 的 VIEW_CHANGE。业务 handler 照常执行。</text>
 
       <text class="case-title">清空、长文本、换行与特殊字符</text>
       <button id="text-fill-long" data-growing-ignore @tap="fillLongText($event)">填入 120 个 A</button>
@@ -333,7 +336,7 @@ export default {
     nextFalseMarker() { this.falseMarkerIndex = (this.falseMarkerIndex + 1) % this.falseMarkers.length; this.mark('禁用标记值已切换') },
     /** 更新动态输入类型开关。 */
     toggleInputType(event) { this.numericInput = event.detail.value; this.mark('动态 type 已更新') },
-    /** 更新动态密码属性，验证敏感输入的保守拒绝规则。 */
+    /** 更新动态密码属性，验证事件保留且始终不采集值。 */
     togglePassword(event) { this.maskPassword = event.detail.value; this.mark('动态 password 已更新') },
     /** 填入预设长文本，供文案截断边界验证。 */
     fillLongText() { this.boundaryText = 'A'.repeat(120); this.mark('已填入预设长文本，请聚焦后失焦') },

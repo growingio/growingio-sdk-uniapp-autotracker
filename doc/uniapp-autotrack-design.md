@@ -100,6 +100,7 @@ type TemplateAutoTrackProbe = Readonly<{
   ignored?: unknown
   trackValue?: unknown
   sensitive?: unknown
+  redactValue?: unknown
 }>
 
 type TabBarAutoTrackProbe = Readonly<{
@@ -242,7 +243,9 @@ Options API、普通 `setup()` 与 `<script setup>` 的最终事件口径相同�
 |---|---|
 | `data-growing-ignore` | 最高优先级；currentTarget 或原始 target 任意命中都拒绝整个 probe |
 | `data-growing-sensitive` | currentTarget、原始 target 或编译期静态标记任意命中都拒绝整个 probe |
-| 密码、安全密码、文件 input | 拒绝整个 probe，不生成 `VIEW_CHANGE` |
+| 密码、安全密码 input | 保留 `VIEW_CHANGE`，不读取输入值或文案，协议省略 `textValue`；track 不能覆盖 |
+| 动态 `:password` | 保留 `VIEW_CHANGE`，所有状态下都保守禁读值，不重复求值业务绑定 |
+| 文件 input | 拒绝整个 probe，不生成 `VIEW_CHANGE` |
 | 动态 `:type` | 一期按敏感处理并拒绝整个 probe，不根据运行时偶然值放宽 |
 | `data-growing-track` | 仅允许非敏感 `VIEW_CHANGE` 写入归一化后的值 |
 | `data-title` | `VIEW_CLICK.textValue`；以及没有被允许采集值的必要 change 文案 |

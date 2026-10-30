@@ -1,6 +1,6 @@
 import { AUTO_TRACK_SCHEMA_VERSION, CHANGE_ELEMENTS, TEMPLATE_ELEMENTS, type NormalizedAutoTrackCall, type AutoTrackCall } from './contract.js'
 
-const templateFields = new Set(['schemaVersion', 'source', 'kind', 'eventName', 'elementType', 'pickerRange', 'pickerRangeKey', 'textValue', 'index', 'hyperlink', 'ignored', 'trackValue', 'sensitive'])
+const templateFields = new Set(['schemaVersion', 'source', 'kind', 'eventName', 'elementType', 'pickerRange', 'pickerRangeKey', 'textValue', 'index', 'hyperlink', 'ignored', 'trackValue', 'sensitive', 'redactValue'])
 const tabFields = new Set(['schemaVersion', 'source', 'kind', 'xpath', 'index', 'textValue', 'hyperlink'])
 export const MAX_RANGE_ITEMS = 1000
 export const MAX_PICKER_COLUMNS = 20
@@ -81,10 +81,13 @@ function index(value: unknown, minimum: number): number | null {
   const result = Number(value)
   return Number.isSafeInteger(result) && result >= minimum && result < 2147483647 ? result : null
 }
-/** 检查目标自身或宿主 attr 中的密码、文件输入类型。 */
-function sensitiveTarget(target: Readonly<Record<string, unknown>> | null): boolean {
-  const kind = target?.type ?? record(target?.attr)?.type
-  return typeof kind === 'string' && ['password', 'safe-password', 'file'].includes(kind.toLowerCase())
+/** 同时检查目标与宿主 attr 的类型，兼容 type 为组件名的事件包装。 */
+function inputType(target: Readonly<Record<string, unknown>> | null, types: readonly string[]): boolean {
+  return [target?.type, record(target?.attr)?.type].some(kind => typeof kind === 'string' && types.includes(kind.toLowerCase()))
+}
+/** 识别宿主暴露的密码类型或布尔属性，不读取输入值。 */
+function passwordTarget(target: Readonly<Record<string, unknown>> | null): boolean {
+  return inputType(target, ['password', 'safe-password']) || enabledMarker(target?.password) || enabledMarker(record(target?.attr)?.password)
 }
 
 // 只接受有界、无属性访问器的 JSON range；不序列化整个组件、响应式对象或宿主事件。
@@ -195,17 +198,22 @@ export function normalizeAutoTrackCall(value: unknown, nativeEvent?: unknown): N
     if (enabledMarker(probe.ignored) || enabledMarker(probe.sensitive)
       || marked(currentData, 'growing-ignore') || marked(targetData, 'growing-ignore')
       || marked(currentData, 'growing-sensitive') || marked(targetData, 'growing-sensitive')
-      || sensitiveTarget(current) || sensitiveTarget(target)) return null
+      || inputType(current, ['file']) || inputType(target, ['file'])) return null
+    const redacted = enabledMarker(probe.redactValue) || passwordTarget(current) || passwordTarget(target)
+    if (redacted && (probe.kind !== 'change' || !['input', 'textarea'].includes(String(probe.elementType)))) return null
     const detail = probe.elementType === 'swiper' ? record(event?.detail) : null
     if (probe.elementType === 'swiper' && detail?.source === 'autoplay' && !marked(targetData, 'growing-track')) return null
-    for (const key of ['textValue', 'index', 'hyperlink', 'ignored', 'trackValue', 'sensitive']) if (!optionalScalar(probe[key])) return null
+    for (const key of ['textValue', 'index', 'hyperlink', 'ignored', 'trackValue', 'sensitive', 'redactValue']) {
+      if (redacted && key === 'textValue') continue
+      if (!optionalScalar(probe[key])) return null
+    }
     if (probe.pickerRangeKey !== undefined && (typeof probe.pickerRangeKey !== 'string' || probe.pickerRangeKey.trim() === '')) return null
     if ((probe.pickerRange !== undefined || probe.pickerRangeKey !== undefined) && !['picker', 'picker-view'].includes(String(probe.elementType))) return null
     if (probe.pickerRange !== undefined && !validRange(probe.pickerRange, probe.elementType === 'picker-view')) return null
     const rawId = primary?.id
     const id = typeof rawId === 'string' || typeof rawId === 'number' ? String(rawId) : ''
     const xpath = `${id}#${probe.eventName}`
-    const title = metadata(dataset, 'title', probe.textValue)
+    const title = redacted ? null : metadata(dataset, 'title', probe.textValue)
     if (!optionalScalar(title)) return null
     if (probe.kind === 'click') {
       const rawIndex = metadata(dataset, 'index', probe.index)
@@ -213,7 +221,7 @@ export function normalizeAutoTrackCall(value: unknown, nativeEvent?: unknown): N
       if (!optionalScalar(rawIndex) || !optionalScalar(link)) return null
       return { kind: 'click', xpath, textValue: text(title), index: index(rawIndex, 1), hyperlink: scalarText(link) }
     }
-    const tracked = enabledMarker(metadata(dataset, 'growing-track', probe.trackValue))
+    const tracked = !redacted && enabledMarker(metadata(dataset, 'growing-track', probe.trackValue))
     const result = tracked ? changeValue(probe.elementType, detail ?? record(event?.detail), target, probe.pickerRange, probe.pickerRangeKey) : null
     return { kind: 'change', xpath, textValue: result ?? (probe.elementType === 'swiper' ? text(title) : null) }
   } catch {

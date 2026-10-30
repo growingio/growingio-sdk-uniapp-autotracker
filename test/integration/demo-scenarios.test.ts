@@ -171,8 +171,8 @@ describe('demo scenarios', () => {
       )).toBe(false)
       expect(dispatchAutoTrack(
         { schemaVersion: 2, source: 'template', kind: 'change', eventName: 'onInputComplete', elementType: 'input', trackValue: true },
-        { currentTarget: { type: 'password', dataset: { title: '密码', growingTrack: true } }, detail: { value: 'must-not-leak' } },
-      )).toBe(false)
+        { currentTarget: { id: 'password', type: 'password', dataset: { title: '密码', growingTrack: true } }, detail: { value: 'must-not-leak' } },
+      )).toBe(true)
       lifecycle.onHide.call({})
 
       const events = received
@@ -198,6 +198,9 @@ describe('demo scenarios', () => {
         sessionId: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
       })
       expect(events.some((event) => Object.values(event).includes('must-not-leak'))).toBe(false)
+      const passwordChange = events.find(event => event.eventType === 'VIEW_CHANGE' && event.xpath === 'password#onInputComplete')
+      expect(passwordChange).toBeDefined()
+      expect(passwordChange).not.toHaveProperty('textValue')
     } finally {
       vi.doUnmock('../../src/constants/platform.js')
       if (originalUni === undefined) delete (globalThis as Record<string, unknown>).uni

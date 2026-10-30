@@ -600,12 +600,15 @@ Vite 插件不得直接构建网络事件，它只调用 runtime 的稳定 schem
 | 属性 | 行为 |
 |---|---|
 | `data-growing-ignore` | 当前元素及其事件绝不采集；优先级最高 |
+| `data-growing-sensitive` | 显式敏感输入整条忽略；即使是密码框也不生成事件 |
 | `data-growing-track` | 允许该元素按配置采集可采集值；不覆盖敏感禁止规则 |
 | `data-title` | 点击/允许的变更事件的展示文本 |
 | `data-index` | 列表序号，仅 `VIEW_CLICK`；只接受大于 0 且小于 2147483647 的规范十进制整数 |
 | `data-src` | 链接地址，仅 `VIEW_CLICK` |
 
-强制忽略：`data-growing-sensitive`，静态 password / safe-password / file input，以及一期无法可靠确认安全类型的动态 `:type`。这些情况拒绝整个 probe，不产生 `VIEW_CHANGE`；即使存在 `data-growing-track` 也不能覆盖。验证码、身份证、银行卡、支付等业务敏感字段应由业务显式添加 `data-growing-sensitive`。敏感值必须在读取、字符串化和记录去重键之前短路；其他允许采集的值仍执行 trim、最大长度（建议 100）、控制字符处理和日志脱敏。
+密码输入沿用 Web 的值保护语义：静态 password / safe-password 与动态 `:password` 保留 `VIEW_CHANGE`，但禁止读取输入值或文案，协议省略 `textValue`；`data-growing-track` 不能覆盖。动态 password 在所有状态下保守禁读值，不重复求值业务绑定。编译探针的内部 `redactValue` 标记与显式 `sensitive` 分开，运行时同时检查 currentTarget / target 的密码类型和 password 属性；该标记不进入协议。
+
+强制忽略：显式 `data-growing-sensitive`、file input，以及一期无法可靠确认安全类型的动态 `:type`。这些情况拒绝整个 probe，不产生 `VIEW_CHANGE`；即使存在 password 或 `data-growing-track` 也不能覆盖。验证码、身份证、银行卡、支付等业务敏感字段应由业务显式添加 `data-growing-sensitive`。敏感值必须在读取、字符串化和记录去重键之前短路；其他允许采集的值仍执行 trim、最大长度（建议 100）、控制字符处理和日志脱敏。
 
 ### 7.6 HarmonyOS 特殊门槛
 
@@ -1067,7 +1070,7 @@ type Capability = {
 - 内联表达式、箭头函数、三元表达式；
 - 修饰符保持源码、不插桩并产生可定位 warning；
 - `v-for` 动态 dataset；
-- input password、safe-password、file 与动态 type 即使带 `data-growing-track` 也不生成事件；
+- input password、safe-password 与动态 password 即使带 track 也只保留无值 `VIEW_CHANGE`；显式 sensitive、file 与动态 type 仍不生成事件；
 - input / textarea / switch / slider / radio / checkbox / picker / picker-view / swiper；
 - 父子嵌套点击、业务 handler throw、异步导航。
 

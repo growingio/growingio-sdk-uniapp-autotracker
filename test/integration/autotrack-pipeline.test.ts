@@ -118,7 +118,7 @@ describe('SFC to mock collector pipeline', () => {
       const items = [{ id:'sku-1', title:'one' }, { id:'sku-2', title:'two' }]; const link = '/docs';
       </script><template><view>
       <template v-for="(item, i) in items" :key="item.id"><button :id="item.id" :data-title="item.title" :data-index="i + 1" @tap="business($event)"/></template>
-      <button @click="business($event)"/><input data-growing-track @blur="business($event)"/><input type="password" data-growing-track @blur="business($event)"/>
+      <button @click="business($event)"/><input data-growing-track @blur="business($event)"/><input id="password" type="password" data-growing-track @blur="business($event)"/>
       <picker :range="options" range-key="label" data-growing-track @change="business($event)"/>
       <picker-view data-growing-track @change="business($event)"><picker-view-column><view v-for="city in cities">{{city}}</view></picker-view-column></picker-view>
       <switch data-growing-track @change="business($event)"/><swiper data-title="banner" @change="business($event)"/>
@@ -131,7 +131,7 @@ describe('SFC to mock collector pipeline', () => {
       fixture.fire(1, 'onTap', { type: 'tap', timeStamp: 101, currentTarget: { id: 'sku-2', dataset: { title: 'two', index: '2' } } })
       fixture.fire(0, 'onClick', { currentTarget: {}, target: { id: 'child' } })
       fixture.fire(0, 'onBlur', { currentTarget: { id: 'input' }, detail: { value: 0 } })
-      fixture.fire(1, 'onBlur', { detail: { value: 'must-not-leak' } })
+      fixture.fire(1, 'onBlur', { currentTarget: { id: 'password', dataset: { growingTrack: true } }, detail: { value: 'must-not-leak' } })
       fixture.fire(0, 'onChange', { currentTarget: { id: 'picker' }, detail: { value: 1 } })
       fixture.fire(1, 'onChange', { currentTarget: { id: 'cities' }, detail: { value: [0] } })
       fixture.fire(2, 'onChange', { currentTarget: { id: 'switch' }, detail: { value: false } })
@@ -142,13 +142,14 @@ describe('SFC to mock collector pipeline', () => {
       // 此完整链路用例验证 App 退后台时立即刷新的行为。
       // 并发、超时和退避等调度边界由受控定时器用例分别验证。
       expect(tracker.onAppHide()).toBe(true)
-      await expect.poll(() => received.filter((event) => event.eventType === 'VIEW_CLICK' || event.eventType === 'VIEW_CHANGE').length).toBe(10)
+      await expect.poll(() => received.filter((event) => event.eventType === 'VIEW_CLICK' || event.eventType === 'VIEW_CHANGE').length).toBe(11)
       const views = received.filter((event) => event.eventType === 'VIEW_CLICK' || event.eventType === 'VIEW_CHANGE')
       expect(views).toEqual(expect.arrayContaining([
         expect.objectContaining({ xpath: 'sku-1#business', textValue: 'live one', index: 1 }),
         expect.objectContaining({ xpath: 'sku-2#business', textValue: 'two', index: 2 }),
         expect.objectContaining({ xpath: '#business' }),
         expect.objectContaining({ xpath: 'input#business', textValue: '0' }),
+        expect.objectContaining({ eventType: 'VIEW_CHANGE', xpath: 'password#business' }),
         expect.objectContaining({ xpath: 'picker#business', textValue: '1' }),
         expect.objectContaining({ xpath: 'cities#business', textValue: '0' }),
         expect.objectContaining({ xpath: 'switch#business', textValue: 'false' }),
@@ -156,6 +157,7 @@ describe('SFC to mock collector pipeline', () => {
         expect.objectContaining({ xpath: '#openURL', hyperlink: '/docs' }),
         expect.objectContaining({ xpath: '#onTabItemTap', index: 1, hyperlink: 'pages/home/index' }),
       ]))
+      expect(views.find(event => event.xpath === 'password#business')).not.toHaveProperty('textValue')
       expect(JSON.stringify(received)).not.toMatch(/must-not-leak|\/view\[|\/input\[|\/tabBar\[/)
       expect(views.every((event) => !('eventName' in event) && !('schemaVersion' in event) && !('source' in event))).toBe(true)
       expect(views.filter((event) => event.eventType === 'VIEW_CHANGE').every((event) => !('index' in event) && !('hyperlink' in event))).toBe(true)

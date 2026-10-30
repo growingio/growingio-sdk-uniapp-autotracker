@@ -141,7 +141,7 @@ App 的 `APP_CLOSED.appState` 继续采用 `BACKGROUND`：事件由 `App.vue` �
 
 ### 3.8 传统 uni-app App 的 `xpath` 口径
 
-传统 uni-app Vue 3 模板无埋点沿用小程序的逻辑元素标识，不生成 DOM 或模板结构 XPath：普通模板事件使用 `${id}#${eventName}`，其中 `id` 来自 `currentTarget || target` 的 `id`，`eventName` 是实际业务 handler 名；缺少 id 时仍保留 `#eventName`。没有业务 click 的 `uni-link` 使用 `#openURL`，tabBar 使用 `#onTabItemTap`。普通模板 `data-index` 只接受大于 0 且小于 2147483647 的整数，tabBar index 单独转为一基。显式敏感标记、password / safe-password / file input 与一期无法确认安全性的动态 input type 会拒绝整个自动采集事件，`data-growing-track` 不能覆盖。`eventName` 仅为 SDK 内部生成 xpath 的输入，不新增为协议字段。详见[传统 uni-app 无埋点方案](./uniapp-autotrack-design.md)。
+传统 uni-app Vue 3 模板无埋点沿用小程序的逻辑元素标识，不生成 DOM 或模板结构 XPath：普通模板事件使用 `${id}#${eventName}`，其中 `id` 来自 `currentTarget || target` 的 `id`，`eventName` 是实际业务 handler 名；缺少 id 时仍保留 `#eventName`。没有业务 click 的 `uni-link` 使用 `#openURL`，tabBar 使用 `#onTabItemTap`。普通模板 `data-index` 只接受大于 0 且小于 2147483647 的整数，tabBar index 单独转为一基。password / safe-password input 与动态 password 绑定保留 `VIEW_CHANGE`，始终禁止读取输入值或文案，协议省略 `textValue`，`data-growing-track` 不能覆盖。显式敏感标记、file input 与一期无法确认安全性的动态 input type 仍拒绝整个自动采集事件，包括同时标记 sensitive 的密码框。`eventName` 仅为 SDK 内部生成 xpath 的输入，不新增为协议字段。详见[传统 uni-app 无埋点方案](./uniapp-autotrack-design.md)。
 
 ---
 

@@ -23,7 +23,7 @@ afterEach(() => { fixtures.splice(0).forEach(fixture => fixture.unmount()); vi.u
 async function settle(): Promise<void> { for (let i = 0; i < 20; i++) await Promise.resolve() }
 
 /** 装配真实 demo 组件与受控宿主，捕获实际协议事件用于场景验收。 */
-async function demo(route: string, initialNetwork = 'wifi') {
+async function demo(route: string, initialNetwork = 'wifi', debug = false) {
   vi.resetModules()
   vi.stubGlobal('__GIO_AUTOTRACK_VERIFICATION__', true)
   vi.stubGlobal('gdp', undefined)
@@ -53,7 +53,7 @@ async function demo(route: string, initialNetwork = 'wifi') {
   let tracker!: TrackerRuntime
   let hooks!: Hooks
   expect(gdp('registerPlugins', [{ name: 'gioEventAutoTracking' }, { name: 'demo-test-readiness', install: instance => { tracker = instance } }])).toBe(true)
-  expect(gdp('init', 'demo-account', 'demo-source', { idMapping: true, uniVue: { mixin: next => { hooks = next as unknown as Hooks } } })).toBe(true)
+  expect(gdp('init', 'demo-account', 'demo-source', { idMapping: true, debug, uniVue: { mixin: next => { hooks = next as unknown as Hooks } } })).toBe(true)
   hooks.onLaunch.call({}, { path: `pages/${route}/${route}` })
   hooks.onShow.call({}, { path: `pages/${route}/${route}` })
   const page = { $mpType: 'page', $page: { route: `pages/${route}/${route}` } }
@@ -292,11 +292,15 @@ describe('实际 demo 页面中的修复场景', () => {
     expect(received.some(event => event.eventType.startsWith('VIEW_'))).toBe(false)
   })
 
-  it('静态 password 与动态 type/password 在所有状态下都保守拦截', async () => {
-    const { fixture, received } = await demo('autotrack')
+  it('密码保留无值 VIEW_CHANGE，显式 sensitive 和动态 type 仍整条忽略', async () => {
+    const logs: string[] = []
+    vi.spyOn(console, 'log').mockImplementation(message => { logs.push(String(message)) })
+    const { fixture, received } = await demo('autotrack', 'wifi', true)
     let reads = 0
     const detail = { get value() { reads++; return 'must-not-read' } }
     fire(fixture, 'password', 'onBlur', detail)
+    fire(fixture, 'sensitive-input', 'onBlur', detail)
+    fire(fixture, 'password-sensitive', 'onBlur', detail)
     for (const enabled of [false, true, false]) {
       fire(fixture, 'dynamic-type-toggle', 'onChange', { value: enabled })
       fire(fixture, 'dynamic-password-toggle', 'onChange', { value: enabled })
@@ -305,7 +309,21 @@ describe('实际 demo 页面中的修复场景', () => {
       fire(fixture, 'dynamic-password-input', 'onBlur', detail)
     }
     expect(reads).toBe(0)
-    expect(received.some(event => event.eventType.startsWith('VIEW_'))).toBe(false)
+    const views = received.filter(event => event.eventType.startsWith('VIEW_'))
+    expect(views.map(event => [event.eventType, event.xpath])).toEqual([
+      ['VIEW_CHANGE', 'password#onInputComplete'],
+      ['VIEW_CHANGE', 'dynamic-password-input#onInputComplete'],
+      ['VIEW_CHANGE', 'dynamic-password-input#onInputComplete'],
+      ['VIEW_CHANGE', 'dynamic-password-input#onInputComplete'],
+    ])
+    expect(views.every(event => !('textValue' in event))).toBe(true)
+    expect((fixture.instance as unknown as { actionCount: number }).actionCount).toBe(15)
+    const debugOutput = logs.join('\n')
+    expect(debugOutput).not.toContain('must-not-read')
+    // App 宿主逐行输出格式化 JSON，按完整批次恢复后核对真正打印的协议事件。
+    const debugEvents = [...debugOutput.matchAll(/\[GrowingIO Debug\]: (\[[\s\S]*?\n\])/g)]
+      .flatMap(match => JSON.parse(match[1] as string) as ProtocolEvent[])
+    expect(debugEvents.filter(event => event.eventType === 'VIEW_CHANGE')).toEqual(views)
   })
 
   it.each([

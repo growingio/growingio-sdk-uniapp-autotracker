@@ -71,11 +71,17 @@ function explicitlyIgnored(element: ElementNode): boolean {
   }
   return value === true || value === '' || value === 'true' || value === 1 || value === '1'
 }
-/** 保守识别密码、文件及动态敏感输入属性，禁止探针读取其内容。 */
+/** 文件和无法确认类型的动态输入继续拒绝整个探针。 */
 function sensitive(element: ElementNode): boolean {
   if (element.tag !== 'input' && element.tag !== 'textarea') return false
-  return hasBound(element, 'type') || hasBound(element, 'password') || element.props.some((prop) => prop.type === NodeTypes.ATTRIBUTE
-    && ((prop.name === 'type' && ['password', 'safe-password', 'file'].includes(prop.value?.content.toLowerCase() ?? ''))
+  return hasBound(element, 'type') || element.props.some((prop) => prop.type === NodeTypes.ATTRIBUTE
+    && prop.name === 'type' && prop.value?.content.toLowerCase() === 'file')
+}
+/** 密码输入保留完成事件；动态 password 也始终禁读值，不重复求值业务绑定。 */
+function password(element: ElementNode): boolean {
+  if (element.tag !== 'input' && element.tag !== 'textarea') return false
+  return hasBound(element, 'password') || element.props.some((prop) => prop.type === NodeTypes.ATTRIBUTE
+    && ((prop.name === 'type' && ['password', 'safe-password'].includes(prop.value?.content.toLowerCase() ?? ''))
       || (prop.name === 'password' && prop.value?.content !== 'false')))
 }
 /** 递归提取确定会显示的 view/text 文字；动态或条件渲染时返回 null。 */
@@ -131,13 +137,15 @@ function pickerColumns(element: ElementNode): { range: string; key: string | nul
 /** 按组件和事件种类生成受限探针字段，不重新求值业务动态绑定。 */
 function probeFields(element: ElementNode, kind: 'click' | 'change', name: string): string {
   const fields = ['schemaVersion:2', 'source:"template"', `kind:${literal(kind)}`, `eventName:${literal(name)}`, `elementType:${literal(element.tag)}`]
+  const excluded = sensitive(element) || (kind === 'click' && password(element))
   const names = { 'data-title': 'textValue', 'data-index': 'index', 'data-src': 'hyperlink', 'data-growing-ignore': 'ignored', 'data-growing-track': 'trackValue', 'data-growing-sensitive': 'sensitive' }
   for (const [prop, field] of Object.entries(names)) {
-    if (field === 'sensitive' && sensitive(element)) continue
+    if (field === 'sensitive' && excluded) continue
     const value = bound(element, prop, field === 'ignored' || field === 'sensitive')
     if (value !== null) fields.push(`${field}:${value}`)
   }
-  if (sensitive(element)) fields.push('sensitive:true')
+  if (excluded) fields.push('sensitive:true')
+  if (kind === 'change' && password(element)) fields.push('redactValue:true')
   if (element.tag === 'uni-link' && bound(element, 'data-src') === null) {
     const href = bound(element, 'href')
     if (href !== null) fields.push(`hyperlink:${href}`)

@@ -54,10 +54,41 @@ describe('schema v2 normalization', () => {
       expect(read).not.toHaveBeenCalled()
     }
   })
-  it.each(['password', 'safe-password', 'file'])('ignores the entire %s event even with track enabled', (type) => {
-    const read = vi.fn()
-    expect(normalizeAutoTrackCall(change, { currentTarget: { type }, get detail() { return read() } })).toBeNull()
+  it.each(['password', 'safe-password'])('keeps the %s change without reading a value even with track enabled', (type) => {
+    const read = vi.fn(() => { throw new Error('password must not be read') })
+    for (const targetName of ['currentTarget', 'target']) {
+      for (const metadata of [{ type }, { attr: { type } }, { type: 'input', attr: { type: type.toUpperCase() } }, { password: true }, { attr: { password: true } }]) {
+        const target = { ...metadata, id: 'password', dataset: { growingTrack: true, get title() { return read() } }, get value() { return read() } }
+        expect(normalizeAutoTrackCall({ ...change, get textValue() { return read() } }, { [targetName]: target, get detail() { return read() } }))
+          .toStrictEqual({ kind: 'change', xpath: 'password#submitOrder', textValue: null })
+      }
+    }
     expect(read).not.toHaveBeenCalled()
+  })
+  it.each([true, '', 'true', 1, '1'])('compiler password redaction %s cannot be overridden by native track or title', (redactValue) => {
+    const read = vi.fn(() => { throw new Error('password must not be read') })
+    expect(normalizeAutoTrackCall({ ...change, redactValue, get textValue() { return read() } }, {
+      currentTarget: { id: 'password', dataset: { growingTrack: true, get title() { return read() } } }, get detail() { return read() },
+    })).toStrictEqual({ kind: 'change', xpath: 'password#submitOrder', textValue: null })
+    expect(read).not.toHaveBeenCalled()
+    expect(normalizeAutoTrackCall({ ...change, redactValue, sensitive: true }, {})).toBeNull()
+    expect(normalizeAutoTrackCall({ ...change, redactValue }, { target: { dataset: { growingSensitive: true } } })).toBeNull()
+  })
+  it('still ignores file input events even with track enabled', () => {
+    const read = vi.fn()
+    expect(normalizeAutoTrackCall(change, { currentTarget: { type: 'file' }, get detail() { return read() } })).toBeNull()
+    expect(read).not.toHaveBeenCalled()
+  })
+  it('redacts a password target behind an ordinary currentTarget without using its value or title', () => {
+    const read = vi.fn(() => { throw new Error('password must not be read') })
+    expect(normalizeAutoTrackCall(change, {
+      currentTarget: { id: 'wrapper', type: 'input', dataset: { growingTrack: true, title: 'not a password value' } },
+      target: { attr: { type: 'password', get value() { return read() } } }, get detail() { return read() },
+    })).toStrictEqual({ kind: 'change', xpath: 'wrapper#submitOrder', textValue: null })
+    expect(read).not.toHaveBeenCalled()
+    expect(normalizeAutoTrackCall({ ...change, kind: 'click' }, { target: { type: 'password' } })).toBeNull()
+    expect(normalizeAutoTrackCall({ ...change, elementType: 'slider', redactValue: true }, {})).toBeNull()
+    expect(normalizeAutoTrackCall({ ...change, redactValue: {} }, {})).toBeNull()
   })
   it('rejects static sensitivity before reading probe metadata and isolates throwing host accessors', () => {
     for (const marker of ['ignored', 'sensitive']) for (const value of [true, '', 'true', 1, '1']) {
@@ -70,7 +101,7 @@ describe('schema v2 normalization', () => {
   })
   it.each([false, 0, '0', 'false', null, undefined])('does not enable privacy or input consent for false marker %s', (marker) => {
     const read = vi.fn(() => ({ value: 'secret' }))
-    expect(normalizeAutoTrackCall({ ...change, ignored: marker, sensitive: marker, trackValue: marker }, { get detail() { return read() } }))
+    expect(normalizeAutoTrackCall({ ...change, ignored: marker, sensitive: marker, trackValue: marker, redactValue: marker }, { get detail() { return read() } }))
       .toStrictEqual({ kind: 'change', xpath: '#submitOrder', textValue: null })
     expect(read).not.toHaveBeenCalled()
   })

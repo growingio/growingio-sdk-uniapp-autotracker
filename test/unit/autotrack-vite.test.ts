@@ -253,8 +253,28 @@ describe('schema v2 Vue instrumentation', () => {
     const unsupported = transformAutoTrackTemplate(`<${tag} @blur.stop="blur($event)" @change="change($event)"/>`)
     expect(unsupported.changed).toBe(false)
   })
-  it('passes dynamic and static privacy markers and conservatively marks bound type and password inputs', () => {
-    for (const attr of ['type="password"', 'type="safe-password"', 'type="file"', ':type="type"', 'password', ':password="password"']) {
+  it.each(['type="password"', 'type="safe-password"', 'password', 'password="true"', ':password="true"', ':password="false"'])('retains a compiled password change without reading values: %s', (attr) => {
+    const business = vi.fn(event => event)
+    const read = vi.fn(() => { throw new Error('password must not be read') })
+    const dispatch = vi.fn((probe, event) => normalizeAutoTrackCall(probe, event))
+    const fixture = mountAutoTrackSfc(`<script setup>import { business } from 'fixture'</script><template><input id="password" ${attr} data-growing-track data-title="never a password value" @blur="business($event)"/></template>`, dispatch, { fixture: { business } })
+    try {
+      const event = { currentTarget: { id: 'password', dataset: { growingTrack: true } }, get detail() { return read() } }
+      expect(fixture.fire(0, 'onBlur', event)).toBe(event)
+      expect(dispatch.mock.results[0]?.value).toStrictEqual({ kind: 'change', xpath: 'password#business', textValue: null })
+      expect(read).not.toHaveBeenCalled()
+      expect(business).toHaveBeenCalledTimes(1)
+      expect(business.mock.calls[0]?.[0]).toBe(event)
+    } finally { fixture.unmount() }
+  })
+  it('keeps explicit sensitivity on password inputs and file/dynamic-type exclusions', () => {
+    const dispatch = vi.fn((probe, event) => normalizeAutoTrackCall(probe, event))
+    const fixture = mountAutoTrackSfc(source('<input password data-growing-sensitive data-growing-track @blur="save($event)"/>'), dispatch)
+    try {
+      fixture.fire(0, 'onBlur', { detail: { value: 'must-not-leak' } })
+      expect(dispatch.mock.results[0]?.value).toBeNull()
+    } finally { fixture.unmount() }
+    for (const attr of ['type="file"', ':type="type"']) {
       expect(handlers(transformAutoTrackTemplate(`<input ${attr} data-growing-track @blur="save($event)"/>`).code)[0]).toContain('sensitive:true')
     }
     expect(handlers(transformAutoTrackTemplate('<button data-growing-ignore="false" :data-growing-sensitive="privateValue" @click="save($event)"/>').code)[0]).toContain('ignored:"false"')

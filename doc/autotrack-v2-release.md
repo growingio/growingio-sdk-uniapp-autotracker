@@ -6,7 +6,7 @@
 
 - 普通模板 `VIEW_CLICK/VIEW_CHANGE.xpath` 在运行时生成 `id#eventName`。严格选择 `currentTarget || target`；主目标没有 id 时生成 `#eventName`，不会借用子节点 id。
 - Vite 用 Vue SFC/template AST 与 Babel 事件表达式 AST 插桩。可安全分析的显式调用、同步函数与显式调用条件分支可插桩；函数引用、返回函数的条件表达式和复杂组件选项保持原样。普通 `setup()` 保持原实现，通过静态 methods 别名暴露 dispatcher，不复制组件。
-- 双目标 ignore/sensitive、密码、安全密码、文件和动态 type 输入会拒绝整条自动事件。非敏感 change 仅在 track 放行后读取值；swiper 保留 autoplay 与 title 专属规则。
+- 双目标 ignore/sensitive、文件和动态 type 输入会拒绝整条自动事件。密码、安全密码及动态 password 保留 `VIEW_CHANGE`，但始终不读取、不上报 `textValue`，track 不能覆盖；显式 sensitive 的密码框仍整条忽略。非敏感 change 仅在 track 放行后读取值；swiper 保留 autoplay 与 title 专属规则。
 - change 按组件处理 input、textarea、switch、slider、radio-group、checkbox-group、picker、picker-view、swiper；保留 `0`、`false` 和空值事件。picker 优先使用 range 文案，无法映射时使用规范下标。
 - input / textarea 输入完成按 `blur → confirm → change` 选择一个已声明的监听器，避免 App 不转发原生 change 时漏采；原业务回调保留，上报仍为 `VIEW_CHANGE`。仅声明 change 的输入框应改用 blur / confirm。
 - 同一事件对象去重，加上每 tracker/当前页面的有限正数时间戳窄窗去重；零时间戳不参与窄窗判断。父子不同标识、不同类型和值不会合并。
@@ -42,7 +42,8 @@
 | Options / `<script setup>` / `setup()` 别名按钮 | 分别使用模板可见 handler 名；页面计数每次只增加 1 |
 | 昵称失焦 / 备注完成 | `nickname#onInputComplete` / `note#onInputComplete`；备注仅 blur 插桩 |
 | 未放行的普通输入 | 生成 `VIEW_CHANGE`，但不包含 `textValue` |
-| 密码、sensitive、currentTarget/target ignore | 无自动事件，业务 handler 保留，输入原文不进入日志 |
+| 密码 / 安全密码 / 动态 password | 生成不含 `textValue` 的 `VIEW_CHANGE`，即使带 track 也不读取密码值；业务 handler 保留 |
+| sensitive、currentTarget/target ignore | 无自动事件，包括显式 sensitive 的密码框；业务 handler 保留，输入原文不进入日志 |
 | 开关关闭 / 滑块归零 | textValue 分别为 `"false"` / `"0"` |
 | 单选 / 多选 | 对应标量值 / `||` 拼接的标量数组 |
 | 城市选择 / 多列选择 | 动态 range 回退下标，多列用 `||` 拼接；字面量 range 可采集文案 |
