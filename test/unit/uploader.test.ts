@@ -491,15 +491,43 @@ describe('Uploader', () => {
       expect(queue.snapshot()).toEqual([])
     })
 
-    it.each([400, 413])('HTTP %s 仍按不可重试删除对应批次', (status) => {
+    it('HTTP 413 与原生 Android 一致删除对应批次，不进入退避', () => {
       const queue = new EventQueue()
       queue.enqueue(event(1))
       const { uploader, clocks, callbacks, drops } = retaining(queue)
       uploader.flush()
-      callbacks[0]!({ kind: 'http', status })
+      callbacks[0]!({ kind: 'http', status: 413 })
       expect(drops).toMatchObject([{ reason: 'non_retryable' }])
       expect(queue.snapshot()).toEqual([])
-      expect(clocks.scheduledDelays()).toEqual([])
+      expect(clocks.scheduledDelays()).not.toContain(800)
+    })
+
+    it.each<TransportResult>([
+      { kind: 'http', status: 400 }, { kind: 'http', status: 401 }, { kind: 'http', status: 404 },
+      { kind: 'http', status: 415 }, { kind: 'http', status: 429 }, { kind: 'http', status: 302 }, { kind: 'aborted' },
+    ])('其他非成功结果 %o 保留事件并退避后重发', (result) => {
+      const queue = new EventQueue()
+      queue.enqueue(event(1))
+      const { uploader, clocks, sent, callbacks, drops } = retaining(queue)
+      uploader.flush()
+      callbacks[0]!(result)
+      expect(drops).toEqual([])
+      expect(queue.snapshot()).toHaveLength(1)
+      expect(clocks.scheduledDelays()).toEqual([800])
+      clocks.fireDelay(800)
+      callbacks[1]!({ kind: 'success', status: 200 })
+      expect(sent).toEqual([[1], [1]])
+      expect(queue.snapshot()).toEqual([])
+    })
+
+    it('宿主缺少请求能力时无法发送，按不可重试丢弃', () => {
+      const queue = new EventQueue()
+      queue.enqueue(event(1))
+      const { uploader, callbacks, drops } = retaining(queue)
+      uploader.flush()
+      callbacks[0]!({ kind: 'unsupported' })
+      expect(drops).toMatchObject([{ reason: 'non_retryable' }])
+      expect(queue.snapshot()).toEqual([])
     })
 
     it('退避跨过 7 天有效期后只补发未到期事件', () => {

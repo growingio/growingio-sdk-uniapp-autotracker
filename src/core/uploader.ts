@@ -47,6 +47,12 @@ export function isRetryableCollectorFailure(result: TransportResult): boolean {
   return result.kind === 'network' || result.kind === 'timeout' || (result.kind === 'http' && result.status >= 500)
 }
 
+/** App 与原生 Android 对齐：仅 413（批次过大，重发必然失败）删除批次；其余服务端响应、网络、超时和中止均保留重试。宿主缺少请求能力时无法发送，按原策略丢弃。 */
+export function isRetainedAppFailure(result: TransportResult): boolean {
+  if (result.kind === 'http') return result.status !== 413
+  return result.kind === 'network' || result.kind === 'timeout' || result.kind === 'aborted'
+}
+
 export interface TimerPort {
   /** 安排 SDK 自有的超时或延迟重试，返回可取消的句柄。 */
   setTimeout(callback: () => void, delayMs: number): unknown
@@ -106,7 +112,7 @@ const RETRY_DELAYS_MS = [800, 1_600] as const
 /** App 保留可恢复失败时的退避上限，避免服务端故障期间高频请求。 */
 export const MAX_RETRY_BACKOFF_MS = 60_000
 
-/** bounded：有限重试后丢弃（小程序内存队列）；retain：可恢复失败保留并退避，直至成功、不可重试或过期（App 持久队列）。 */
+/** bounded：有限重试后丢弃（小程序内存队列）；retain：除 413 外的失败均保留并退避，直至成功或过期（App 持久队列）。 */
 export type RetryPolicy = 'bounded' | 'retain'
 
 export interface UploaderRuntime extends TimerPort {
@@ -289,7 +295,7 @@ export class Uploader {
       } else if ((result.kind === 'network' || result.kind === 'timeout') && !this.canDispatch()) {
         // 飞行中遇到明确断网也保留事件；恢复网络后继续，不额外消耗重试额度。
         this.readyRetries.push({ batch, attempt })
-      } else if (isRetryableCollectorFailure(result) && this.retryPolicy === 'retain') {
+      } else if (this.retryPolicy === 'retain' && isRetainedAppFailure(result)) {
         // 事件留在持久队列中，退避结束后与其他待发事件一起按顺序重新领取，不消耗重试额度。
         this.releaseReserved(requestIds)
         this.queue.release(requestIds)

@@ -418,7 +418,7 @@ export class LocalTrackerRuntime {
       () => !this.awaitingIdentify && this.dependencies.network?.isConnected() !== false,
       config.miniprogram?.uploadIntervalMs ?? 0,
       () => { if (config.miniprogram === undefined) refreshNetwork(true) },
-      // App 队列持久化且有 7 天有效期，可恢复失败保留到发送成功；小程序内存队列维持有限重试。
+      // App 队列持久化且有 7 天有效期，除 413 外的发送失败均保留到成功；小程序内存队列维持有限重试。
       config.miniprogram === undefined ? 'retain' : 'bounded',
     )
     const appWithFlush = new AppLifecycle({

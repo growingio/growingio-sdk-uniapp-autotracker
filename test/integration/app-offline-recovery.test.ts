@@ -168,9 +168,9 @@ describe.each(['android', 'ios', 'harmonyos'])('%s App 自动补发', platform =
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  it('服务端持续 5xx 时不丢弃事件，重启后服务恢复仍能补发', async () => {
+  it.each([503, 400])('服务端持续返回 %s 时不丢弃事件，重启后服务恢复仍能补发', async (status) => {
     const f = app(platform, 'normal', 'wifi')
-    f.setStatus(503)
+    f.setStatus(status)
     f.tracker.init({ accountId: 'account', dataSourceId: 'source' })
     await f.tracker.whenReady()
     f.tracker.onAppShow({ path: 'pages/home', query: '' })
@@ -191,6 +191,21 @@ describe.each(['android', 'ios', 'harmonyos'])('%s App 自动补发', platform =
     await vi.advanceTimersByTimeAsync(0)
     expect(restarted.received).toEqual(cached)
     expect(restarted.tracker.queuedEvents()).toEqual([])
+  })
+
+  it('413 与原生 Android 一致删除对应批次，后续事件照常发送', async () => {
+    const f = app(platform, 'normal', 'wifi')
+    f.setStatus(413)
+    f.tracker.init({ accountId: 'account', dataSourceId: 'source' })
+    await f.tracker.whenReady()
+    f.tracker.onAppShow({ path: 'pages/home', query: '' })
+    f.tracker.track('oversized_batch')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(f.tracker.queuedEvents()).toEqual([])
+    f.setStatus(204)
+    f.tracker.track('after_413')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(f.received.map(event => event.eventName)).toEqual(['after_413'])
   })
 
   it('前台只保留一个恢复检查，切后台停止检查，回前台自动补发', async () => {
