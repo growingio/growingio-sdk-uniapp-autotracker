@@ -296,7 +296,41 @@ describe('schema v2 Vue instrumentation', () => {
   it('passes picker range and derives fixed picker-view column ranges', () => {
     const values = handlers(transformAutoTrackTemplate(`<picker :range="['A','B']" range-key="name" @change="save($event)"/><picker-view @change="save($event)"><picker-view-column><view v-for="item in first">{{item}}</view></picker-view-column><picker-view-column><view>A</view><view>B</view></picker-view-column></picker-view> `).code)
     expect(values[0]).toContain("pickerRange:(['A','B']),pickerRangeKey:\"name\"")
-    expect(values[1]).not.toContain('pickerRange:')
+    expect(values[1]).toContain('pickerRange:()=>([(first),["A","B"]])')
+  })
+  it.each([
+    ['<picker :range="cityOptions()" @change="save($event)"/>', false],
+    ['<picker :range="lists[type]" @change="save($event)"/>', false],
+    ['<picker :range="state?.cities" @change="save($event)"/>', false],
+    ['<picker :range="state.cities" :range-key="labelKey" @change="save($event)"/>', true],
+    ['<picker-view @change="save($event)"><picker-view-column><view v-for="item in loadRegions()">{{item}}</view></picker-view-column></picker-view>', false],
+  ])('passes only member-path picker ranges as lazy reads: %s', (template, lazy) => {
+    const value = handlers(transformAutoTrackTemplate(template).code)[0]!
+    expect(value.includes('pickerRange:()=>')).toBe(lazy)
+    if (lazy) expect(value).toContain('pickerRangeKey:()=>(labelKey)')
+  })
+  it('reads a dynamic picker range lazily at event time and falls back to indices when it cannot', async () => {
+    const reads = vi.fn()
+    const dispatch = vi.fn((probe, event) => normalizeAutoTrackCall(probe, event))
+    const fixture = mountAutoTrackSfc(`<script setup>
+      import { reactive } from 'vue'; import { reads } from 'fixture'
+      const state = reactive({ cities: [{ name: '杭州' }, { name: '上海' }], nested: [{ name: 'A', children: [{}] }], track: true })
+      const save = event => event; const ranges = { get cities() { reads(); return state.cities } }
+      defineExpose({ state })
+      </script><template><picker data-growing-track :range="ranges.cities" range-key="name" @change="save($event)"/><picker data-growing-ignore :range="ranges.cities" range-key="name" @change="save($event)"/><picker data-growing-track :range="state.nested" range-key="name" @change="save($event)"/></template>`, dispatch, { fixture: { reads } })
+    try {
+      // 渲染本身会读取 :range 绑定，只统计事件时的读取。
+      reads.mockClear()
+      fixture.fire(1, 'onChange', { detail: { value: 1 } })
+      expect(reads).not.toHaveBeenCalled()
+      ;(fixture.instance as unknown as { state: { cities: { name: string }[] } }).state.cities.push({ name: '北京' })
+      await nextTick()
+      reads.mockClear()
+      fixture.fire(0, 'onChange', { detail: { value: 2 } })
+      expect(reads).toHaveBeenCalledOnce()
+      fixture.fire(2, 'onChange', { detail: { value: 0 } })
+      expect(dispatch.mock.results.map(result => result.value?.textValue ?? null)).toEqual([null, '北京', '0'])
+    } finally { fixture.unmount() }
   })
   it('keeps quote and entity contents intact in generated attributes', () => {
     const dispatch = vi.fn()

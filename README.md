@@ -98,7 +98,7 @@ export default defineConfig(async () => {
 
 对明确不需要自动采集的监听，可声明静态启用的 `data-growing-ignore`：编译器保留原监听，不再报告采集边界告警。false / 0、动态 ignore 或可能被 `v-bind` 覆盖的标记仍保留诊断；模板语法错误和缺失 handler 也仍会报告。此规则不扩大支持的事件或表达式范围。
 
-动态绑定只由原模板求值，SDK 不在事件时重新求值 getter、range 或其他绑定。动态 `data-*` 依赖宿主原生 dataset；picker 的动态 range 无法安全取文案时使用下标，动态链接可由业务明确提供 `data-src`。静态字面量仅在不会被展开绑定、动态属性名或绑定修饰符覆盖时作为授权/文案补充；静态 ignore/sensitive 仍保守拒绝采集。picker-view 的条件渲染或动态文案也使用下标回退。
+动态绑定由原模板求值，SDK 不在事件时重新求值 getter 或其他绑定；唯一例外是 picker 的 `:range` / `:range-key` 与 picker-view 列的 `v-for` 数据源：写成普通成员路径（如 `cities`、`state.cities`）时，只在通过隐私与 track 授权检查后于事件时读取一次，用于取选中项文案。含调用、计算键或可选访问的 range、读取失败或超出范围预算时使用下标。动态 `data-*` 依赖宿主原生 dataset；动态链接可由业务明确提供 `data-src`。静态字面量仅在不会被展开绑定、动态属性名或绑定修饰符覆盖时作为授权/文案补充；静态 ignore/sensitive 仍保守拒绝采集。picker-view 的条件渲染或动态文案也使用下标回退。
 
 编译侧 Vue 解析器固定为 `3.4.21`，随 Vite 工具打包，与 App 运行时隔离。SDK 上报版本固定取包版本，不能由 `init` 参数覆盖。
 

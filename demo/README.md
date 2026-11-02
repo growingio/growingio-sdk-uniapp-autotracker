@@ -52,7 +52,7 @@ pnpm demo:check
 
 无埋点页按真机验收顺序分为六组，包含有/无 id 的 click 与 tap、严格主目标、动态 id/metadata、无 id 列表、`v-if` / `v-show`、条件 handler、Options API、`<script setup>`、普通 `setup()` 返回别名、input/textarea 完成事件、所有已支持 change 组件、`uni-link` 与 tabBar。页面会显示业务 handler 执行次数和每项预期 xpath，便于同时确认业务没有被重复调用。此 demo 的 vite.config.ts 显式设置 `__GIO_AUTOTRACK_VERIFICATION__: true`，用于开放三端待验收的无埋点链路；它不会把生产能力表标为已验收，正式应用不要复制。密码框保留不含 `textValue` 的 `VIEW_CHANGE`，即使带 track 也不读取密码值；显式 sensitive、currentTarget/target 任一 ignore 和未放行的 autoplay 不生成自动事件。生产开放必须以逐端真机请求和 collector 接收证据为准。
 
-条件返回函数等不安全写法不会插桩，编译器会给出告警。第 2 组的函数引用在 App 构建插桩，小程序构建保持原样并输出 `complex_handler`；计算成员调用固定输出一条 `event_name_fallback`，这是本页唯一预期的 App 构建提示。列表动态元数据从原生 dataset 获取；动态 picker range 回退下标，不能再按显示文案验收。
+条件返回函数等不安全写法不会插桩，编译器会给出告警。第 2 组的函数引用在 App 构建插桩，小程序构建保持原样并输出 `complex_handler`；计算成员调用固定输出一条 `event_name_fallback`，这是本页唯一预期的 App 构建提示。列表动态元数据从原生 dataset 获取；成员路径形式的动态 picker range 按选中项文案验收，含函数调用的 range 才回退下标。
 
 无埋点覆盖补齐后的操作矩阵：
 
@@ -66,7 +66,7 @@ pnpm demo:check
 | 冒泡 | 第 1 组点击父层中的子按钮 | 父子不同 xpath 各保留一次，业务总计数增加 2 |
 | 去重与切页 | 连续独立点击重复按钮，去路由页后通过导航返回再点 | 独立操作保留，页面返回后不被此前的去重记录误吞 |
 | 动态列表 | 第 2 组重排、保留 key 修改首项、增删、重置后点商品 | xpath / title / index / hyperlink 都取当前值；复用节点也不串旧数据 |
-| picker 文案 | 第 5 组字面量城市、对象 range、固定列 | 采集真实选中文案，与原动态 range 下标回退形成对照 |
+| picker 文案 | 第 5 组字面量城市、对象 range（`:range="cities"`）、两列 picker-view、固定列 | 均采集真实选中文案，如 上海、江苏\|\|上午 |
 | swiper 正反分支 | 对照两组 swiper，开启 / 关闭自动轮播并手动滑动 | 未放行 autoplay 拦截；原始 target 放行的 autoplay 采集当前下标，保留 0 |
 | 文本边界 | 第 4 组填长文本 / 特殊字符 / 清空，再聚焦并失焦；取消全部多选 | 填充按钮不伪造完成事件；长文本截到 100 字符，控制字符归为空格；空值事件保留但省略 textValue |
 | 采集关闭与恢复 | 采集开关页暂停后点击 / 输入，恢复后重复 | 业务计数始终增加；关闭无 VIEW；恢复后 VIEW 使用新 sessionId 和当前页 path |

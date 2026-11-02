@@ -132,6 +132,22 @@ function pickerLabel(range: unknown, at: number, key: unknown): string | null {
   const object = record(value.value)
   return text(typeof key === 'string' && object !== null ? ownValue(object, key) : value.value)
 }
+/** 编译器把成员路径 range 包装为延迟读取；仅在已授权采集时读取一次，读取失败或不是有界纯数据时回退下标。 */
+function dynamicRange(value: unknown, columns: boolean): unknown {
+  if (typeof value !== 'function') return value
+  try {
+    const range: unknown = value()
+    return validRange(range, columns) ? range : undefined
+  } catch { return undefined }
+}
+/** 延迟读取动态 range-key，非空字符串之外均视为无键。 */
+function dynamicRangeKey(value: unknown): unknown {
+  if (typeof value !== 'function') return value
+  try {
+    const key: unknown = value()
+    return typeof key === 'string' && key.trim() !== '' ? key : undefined
+  } catch { return undefined }
+}
 /** 校验并以约定分隔符拼接多选值，再应用文案长度限制。 */
 function scalarArray(value: unknown): string | null {
   const values = arrayValues(value, MAX_RANGE_ITEMS)
@@ -207,9 +223,9 @@ export function normalizeAutoTrackCall(value: unknown, nativeEvent?: unknown): N
       if (redacted && key === 'textValue') continue
       if (!optionalScalar(probe[key])) return null
     }
-    if (probe.pickerRangeKey !== undefined && (typeof probe.pickerRangeKey !== 'string' || probe.pickerRangeKey.trim() === '')) return null
+    if (probe.pickerRangeKey !== undefined && typeof probe.pickerRangeKey !== 'function' && (typeof probe.pickerRangeKey !== 'string' || probe.pickerRangeKey.trim() === '')) return null
     if ((probe.pickerRange !== undefined || probe.pickerRangeKey !== undefined) && !['picker', 'picker-view'].includes(String(probe.elementType))) return null
-    if (probe.pickerRange !== undefined && !validRange(probe.pickerRange, probe.elementType === 'picker-view')) return null
+    if (probe.pickerRange !== undefined && typeof probe.pickerRange !== 'function' && !validRange(probe.pickerRange, probe.elementType === 'picker-view')) return null
     const rawId = primary?.id
     const id = typeof rawId === 'string' || typeof rawId === 'number' ? String(rawId) : ''
     const xpath = `${id}#${probe.eventName}`
@@ -222,7 +238,8 @@ export function normalizeAutoTrackCall(value: unknown, nativeEvent?: unknown): N
       return { kind: 'click', xpath, textValue: text(title), index: index(rawIndex, 1), hyperlink: scalarText(link) }
     }
     const tracked = !redacted && enabledMarker(metadata(dataset, 'growing-track', probe.trackValue))
-    const result = tracked ? changeValue(probe.elementType, detail ?? record(event?.detail), target, probe.pickerRange, probe.pickerRangeKey) : null
+    const result = tracked ? changeValue(probe.elementType, detail ?? record(event?.detail), target,
+      dynamicRange(probe.pickerRange, probe.elementType === 'picker-view'), dynamicRangeKey(probe.pickerRangeKey)) : null
     return { kind: 'change', xpath, textValue: result ?? (probe.elementType === 'swiper' ? text(title) : null) }
   } catch {
     return null

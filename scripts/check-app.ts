@@ -34,7 +34,7 @@ try {
     await writeFile(join(project, 'index.html'), '<div id="app"></div><script type="module" src="/main.js"></script>')
     await mkdir(join(project, 'pages/home'), { recursive: true })
     await writeFile(join(project, 'pages.json'), JSON.stringify({ pages: [{ path: 'pages/home/index' }] }))
-    await writeFile(join(project, 'pages/home/index.vue'), `<script setup lang="ts">import gdp from ${JSON.stringify(entry)};const save=()=>gdp('track','app_compile');const open=()=>gdp('track','app_reference');</script><template><view><button id="save" @tap="save($event)">Save</button><button id="open" @tap.stop="open">Open</button></view></template>`)
+    await writeFile(join(project, 'pages/home/index.vue'), `<script setup lang="ts">import gdp from ${JSON.stringify(entry)};const save=()=>gdp('track','app_compile');const open=()=>gdp('track','app_reference');const cities=[{name:'A'},{name:'B'}];</script><template><view><button id="save" @tap="save($event)">Save</button><button id="open" @tap.stop="open">Open</button><picker id="city" :range="cities" range-key="name" data-growing-track @change="save($event)">City</picker></view></template>`)
     await writeFile(join(project, 'vite.config.mjs'), `import uni from '@dcloudio/vite-plugin-uni';import {gioUniappAutoTrack} from ${JSON.stringify(vite)};export default {plugins:[gioUniappAutoTrack(),(uni.default??uni)()]}`)
     for (const runtime of ['app', 'unimp']) {
       await writeFile(join(project, 'main.js'), `import {createSSRApp} from 'vue';import App from './App.vue';import gdp from ${JSON.stringify(entry)};export function createApp(){const app=createSSRApp(App);gdp('registerPlugins',[{name:'gioEventAutoTracking'},${runtime === 'unimp' ? "{name:'gioHybridAdapter',options:{transport:'native-module'}}" : "{name:'gioNativeIdentifiers',options:{fields:['oaid','idfa']}}"}]);gdp('init','account','source',{uniVue:app,${runtime === 'unimp' ? "runtime:'unimp',appId:'guest'" : 'forceLogin:true'}});return {app}}`)
@@ -51,6 +51,7 @@ try {
       const service = await readFile(join(output, 'app-service.js'), 'utf8')
       assert.match(service, /schemaVersion:\s*2,\s*source:\s*["']template["']/, 'App 页面必须包含已交付编译插件的模板探针')
       assert.match(service, /eventName:\s*["']open["']/, 'App 构建必须插桩带修饰符的函数引用')
+      assert.match(service, /pickerRange:\s*\(\)\s*=>/, 'App 构建必须保留动态 picker range 的延迟读取')
       assert.equal(JSON.parse(await readFile(join(output, 'manifest.json'), 'utf8')).id, '__UNI__SDK_FIXTURE', '必须生成 App manifest')
       assert.ok(service.includes(runtime === 'unimp' ? 'GrowingIOUniMPBridge' : 'GrowingIOUniAppEnhance'))
       results.push({ channel, runtime, compilerVersion })

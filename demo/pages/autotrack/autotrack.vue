@@ -175,14 +175,14 @@
 
       <text class="case-title">picker 对象 range</text>
       <picker id="city" :range="cities" range-key="name" :value="city" data-growing-track @change="onCityChange($event)"><view class="tap-card">当前城市：{{ cities[city].name }}</view></picker>
-      <text class="expected">预期：city#onCityChange，动态 range 使用所选下标</text>
+      <text class="expected">预期：city#onCityChange，textValue 为所选城市名（动态 range 按 range-key 取文案）</text>
 
       <text class="case-title">picker-view 两列</text>
       <picker-view id="columns" class="picker-columns" :value="columns" data-growing-track @change="onColumnsChange($event)">
         <picker-view-column><view v-for="item in regions" :key="item">{{ item }}</view></picker-view-column>
         <picker-view-column><view v-for="item in periods" :key="item">{{ item }}</view></picker-view-column>
       </picker-view>
-      <text class="expected">预期：columns#onColumnsChange，各列所选下标以 || 拼接</text>
+      <text class="expected">预期：columns#onColumnsChange，各列所选文案以 || 拼接，如 江苏||上午</text>
       <text class="case-title">字面量 range / 固定列的文案映射</text>
       <picker id="picker-literal-string" :range="['杭州', '上海']" :value="literalCity" data-growing-track @change="onLiteralCityChange($event)"><view class="tap-card">字面量城市下标：{{ literalCity }}</view></picker>
       <picker id="picker-literal-object" :range="[{ name: '方案甲' }, { name: '方案乙' }]" range-key="name" :value="literalPlan" data-growing-track @change="onLiteralPlanChange($event)"><view class="tap-card">字面量对象下标：{{ literalPlan }}</view></picker>

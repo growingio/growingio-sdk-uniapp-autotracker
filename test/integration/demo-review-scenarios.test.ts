@@ -363,14 +363,14 @@ describe('实际 demo 页面中的修复场景', () => {
     ])
   })
 
-  it('picker 字面量文案与动态下标回退都经过真实页面到协议', async () => {
+  it('picker 字面量与动态 range 都采集选中文案并经过真实页面到协议', async () => {
     const { fixture, received } = await demo('autotrack')
     fire(fixture, 'picker-literal-string', 'onChange', { value: '1' })
     fire(fixture, 'picker-literal-object', 'onChange', { value: '1' })
     fire(fixture, 'picker-static-columns', 'onChange', { value: [1, 1] })
     fire(fixture, 'city', 'onChange', { value: '1' })
     fire(fixture, 'columns', 'onChange', { value: [1, 0] })
-    expect(received.filter(event => event.eventType === 'VIEW_CHANGE').map(event => event.textValue)).toEqual(['上海', '方案乙', '华南||下午', '1', '1||0'])
+    expect(received.filter(event => event.eventType === 'VIEW_CHANGE').map(event => event.textValue)).toEqual(['上海', '方案乙', '华南||下午', '上海', '江苏||上午'])
   })
 
   it('swiper 的文案回退、自动播放拦截及 track 放行下标都可验证', async () => {

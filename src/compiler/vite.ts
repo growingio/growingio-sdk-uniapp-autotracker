@@ -2,7 +2,7 @@ import { NodeTypes, parse, type ElementNode, type TemplateChildNode } from '@vue
 import { parse as parseSfc } from '@vue/compiler-sfc'
 import { parse as parseScript } from '@babel/parser'
 import { CHANGE_ELEMENTS, TEMPLATE_ELEMENTS } from '../plugins/gioEventAutoTracking/contract.js'
-import { containsProbe, expression, metadataExpression, node, rewriteHandler, walk } from './handler.js'
+import { containsProbe, expression, memberPath, metadataExpression, node, rewriteHandler, walk } from './handler.js'
 
 export type AutoTrackTransformWarning = Readonly<{
   code: 'sfc_parse_error' | 'template_parse_error' | 'dynamic_event' | 'missing_handler' | 'custom_component' | 'unsupported_event' | 'complex_handler' | 'complex_component_options' | 'event_name_fallback' | '.nvue_not_instrumented'
@@ -36,8 +36,12 @@ function apply(source: string, replacements: Replacement[]): string {
   chunks.push(source.slice(0, end))
   return chunks.reverse().join('')
 }
-/** 只提取可安全复制的静态绑定；可能被覆盖的授权和元数据不作回填。 */
-function bound(element: ElementNode, name: string, preserveExclusion = false): string | null {
+/** 普通成员路径（如 `cities`、`state.cities`）可在事件时只读取一次；含调用、计算键或可选访问的表达式不读取。 */
+function lazyReference(source: string): string | null {
+  return memberPath(expression(source)) === null ? null : `()=>(${source})`
+}
+/** 只提取可安全复制的静态绑定；可能被覆盖的授权和元数据不作回填。reference 时把成员路径绑定转为延迟读取。 */
+function bound(element: ElementNode, name: string, preserveExclusion = false, reference = false): string | null {
   // 展开绑定或动态属性名可能在渲染时移除或替换字面量绑定。
   // 旧值不能回填为采集授权或已经失效的事件元数据。
   // 静态启用的 ignore 和 sensitive 标记仍按保守拒绝规则处理。
@@ -47,7 +51,9 @@ function bound(element: ElementNode, name: string, preserveExclusion = false): s
   for (const prop of element.props) {
     if (prop.type === NodeTypes.ATTRIBUTE && prop.name === name) return literal(prop.value?.content ?? '')
     if (prop.type === NodeTypes.DIRECTIVE && prop.name === 'bind' && prop.arg?.type === NodeTypes.SIMPLE_EXPRESSION
-      && prop.arg.isStatic && prop.arg.content === name && prop.exp?.type === NodeTypes.SIMPLE_EXPRESSION) return metadataExpression(prop.exp.content)
+      && prop.arg.isStatic && prop.arg.content === name && prop.exp?.type === NodeTypes.SIMPLE_EXPRESSION) {
+      return metadataExpression(prop.exp.content) ?? (reference ? lazyReference(prop.exp.content) : null)
+    }
   }
   return null
 }
@@ -103,8 +109,9 @@ function staticText(element: ElementNode): string | null {
 }
 
 // picker-view 本身没有 range 属性；从固定列的简单选项模板取得 range，复杂渲染保留下标回退。
-/** 从固定 picker-view 列恢复安全的静态选项；无法确认显示文案时回退下标。 */
+/** 从固定 picker-view 列恢复选项；字面量列直接复制，成员路径列在事件时延迟读取；无法确认显示文案时回退下标。 */
 function pickerColumns(element: ElementNode): { range: string; key: string | null } | null {
+  let dynamic = false
   const ranges: string[] = []
   const keys: (string | null)[] = []
   for (const column of element.children) {
@@ -117,7 +124,10 @@ function pickerColumns(element: ElementNode): { range: string; key: string | nul
     if (options.length === 1 && option?.type === NodeTypes.ELEMENT && loop?.type === NodeTypes.DIRECTIVE && loop.exp?.type === NodeTypes.SIMPLE_EXPRESSION) {
       if (option.props.some((prop) => prop.type === NodeTypes.DIRECTIVE && prop.name !== 'for' && textRenderingDirectives.has(prop.name))) return null
       const match = /^\s*\(?\s*([\w$]+)(?:\s*,\s*[\w$]+)?\s*\)?\s+(?:in|of)\s+([\s\S]+)$/.exec(loop.exp.content)
-      const range = match?.[2] === undefined ? null : metadataExpression(match[2])
+      const literalRange = match?.[2] === undefined ? null : metadataExpression(match[2])
+      const reference = literalRange === null && match?.[2] !== undefined && memberPath(expression(match[2].trim())) !== null ? `(${match[2].trim()})` : null
+      if (reference !== null) dynamic = true
+      const range = literalRange ?? reference
       const content = option.children.filter((child) => !(child.type === NodeTypes.TEXT && child.content.trim() === ''))
       if (match === null || range === null || content.length !== 1 || content[0]?.type !== NodeTypes.INTERPOLATION || content[0].content.type !== NodeTypes.SIMPLE_EXPRESSION) return null
       const label = content[0].content.content.trim()
@@ -136,7 +146,8 @@ function pickerColumns(element: ElementNode): { range: string; key: string | nul
       keys.push(null)
     }
   }
-  return ranges.length > 0 && keys.every((key) => key === keys[0]) ? { range: `[${ranges.join(',')}]`, key: keys[0] ?? null } : null
+  if (ranges.length === 0 || !keys.every((key) => key === keys[0])) return null
+  return { range: dynamic ? `()=>([${ranges.join(',')}])` : `[${ranges.join(',')}]`, key: keys[0] ?? null }
 }
 /** 按组件和事件种类生成受限探针字段，不重新求值业务动态绑定。 */
 function probeFields(element: ElementNode, kind: 'click' | 'change', name: string): string {
@@ -155,8 +166,9 @@ function probeFields(element: ElementNode, kind: 'click' | 'change', name: strin
     if (href !== null) fields.push(`hyperlink:${href}`)
   }
   if (kind === 'change' && element.tag === 'picker') {
-    const range = bound(element, 'range')
-    const key = bound(element, 'range-key')
+    // 动态 range / range-key 只接受成员路径，并以函数延迟到通过隐私与授权检查后再读取。
+    const range = bound(element, 'range', false, true)
+    const key = bound(element, 'range-key', false, true)
     if (range !== null) fields.push(`pickerRange:${range}`)
     if (key !== null) fields.push(`pickerRangeKey:${key}`)
   }

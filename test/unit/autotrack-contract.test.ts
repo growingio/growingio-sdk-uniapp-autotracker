@@ -145,6 +145,20 @@ describe('schema v2 normalization', () => {
       expect(normalizeAutoTrackCall({ ...probe, pickerRange }, { detail: { value: 0 } })).toBeNull()
     }
   })
+  it('reads lazy dynamic picker ranges only for tracked changes and falls back to indices', () => {
+    const range = vi.fn(() => [{ name: 'zero' }, { name: 'one' }])
+    const probe = { ...change, elementType: 'picker', pickerRange: range, pickerRangeKey: () => 'name' }
+    expect(normalizeAutoTrackCall(probe, { detail: { value: 1 } })?.textValue).toBe('one')
+    expect(range).toHaveBeenCalledOnce()
+    for (const skipped of [{ ...probe, ignored: true }, { ...probe, sensitive: true }, { ...probe, trackValue: undefined }]) normalizeAutoTrackCall(skipped, { detail: { value: 1 } })
+    expect(range).toHaveBeenCalledOnce()
+    for (const pickerRange of [() => { throw new Error('getter') }, () => [{ nested: {} }], () => Array(MAX_RANGE_ITEMS + 1).fill('a'), () => 'not-a-range']) {
+      expect(normalizeAutoTrackCall({ ...probe, pickerRange }, { detail: { value: 1 } })?.textValue).toBe('1')
+    }
+    expect(normalizeAutoTrackCall({ ...probe, pickerRangeKey: () => { throw new Error('key') } }, { detail: { value: 1 } })?.textValue).toBe('1')
+    const columns = { ...change, elementType: 'picker-view', pickerRange: () => [['A', 'B'], ['X', 'Y']] }
+    expect(normalizeAutoTrackCall(columns, { detail: { value: [1, 0] } })?.textValue).toBe('B||X')
+  })
   it('bounds large checkbox labels before concatenating them into display text', () => {
     const value = Array(1000).fill('x'.repeat(1_000_000))
     expect(normalizeAutoTrackCall({ ...change, elementType: 'checkbox-group' }, { detail: { value } }))
