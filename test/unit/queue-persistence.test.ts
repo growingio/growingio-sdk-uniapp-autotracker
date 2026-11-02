@@ -207,6 +207,20 @@ describe('QueuePersistence', () => {
     expect(removed).toEqual([`queue:${key}`])
   })
 
+  it('migrates cached App VISIT events that still carry the entry path and query', async () => {
+    const visit = APP_EVENT_FIXTURES.VISIT
+    const port: StoragePort = {
+      persistentQueue: true,
+      read: async () => ({ kind: 'value', value: JSON.stringify({ version: 1, revision: 1,
+        entries: [{ requestId: 'q1', retryCount: 0, event: { ...visit, path: 'pages/launch/index', query: 'from=launch' } }] }) }),
+      write: async () => ({ kind: 'ok' }),
+      remove: async () => ({ kind: 'ok' }),
+    }
+    const queue = new EventQueue()
+    expect(await new QueuePersistence(port, 'gio:v1:source:queue:v1').hydrate(queue)).toBe('restored')
+    expect(queue.snapshot().map(entry => entry.event)).toEqual([visit])
+  })
+
   it('does not advance revision when storage rejects a write', async () => {
     const port: StoragePort = {
       persistentQueue: true,

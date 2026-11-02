@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { buildAppEvent, normalizeAttributes, sanitizeOutboundEvent } from '../../src/core/dataStore/protocol.js'
+import { APP_EVENT_FIXTURES } from '../contracts/app-protocol.fixture.js'
 
 const context = {
   deviceId: 'device', sessionId: 'session', dataSourceId: 'source', platform: 'Android',
@@ -11,6 +12,12 @@ const context = {
 }
 
 describe('Protocol core', () => {
+  it('omits path and query from App VISIT like the native Android, iOS and HarmonyOS SDKs', () => {
+    const built = buildAppEvent('VISIT', { ...APP_EVENT_FIXTURES.VISIT, path: 'pages/launch/index', query: 'from=launch' })
+    expect(built).toEqual({ ok: true, event: APP_EVENT_FIXTURES.VISIT })
+    const page = buildAppEvent('PAGE', { ...APP_EVENT_FIXTURES.PAGE, path: 'pages/home/index', query: 'a=1' })
+    expect(page.ok && page.event).toMatchObject({ path: 'pages/home/index', query: 'a=1' })
+  })
   it('超长 Unicode 属性只保留前 1000 码点，数组尾部非法值仍拒绝整项', () => {
     const prefix = `${'😀'.repeat(999)}中`
     const attributes = normalizeAttributes({ scalar: `${prefix}discarded`, list: [`${prefix}discarded`, false], invalid: [prefix, { nested: true }] })

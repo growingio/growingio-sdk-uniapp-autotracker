@@ -95,14 +95,22 @@ function cloneEvent(serialized: string): ProtocolEvent | null {
   }
 }
 
-/** 仅移除旧版行为事件已废弃的页面时间字段，其余缓存内容仍须严格校验。 */
+/** 仅移除旧版缓存中已废弃的字段，其余缓存内容仍须严格校验。 */
 function migrateQueueEntry(entry: QueueEntry): QueueEntry {
   if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return entry
   const event = entry.event
-  if (typeof event !== 'object' || event === null || Array.isArray(event)
-    || !['CUSTOM', 'VIEW_CLICK', 'VIEW_CHANGE'].includes(event.eventType) || !('pageShowTimestamp' in event)) return entry
-  const { pageShowTimestamp: _removed, ...fields } = event
-  return { ...entry, event: fields }
+  if (typeof event !== 'object' || event === null || Array.isArray(event)) return entry
+  // 旧版行为事件携带的页面时间字段。
+  if (['CUSTOM', 'VIEW_CLICK', 'VIEW_CHANGE'].includes(event.eventType) && 'pageShowTimestamp' in event) {
+    const { pageShowTimestamp: _removed, ...fields } = event
+    return { ...entry, event: fields }
+  }
+  // 旧版 App VISIT 携带的入口页面；小程序 VISIT 仍须保留 path。
+  if (event.eventType === 'VISIT' && ['iOS', 'Android', 'HarmonyOS'].includes(event.platform as string) && ('path' in event || 'query' in event)) {
+    const { path: _path, query: _query, ...fields } = event
+    return { ...entry, event: fields }
+  }
+  return entry
 }
 
 /** 队列状态与宿主无关，快照编码及有序宿主写入由存储模块负责。 */

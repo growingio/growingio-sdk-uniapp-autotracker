@@ -25,9 +25,12 @@ describe.each(['Android', 'iOS', 'HarmonyOS'] as const)('%s App lifecycle orderi
     expect(tracker.queuedEvents()).toEqual([])
     tracker.onAppShow(entry)
     expect(tracker.queuedEvents()).toMatchObject([
-      { eventType: 'VISIT', sessionId: 'session-1', path: 'pages/home', query: 'entry=1' },
+      { eventType: 'VISIT', sessionId: 'session-1' },
       { eventType: 'PAGE', sessionId: 'session-1', path: 'pages/home', query: 'page=1', title: 'Home' },
     ])
+    // 与原生 SDK 一致，App VISIT 不携带入口路径和查询参数。
+    expect(tracker.queuedEvents()[0]).not.toHaveProperty('path')
+    expect(tracker.queuedEvents()[0]).not.toHaveProperty('query')
     expect(tracker.queuedEvents()).toHaveLength(2)
   })
 

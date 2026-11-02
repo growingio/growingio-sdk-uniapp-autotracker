@@ -232,7 +232,7 @@ describe('TrackerRuntime', () => {
     expect(tracker.queuedEvents()).toEqual([])
     tracker.onAppLaunch({ path: '/home', query: '' })
     tracker.onAppShow({ path: '/home', query: '' })
-    expect(tracker.queuedEvents()).toMatchObject([{ eventType: 'VISIT', userId: 'B', sessionId: 'session-1', path: '/home' }])
+    expect(tracker.queuedEvents()).toMatchObject([{ eventType: 'VISIT', userId: 'B', sessionId: 'session-1' }])
   })
 
   it('reports bootstrap failure when runtime setup throws after hydration', async () => {
@@ -343,7 +343,7 @@ describe('TrackerRuntime', () => {
 
     await expect(tracker.whenReady()).resolves.toBe(true)
     expect(tracker.queuedEvents()).toMatchObject([
-      { eventType: 'VISIT', eventSequenceId: 1, path: '/home', query: 'entry=1' },
+      { eventType: 'VISIT', eventSequenceId: 1 },
       { eventType: 'CUSTOM', eventName: 'after_app_show', eventSequenceId: 2 },
     ])
   })
@@ -358,9 +358,12 @@ describe('TrackerRuntime', () => {
 
     expect(tracker.setDataCollect(true)).toBe(true)
     expect(tracker.queuedEvents()).toMatchObject([
-      { eventType: 'VISIT', eventSequenceId: 1, path: '/privacy' },
+      { eventType: 'VISIT', eventSequenceId: 1 },
       { eventType: 'PAGE', eventSequenceId: 2, path: 'pages/privacy/index', orientation: 'PORTRAIT' },
     ])
+    // VISIT 不再沿用启动入口 /privacy，当前页面只由随后的 PAGE 表达。
+    expect(tracker.queuedEvents()[0]).not.toHaveProperty('path')
+    expect(tracker.queuedEvents()[0]).not.toHaveProperty('query')
   })
 
   it('creates only one extra VISIT for a logged-in user A to B transition', async () => {
@@ -530,7 +533,9 @@ describe('TrackerRuntime', () => {
     expect(tracker.setOptions({ idMapping: true })).toBe(false)
     expect(tracker.setOptions({ dataCollect: 'true' })).toBe(false)
     expect(tracker.setOptions({ dataCollect: true })).toBe(true)
-    expect(tracker.queuedEvents()).toMatchObject([{ eventType: 'VISIT', path: '/privacy' }])
+    expect(tracker.queuedEvents()).toMatchObject([{ eventType: 'VISIT' }])
+    // 采集开关恢复生成的 VISIT 不再沿用启动入口路径。
+    expect(tracker.queuedEvents()[0]).not.toHaveProperty('path')
   })
 
   it('persists a generated anonymous identity before the next cold start', async () => {

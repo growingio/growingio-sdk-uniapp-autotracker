@@ -628,7 +628,7 @@ Vite 插件不得直接构建网络事件，它只调用 runtime 的稳定 schem
 
 | 事件 | 触发点 | 关键约束 |
 |---|---|---|
-| `VISIT` | 新 session 的 App `onShow` | 仅一条；带 session/入口上下文 |
+| `VISIT` | 新 session 的 App `onShow` | 仅一条；带 session，App 不带 path/query |
 | `PAGE` | 真实页面 `onShow` | pageKey 去重；query 来自 `onLoad` 快照；方向归一化或兜底后构建 |
 | `CUSTOM` | `track()` | 事件名与属性需校验、截断 |
 | `LOGIN_USER_ATTRIBUTES` | `setUserAttributes()` | 与是否已登录无关；attributes 合法即立即发送，绝不缓冲到未来身份 |
@@ -638,7 +638,7 @@ Vite 插件不得直接构建网络事件，它只调用 runtime 的稳定 schem
 
 `track(eventName, properties)` 仅接受满足 `^[A-Za-z_][A-Za-z0-9_]{0,99}$` 的事件名：首字符为英文字母或下划线，剩余字符只能是英文字母、数字或下划线，总长不超过 100。非法名称不做 trim、替换或截断，整条 CUSTOM 返回 `false`、记录脱敏诊断，也不分配 `eventSequenceId` 或进入 queue。
 
-普通页面的 query 在 `Page:onLoad` 只读取一次并绑定到该 pageKey。随后构建 `PAGE`、`VIEW_CLICK`、`VIEW_CHANGE`、`CUSTOM` 和 `APP_CLOSED` 时，若仍有当前页面上下文，均复用该快照；`VISIT` 则只使用 `App:onShow` 收到的入口 path/query，不能拿当前页面 query 冒充入口。`PAGE.referralPage` 读取当前显示快照的来源值，不在后续事件中扩散。该规则与小程序 SDK 的“页面上下文 + 启动入口”两条链路一致。
+普通页面的 query 在 `Page:onLoad` 只读取一次并绑定到该 pageKey。随后构建 `PAGE`、`VIEW_CLICK`、`VIEW_CHANGE`、`CUSTOM` 和 `APP_CLOSED` 时，若仍有当前页面上下文，均复用该快照；App 的 `VISIT` 与 Android、iOS、HarmonyOS 原生 SDK 一致，不携带 path/query；切换采集开关、换登录用户等新会话的 `VISIT` 也不沿用启动入口，当前页面由随后的 `PAGE` 表达。升级前已缓存、仍带入口 path/query 的 App `VISIT` 在恢复时移除这两个字段。小程序 `VISIT` 仍只使用 `App:onShow` 收到的入口 path/query，不能拿当前页面 query 冒充入口。`PAGE.referralPage` 读取当前显示快照的来源值，不在后续事件中扩散。该规则与小程序 SDK 的“页面上下文 + 启动入口”两条链路一致。
 
 `setLocation(latitude, longitude)` 不触发定位、不申请定位权限，只接受业务已合法获得的位置。两个参数必须是有限数字，纬度范围为 `[-90, 90]`、经度范围为 `[-180, 180]`，因此 `0` 是合法坐标而不是“未设置”。设置成功后，坐标进入后续事件的 Protocol context；`clearLocation()` 或进程重启后不再携带。位置仅保存于当前运行期内存，绝不写入 SDK storage，也不影响已入队事件。
 
@@ -806,7 +806,7 @@ App 适配器的 `persistentQueue=true`，同一队列的读改写由 core 串�
 - 未传 `dataCollect` 时立即采集；这是与既有 SDK 对齐的默认行为；
 - 需要等待隐私同意的业务必须 `init({ dataCollect: false })`；禁止采集时可初始化身份和必要配置，但不得产生、持久化或上传行为事件；
 - 后台因换人或恢复采集而新建 session 时，保留 App 离开时间，下一次前台恢复仍按该时间判断会话超时。
-- 从关闭重新开启时新建 session，并立即补当前入口 `VISIT` 与当前页 `PAGE`；关闭期间的事件不补发。该顺序与 Android、iOS 和小程序 SDK 的恢复采集行为对齐；
+- 从关闭重新开启时新建 session，并立即补 `VISIT`（App 不带 path/query）与当前页 `PAGE`；关闭期间的事件不补发。该顺序与 Android、iOS 和小程序 SDK 的恢复采集行为对齐；
 - 从 `true` 切到 `false` 时，立即阻止后续自动/手动事件构建；不删除既有待发队列，不清 identity/session/eventSequenceId，也不取消已排程或进行中的上传。关闭期间新发生的事件不会补发；再次同意后从新 session 开始。事件计时器不属于一期，因此一期没有 timer registry 可清理；二期加入计时器时再按独立 SDK 的“关闭即清计时器”语义实现。
 - `debug` 默认关闭且只能在 `init()` 配置；开启后按小程序 SDK 的调试口径打印已完成字段清理、移除 SDK 内部 `requestId` 等元数据后的待发事件数组。它是本地开发排障输出，不持久化、不上报，也不得在生产环境开启；敏感 input 的事件仍须在事件构建阶段被拒绝，不能因 debug 绕过隐私规则。
 

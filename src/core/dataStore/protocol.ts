@@ -194,6 +194,8 @@ function buildEvent(eventType: string, fields: Readonly<Record<string, unknown>>
   const specific = mini ? EVENT_FIELDS[typedEventType].filter(key => key !== 'orientation' && key !== 'protocolType')
     : [...EVENT_FIELDS[typedEventType], ...(typedEventType === 'VISIT' ? NATIVE_IDENTIFIER_FIELDS : [])]
   const allowed = new Set([...common, ...specific, ...(mini && typedEventType === 'VISIT' ? ['referralPage'] : [])])
+  // 与 Android、iOS、HarmonyOS 原生 VisitEvent 一致，App 的 VISIT 不携带页面路径和查询参数。
+  if (!mini && typedEventType === 'VISIT') { allowed.delete('path'); allowed.delete('query') }
   const candidate = Object.fromEntries(
     Object.entries({ ...fields, eventType: typedEventType }).filter(([key]) => allowed.has(key)),
   )

@@ -40,8 +40,8 @@
 | `urlScheme` | string | — | — | ○ | App 链接协议（如 `growing.xxx`）。一期基础 SDK 不读取、存储或上报；以后仅由 Deep Link／圈选等经批准产品插件的专属配置和协议扩展使用 |
 | `appState` | string | — | — | ● | 应用前后台：`FOREGROUND` / `BACKGROUND`。`APP_CLOSED` 当前统一采用 `BACKGROUND`，见 3.5 节 |
 | `appName` | string | — | — | ● | 自动读取应用名称；不可由业务覆盖，读取失败时内部值为空字符串并记录诊断，出站清理时省略该字段 |
-| `path` | string | ● | ● | ○ | 页面路径。App 在存在当前页面上下文时携带 |
-| `query` | string | ○ | ○ | ○ | 页面查询参数。App 的普通页面取 `onLoad` 快照；`VISIT` 取 `App.onShow` 的入口参数；Hybrid 取 H5 url query |
+| `path` | string | ● | ● | ○ | 页面路径。App 在存在当前页面上下文时携带；App 的 `VISIT` 与 Android、iOS、HarmonyOS 原生 SDK 一致，不携带 |
+| `query` | string | ○ | ○ | ○ | 页面查询参数。App 的普通页面取 `onLoad` 快照，`VISIT` 不携带；小程序 `VISIT` 取 `App.onShow` 的入口参数；Hybrid 取 H5 url query |
 | `title` | string | ○ | ○ | ○ | 页面标题（App 仅 `PAGE`） |
 | `referralPage` | string | ○ | ○ | ○ | 来源页面。Web 所有事件携带；八端小程序的 VISIT 可携带外部来源 appId，PAGE 使用上一页面、外部来源或场景回退；App 仍仅 PAGE 携带。 |
 | `networkState` | string | — | ● | ● | 网络类型：`2G`/`3G`/`4G`/`5G`/`WIFI`/`UNKNOWN`。App 将宿主小写值规范化为大写；`none`、`unknown`、泛化 `cellular`、超时或错误统一为 `UNKNOWN`，不猜测网络代际。 |

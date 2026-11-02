@@ -34,7 +34,9 @@ describe.each([['android', 'Android'], ['ios', 'iOS'], ['harmonyos', 'HarmonyOS'
     hooks.onLaunch!.call(app, { path: '/entry', query: { a: 1 } }); hooks.onShow!.call(app, { path: '/entry', query: { a: 1 } })
     hooks.onLoad!.call(page, { wxShoppingListScene: 1001, zero: 0 }); hooks.onShow!.call(page)
     expect(received.map(event => event.eventType)).toEqual(['VISIT', 'PAGE'])
-    expect(received[0]).toMatchObject({ platform: wirePlatform, appName: 'App', appState: 'FOREGROUND', domain: 'com.fixture', path: '/entry', query: 'a=1', appChannel: 'app-store' })
+    expect(received[0]).toMatchObject({ platform: wirePlatform, appName: 'App', appState: 'FOREGROUND', domain: 'com.fixture', appChannel: 'app-store' })
+    expect(received[0]).not.toHaveProperty('path')
+    expect(received[0]).not.toHaveProperty('query')
     expect(received[1]).toMatchObject({ orientation: 'PORTRAIT', query: 'wxShoppingListScene=1001&zero=0' })
     const session = received[0]!.sessionId
     expect(gdp('setUserId', 'a')).toBe(true); expect(gdp('setUserId', 'b')).toBe(true)

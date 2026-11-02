@@ -86,7 +86,9 @@ describe('AppLifecycle', () => {
     expect(lifecycle.onShow({ path: '/home', query: 'tab=feed' })).toMatchObject({
       session: { startedNew: true, reason: 'initial' }, visitQueued: true,
     })
-    expect(queue.snapshot()[0]?.event).toMatchObject({ eventType: 'VISIT', path: '/home', query: 'tab=feed' })
+    expect(queue.snapshot()[0]?.event).toMatchObject({ eventType: 'VISIT' })
+    expect(queue.snapshot()[0]?.event).not.toHaveProperty('path')
+    expect(queue.snapshot()[0]?.event).not.toHaveProperty('query')
     expect(lifecycle.entry()).toStrictEqual({
       launch: { path: '/launch', query: 'from=launch' }, current: { path: '/home', query: 'tab=feed' },
     })
@@ -116,7 +118,7 @@ describe('AppLifecycle', () => {
       session: { startedNew: true, reason: 'cold_start', snapshot: { sessionId: 'session-1', lastCloseTime: null } },
       visitQueued: true,
     })
-    expect(queue.snapshot()).toMatchObject([{ event: { eventType: 'VISIT', sessionId: 'session-1', path: '/home' } }])
+    expect(queue.snapshot()).toMatchObject([{ event: { eventType: 'VISIT', sessionId: 'session-1' } }])
   })
 
   it('starts a new session and VISIT strictly after the 30 second default timeout', () => {
