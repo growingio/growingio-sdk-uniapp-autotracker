@@ -15,6 +15,7 @@ afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals()
 /** 通过真实 App 网络、存储、请求适配器装配 SDK，仅替换宿主能力。 */
 function app(platform: string, mode: NotificationMode, initialNetwork = 'none', storage = new Map<string, string>()) {
   let networkType = initialNetwork
+  let statusCode = 204
   let listener: ((value: NetworkNotification) => void) | undefined
   const received: ProtocolEvent[] = []
   const host: AppRuntimeHost = {
@@ -31,14 +32,15 @@ function app(platform: string, mode: NotificationMode, initialNetwork = 'none', 
     } }),
     request: vi.fn<AppRuntimeHost['request']>(options => {
       if (networkType === 'none') { options.fail({ errMsg: 'request:fail offline' }); return }
-      received.push(...JSON.parse(options.data) as ProtocolEvent[])
-      options.success({ statusCode: 204 })
+      if (statusCode < 300) received.push(...JSON.parse(options.data) as ProtocolEvent[])
+      options.success({ statusCode })
     }),
   }
   let session = 0
   const tracker = createAppTracker(host, { sdkVersion: '0.1.0', deviceIdFactory: () => 'recovery-device', sessionIdFactory: () => `session-${++session}` })
   return {
     tracker, host, storage, received,
+    setStatus: (value: number) => { statusCode = value },
     reconnect: () => {
       networkType = 'wifi'
       if (mode === 'normal') listener?.({ networkType, isConnected: true })
@@ -164,6 +166,31 @@ describe.each(['android', 'ios', 'harmonyos'])('%s App 自动补发', platform =
     expect(f.received.filter(event => event.eventType === 'CUSTOM')).toEqual(cached)
     expect(f.tracker.queuedEvents()).toEqual([])
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('服务端持续 5xx 时不丢弃事件，重启后服务恢复仍能补发', async () => {
+    const f = app(platform, 'normal', 'wifi')
+    f.setStatus(503)
+    f.tracker.init({ accountId: 'account', dataSourceId: 'source' })
+    await f.tracker.whenReady()
+    f.tracker.onAppShow({ path: 'pages/home', query: '' })
+    f.tracker.track('server_down_event')
+    await vi.advanceTimersByTimeAsync(0)
+    const cached = f.tracker.queuedEvents()
+    // 800ms 起指数退避，30 秒内已远超旧策略的 1 次发送加 2 次重试。
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(vi.mocked(f.host.request).mock.calls.length).toBeGreaterThan(3)
+    expect(f.tracker.queuedEvents()).toEqual(cached)
+    expect(JSON.parse(f.storage.get('gio:v1:source:queue:v1')!).entries.map((entry: { event: ProtocolEvent }) => entry.event)).toEqual(cached)
+    expect(f.received).toEqual([])
+
+    const restarted = app(platform, 'normal', 'wifi', f.storage)
+    restarted.tracker.init({ accountId: 'account', dataSourceId: 'source' })
+    expect(await restarted.tracker.whenReady()).toBe(true)
+    // 恢复的持久队列在就绪后立即补发，不需要等待页面或新事件。
+    await vi.advanceTimersByTimeAsync(0)
+    expect(restarted.received).toEqual(cached)
+    expect(restarted.tracker.queuedEvents()).toEqual([])
   })
 
   it('前台只保留一个恢复检查，切后台停止检查，回前台自动补发', async () => {

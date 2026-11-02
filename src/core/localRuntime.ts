@@ -418,6 +418,8 @@ export class LocalTrackerRuntime {
       () => !this.awaitingIdentify && this.dependencies.network?.isConnected() !== false,
       config.miniprogram?.uploadIntervalMs ?? 0,
       () => { if (config.miniprogram === undefined) refreshNetwork(true) },
+      // App 队列持久化且有 7 天有效期，可恢复失败保留到发送成功；小程序内存队列维持有限重试。
+      config.miniprogram === undefined ? 'retain' : 'bounded',
     )
     const appWithFlush = new AppLifecycle({
       miniprogram: config.miniprogram?.target,
@@ -461,7 +463,7 @@ export class LocalTrackerRuntime {
       networkState = next
       // cellular/unknown 也可能明确联网；由独立连接状态决定能否恢复上传。
       const nextConnected = this.dependencies.network?.isConnected()
-      if (connected === false && nextConnected !== false) uploader?.flush()
+      if (connected === false && nextConnected !== false) uploader?.retryNow()
       else uploader?.schedule()
       connected = nextConnected
       scheduleNetworkRecovery()

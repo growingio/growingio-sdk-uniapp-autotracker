@@ -103,6 +103,11 @@ export function dispatchWithFinalizer(
 
 export const MAX_CONCURRENT_UPLOADS = 3
 const RETRY_DELAYS_MS = [800, 1_600] as const
+/** App 保留可恢复失败时的退避上限，避免服务端故障期间高频请求。 */
+export const MAX_RETRY_BACKOFF_MS = 60_000
+
+/** bounded：有限重试后丢弃（小程序内存队列）；retain：可恢复失败保留并退避，直至成功、不可重试或过期（App 持久队列）。 */
+export type RetryPolicy = 'bounded' | 'retain'
 
 export interface UploaderRuntime extends TimerPort {
   /** 读取发送时的毫秒时间戳。 */
@@ -125,6 +130,9 @@ export class Uploader {
   private pendingRetries = 0
   private readonly readyRetries: Array<{ batch: readonly QueueEntry[]; attempt: number }> = []
   private flushing = false
+  private backingOff = false
+  private backoffTimer: unknown
+  private consecutiveFailures = 0
   private lastRemovalRevision = -1
   /** 已接纳且正在等待空闲传输槽位的事件标识。 */
   private readonly readyRequests = new Set<string>()
@@ -146,6 +154,7 @@ export class Uploader {
     private readonly uploadIntervalMs = 0,
     /** 请求发现网络错误时，允许运行时刷新可能过期的连接状态。 */
     private readonly onNetworkFailure: () => void = () => undefined,
+    private readonly retryPolicy: RetryPolicy = 'bounded',
   ) {}
 
   /** App 事件入队后立即具备发送资格，仅传输槽位与重试可能使派发延后。 */
@@ -172,12 +181,21 @@ export class Uploader {
     this.drain()
   }
 
+  /** 连接恢复时结束当前退避并立即重试；新事件入队不会打断退避。 */
+  public retryNow(): void {
+    if (this.backingOff) {
+      this.runtime.clearTimeout(this.backoffTimer)
+      this.backingOff = false
+    }
+    this.flush()
+  }
+
   /** 在连接允许和并发上限内优先处理重试，再领取新批次；防止同步回调导致调度重入。 */
   private drain(): void {
     if (this.flushing) return
     this.flushing = true
     this.pruneExpired()
-    while (this.active < MAX_CONCURRENT_UPLOADS && this.canDispatch()) {
+    while (this.active < MAX_CONCURRENT_UPLOADS && this.canDispatch() && !this.backingOff) {
       const retry = this.readyRetries.shift()
       if (retry !== undefined) {
         this.dispatch(retry.batch, retry.attempt)
@@ -192,7 +210,7 @@ export class Uploader {
         this.reservedRequests.add(entry.requestId)
       }
       const attempt = batch[0]!.retryCount
-      if (attempt > RETRY_DELAYS_MS.length) {
+      if (this.retryPolicy === 'bounded' && attempt > RETRY_DELAYS_MS.length) {
         const requestIds = batch.map((entry) => entry.requestId)
         this.queue.remove(requestIds)
         this.releaseReserved(requestIds)
@@ -263,6 +281,7 @@ export class Uploader {
       this.active -= 1
       if (result.kind === 'network' || result.kind === 'timeout') this.onNetworkFailure()
       if (result.kind === 'success') {
+        this.consecutiveFailures = 0
         this.queue.remove(requestIds)
         this.releaseReserved(requestIds)
         this.queue.release(requestIds)
@@ -270,6 +289,12 @@ export class Uploader {
       } else if ((result.kind === 'network' || result.kind === 'timeout') && !this.canDispatch()) {
         // 飞行中遇到明确断网也保留事件；恢复网络后继续，不额外消耗重试额度。
         this.readyRetries.push({ batch, attempt })
+      } else if (isRetryableCollectorFailure(result) && this.retryPolicy === 'retain') {
+        // 事件留在持久队列中，退避结束后与其他待发事件一起按顺序重新领取，不消耗重试额度。
+        this.releaseReserved(requestIds)
+        this.queue.release(requestIds)
+        for (const requestId of requestIds) this.readyRequests.add(requestId)
+        this.startBackoff()
       } else if (isRetryableCollectorFailure(result) && attempt < RETRY_DELAYS_MS.length) {
         this.queue.incrementRetries(requestIds)
         this.onQueueChanged()
@@ -318,8 +343,25 @@ export class Uploader {
 
   /** 在分阶段退避时间上加入受限随机抖动，避免客户端同时重试。 */
   private retryDelay(attempt: number): number {
+    return this.jitter(RETRY_DELAYS_MS[attempt]!)
+  }
+
+  /** 暂停全部派发直至退避结束；并发失败只开启一次退避，连续失败按指数增长并封顶。 */
+  private startBackoff(): void {
+    if (this.backingOff) return
+    this.backingOff = true
+    const delay = Math.min(MAX_RETRY_BACKOFF_MS, RETRY_DELAYS_MS[0] * 2 ** Math.min(this.consecutiveFailures, 16))
+    this.consecutiveFailures += 1
+    this.backoffTimer = this.runtime.setTimeout(() => {
+      this.backingOff = false
+      this.drain()
+    }, this.jitter(delay))
+  }
+
+  /** 加入 ±20% 受限随机抖动，避免客户端同时重试。 */
+  private jitter(delay: number): number {
     const random = Math.min(1, Math.max(0, this.runtime.random()))
-    return Math.round(RETRY_DELAYS_MS[attempt]! * (0.8 + random * 0.4))
+    return Math.round(delay * (0.8 + random * 0.4))
   }
 
   /** 清除已完成批次的预留标识，避免后续请求被永久阻塞。 */

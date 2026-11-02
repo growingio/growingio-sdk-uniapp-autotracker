@@ -408,5 +408,112 @@ describe('Uploader', () => {
     expect(callbacks).toHaveLength(5)
     expect(uploader.activeCount()).toBe(3)
   })
+  describe('App retain 策略', () => {
+    /** 以 App 持久队列策略装配上传器，返回派发记录、回调与定时器控制。 */
+    function retaining(queue: EventQueue, options: { connected?: () => boolean; now?: () => number } = {}) {
+      const clocks = runtime()
+      const sent: number[][] = []
+      const callbacks: Array<(result: TransportResult) => void> = []
+      const drops: unknown[] = []
+      const uploader = new Uploader(queue, { dispatch: (request, done) => {
+        sent.push(JSON.parse(request.body).map((item: ProtocolEvent) => item.eventSequenceId as number)); callbacks.push(done)
+      } }, { ...clocks.value, now: options.now ?? clocks.value.now }, 'https://collector.example', 'account', drop => drops.push(drop),
+      undefined, undefined, options.connected, 0, undefined, 'retain')
+      return { uploader, clocks, sent, callbacks, drops }
+    }
 
+    it('5xx、网络错误和超时连续失败也不丢弃，退避按指数增长并封顶', () => {
+      const queue = new EventQueue()
+      queue.enqueue(event(1))
+      const { uploader, clocks, sent, callbacks, drops } = retaining(queue)
+      uploader.flush()
+      const failures: TransportResult[] = [{ kind: 'http', status: 503 }, { kind: 'network' }, { kind: 'timeout' }]
+      const delays: number[] = []
+      for (let attempt = 0; attempt < 10; attempt++) {
+        callbacks.at(-1)!(failures[attempt % failures.length]!)
+        delays.push(...clocks.scheduledDelays())
+        clocks.fireDelay(clocks.scheduledDelays()[0]!)
+      }
+      expect(delays).toEqual([800, 1_600, 3_200, 6_400, 12_800, 25_600, 51_200, 60_000, 60_000, 60_000])
+      expect(sent).toHaveLength(11)
+      expect(drops).toEqual([])
+      expect(queue.snapshot()).toMatchObject([{ retryCount: 0 }])
+      callbacks.at(-1)!({ kind: 'success', status: 204 })
+      expect(queue.snapshot()).toEqual([])
+      // 成功后重置退避级别。
+      queue.enqueue(event(2))
+      uploader.flush()
+      callbacks.at(-1)!({ kind: 'http', status: 500 })
+      expect(clocks.scheduledDelays()).toEqual([800])
+    })
+
+    it('退避期间新事件不触发请求，并发失败只开启一次退避，结束后按顺序补发', () => {
+      const queue = new EventQueue({ maxItems: 10, maxPersistedBytes: 10_000, maxEventBytes: 500, maxBatchEvents: 1, maxBatchBytes: 500 })
+      for (let index = 1; index <= 3; index++) queue.enqueue(event(index))
+      const { uploader, clocks, sent, callbacks } = retaining(queue)
+      uploader.flush()
+      expect(sent).toEqual([[1], [2], [3]])
+      for (const done of callbacks.splice(0)) done({ kind: 'http', status: 502 })
+      expect(clocks.scheduledDelays()).toEqual([800])
+      queue.enqueue(event(4))
+      uploader.schedule()
+      uploader.flush()
+      expect(sent).toHaveLength(3)
+      clocks.fireDelay(800)
+      expect(sent.slice(3)).toEqual([[1], [2], [3]])
+      for (const done of callbacks.splice(0)) done({ kind: 'success', status: 204 })
+      expect(sent.at(-1)).toEqual([4])
+    })
+
+    it('连接恢复时结束退避立即重试', () => {
+      const queue = new EventQueue()
+      queue.enqueue(event(1))
+      const { uploader, clocks, sent, callbacks } = retaining(queue)
+      uploader.flush()
+      callbacks[0]!({ kind: 'http', status: 500 })
+      callbacks.length = 0
+      uploader.retryNow()
+      expect(sent).toHaveLength(2)
+      expect(clocks.scheduledDelays()).not.toContain(800)
+      callbacks[0]!({ kind: 'success', status: 200 })
+      expect(queue.snapshot()).toEqual([])
+    })
+
+    it('冷启动恢复的历史条目不论 retryCount 都继续发送', () => {
+      const queue = new EventQueue()
+      queue.restore([{ requestId: 'q1', event: event(1), retryCount: 3 }, { requestId: 'q2', event: event(2), retryCount: 9 }])
+      const { uploader, sent, callbacks, drops } = retaining(queue)
+      uploader.flush()
+      callbacks[0]!({ kind: 'success', status: 204 })
+      callbacks[1]!({ kind: 'success', status: 204 })
+      expect(sent).toEqual([[1], [2]])
+      expect(drops).toEqual([])
+      expect(queue.snapshot()).toEqual([])
+    })
+
+    it.each([400, 413])('HTTP %s 仍按不可重试删除对应批次', (status) => {
+      const queue = new EventQueue()
+      queue.enqueue(event(1))
+      const { uploader, clocks, callbacks, drops } = retaining(queue)
+      uploader.flush()
+      callbacks[0]!({ kind: 'http', status })
+      expect(drops).toMatchObject([{ reason: 'non_retryable' }])
+      expect(queue.snapshot()).toEqual([])
+      expect(clocks.scheduledDelays()).toEqual([])
+    })
+
+    it('退避跨过 7 天有效期后只补发未到期事件', () => {
+      let now = 100
+      const queue = new EventQueue(undefined, undefined, { maxAgeMs: APP_QUEUE_RETENTION_MS, now: () => now })
+      queue.enqueue({ ...event(1), timestamp: now })
+      const { uploader, clocks, sent, callbacks } = retaining(queue, { now: () => now })
+      uploader.flush()
+      callbacks[0]!({ kind: 'http', status: 503 })
+      queue.enqueue({ ...event(2), timestamp: now + APP_QUEUE_RETENTION_MS - 1 })
+      uploader.schedule()
+      now += APP_QUEUE_RETENTION_MS
+      clocks.fireDelay(800)
+      expect(sent).toEqual([[1], [2]])
+    })
+  })
 })
