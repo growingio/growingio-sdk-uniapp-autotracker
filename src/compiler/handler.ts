@@ -42,16 +42,21 @@ export function containsProbe(root: AstNode, dispatcher: string): boolean {
   return found
 }
 
-/** 排除多分支、异步、可选调用等无法保证原求值语义的节点。 */
+/** 排除多分支、异步、可选调用等无法保证原求值语义的节点。计算成员只在原位置求值一次，探针不读取它。 */
 function safeLeaf(root: AstNode): boolean {
   let safe = true
   walk(root, (entry) => {
     if (entry.type === 'ConditionalExpression' || entry.type === 'SequenceExpression' || entry.type === 'AwaitExpression'
       || entry.type === 'YieldExpression' || entry.type === 'OptionalCallExpression' || entry.type === 'OptionalMemberExpression'
-      || entry.type === 'NewExpression' || entry.type === 'TaggedTemplateExpression'
-      || (entry.type === 'MemberExpression' && entry.computed)) safe = false
+      || entry.type === 'NewExpression' || entry.type === 'TaggedTemplateExpression') safe = false
   })
   return safe
+}
+/** 识别以标识符开头、可含计算键的非可选成员链，与 Vue 视为函数引用的表达式一致。 */
+function memberChain(value: unknown): boolean {
+  const current = node(value)
+  if (current?.type === 'Identifier') return true
+  return current?.type === 'MemberExpression' && current.optional !== true && memberChain(current.object)
 }
 
 /** 只复制字面量元数据；动态绑定由原模板求值，事件阶段从原生 dataset 读取。 */
@@ -90,17 +95,18 @@ function unwrapTypeExpression(root: AstNode): AstNode {
 function branch(root: AstNode, source: string, nativeName: string, inline = false): Branch | null {
   if (!safeLeaf(root)) return null
   const original = source.slice(root.start ?? 0, root.end ?? source.length)
-  const reference = memberPath(unwrapTypeExpression(root))
-  // 函数引用由 Vue 决定求值、缓存、空值及多个处理函数的行为，不能擅自替换成调用。
-  if (reference !== null) return null
+  // Vue 把任意成员表达式视为函数引用；可缓存的引用由 rewriteHandler 单独改写，其余位置不能把引用当成调用结果返回。
+  if (['Identifier', 'MemberExpression'].includes(unwrapTypeExpression(root).type)) return null
   const calls: AstNode[] = []
   const functions: AstNode[] = []
   walk(root, (entry) => {
     if (entry.type === 'CallExpression') calls.push(entry)
     if (entry.type === 'ArrowFunctionExpression' || entry.type === 'FunctionExpression') functions.push(entry)
   })
-  if (calls.length > 1 || calls.some((call) => memberPath(call.callee) === null)) return null
-  const name = calls.length === 1 ? memberPath(calls[0]?.callee) as string : nativeName
+  if (calls.length > 1 || calls.some((call) => !memberChain(call.callee))) return null
+  // 计算成员调用无法确定业务函数名，回退为原生事件名。
+  const path = calls.length === 1 ? memberPath(calls[0]?.callee) : null
+  const name = path ?? nativeName
   if (root.type === 'ArrowFunctionExpression' || root.type === 'FunctionExpression') {
     if (inline) return null
     if (functions.length !== 1 || root.async || root.generator) return null
@@ -110,16 +116,37 @@ function branch(root: AstNode, source: string, nativeName: string, inline = fals
       const statements = Array.isArray(body.body) ? body.body : []
       if (statements.length > 1 || statements.some((statement) => !['ReturnStatement', 'ExpressionStatement'].includes(node(statement)?.type ?? ''))) return null
     }
-    return { name, original, fallback: calls.length === 0 }
+    return { name, original, fallback: path === null }
   }
   if (functions.length > 0 || (root.type !== 'CallExpression' && calls.length > 0)) return null
-  return { name, original, fallback: calls.length === 0 }
+  return { name, original, fallback: path === null }
 }
 
+export type ReferenceRewrite = Readonly<{
+  /** 生成的参数数组名，须与模板可见绑定不冲突。 */
+  args: string
+  /** 暂存首次读取结果的局部变量名，须与模板可见绑定不冲突。 */
+  handler: string
+}>
+
 /** 在安全监听器中插入隔离异常的探针，保留业务参数、this、返回值与条件执行。无法保证语义时返回 null。 */
-export function rewriteHandler(source: string, nativeName: string, _dispatcher: string, probe: (name: string, event?: string) => string): Readonly<{ code: string; fallback: boolean }> | null {
+export function rewriteHandler(source: string, nativeName: string, _dispatcher: string, probe: (name: string, event?: string) => string, reference?: ReferenceRewrite): Readonly<{ code: string; fallback: boolean }> | null {
   const root = expression(source)
   if (root === null) return null
+  if (memberChain(root)) {
+    if (reference === undefined || !safeLeaf(root)) return null
+    let calls = 0
+    walk(root, (entry) => { if (entry.type === 'CallExpression' || entry.type === 'ArrowFunctionExpression' || entry.type === 'FunctionExpression') calls++ })
+    if (calls > 0) return null
+    // 复刻 Vue 缓存监听器的 `ref && ref(...args)`：读取次数、空值跳过、this 与全部参数均不变，仅在业务执行前插入探针。
+    const original = source.slice(root.start ?? 0, root.end ?? source.length)
+    const path = memberPath(root)
+    const { args, handler } = reference
+    return {
+      code: `(...${args})=>{let ${handler}=${original};if(!${handler})return ${handler};${probe(path ?? nativeName, `${args}[0]`)};return ${original}(...${args})}`,
+      fallback: path === null,
+    }
+  }
   if (root.type === 'ArrowFunctionExpression' || root.type === 'FunctionExpression') {
     const checked = branch(root, source, nativeName)
     const body = node(root.body)

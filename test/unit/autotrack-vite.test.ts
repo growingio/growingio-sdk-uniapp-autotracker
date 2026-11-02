@@ -217,29 +217,35 @@ describe('schema v2 Vue instrumentation', () => {
     expect(added.changed).toBe(true)
     expect(added.code.match(/dispatchAutoTrack as /g)).toHaveLength(2)
   })
-  it.each(['save', 'actions.save', 'ready ? save : cancel', '() => 42', 'handlers[key]', 'handlers[key]()', 'ready ? (other ? save : cancel) : save', 'save(); cancel()', 'items.map(item => save(item))', '() => { save(); cancel() }', 'async e => save(e)'])('leaves ambiguous expressions untouched: %s', (handler) => {
+  it.each(['save', 'actions.save', 'ready ? save : cancel', '() => 42', 'handlers[key]', 'handlers?.[key]()', 'handlers[key]?.()', 'ready ? (other ? save : cancel) : save', 'save(); cancel()', 'items.map(item => save(item))', '() => { save(); cancel() }', 'async e => save(e)'])('leaves ambiguous expressions untouched: %s', (handler) => {
     const template = `<button @click="${handler}" />`
     expect(transformAutoTrackTemplate(template)).toMatchObject({ code: template, changed: false, warnings: [{ code: 'complex_handler' }] })
   })
-  it('warns for dynamic events, custom components, modifiers, missing and unsupported events', () => {
-    const template = '<button v-on:[name]="save"/><component :is="which" @click="save($event)"/><button @click.stop="save($event)"/><button @tap/><input @input="save"/>'
+  it('warns for dynamic events, custom components, missing and unsupported events', () => {
+    const template = '<button v-on:[name]="save"/><component :is="which" @click="save($event)"/><button @tap/><input @input="save"/>'
     expect(transformAutoTrackTemplate(template)).toMatchObject({ code: template, changed: false })
-    expect(transformAutoTrackTemplate(template).warnings.map((warning) => warning.code)).toEqual(['dynamic_event', 'custom_component', 'event_modifiers', 'missing_handler', 'unsupported_event'])
+    expect(transformAutoTrackTemplate(template).warnings.map((warning) => warning.code)).toEqual(['dynamic_event', 'custom_component', 'missing_handler', 'unsupported_event'])
   })
   it.each(['data-growing-ignore', 'data-growing-ignore="true"', 'data-growing-ignore="1"', ':data-growing-ignore="true"', ':data-growing-ignore="1"', ':data-growing-ignore="\'1\'"'])('does not diagnose intentionally excluded listeners: %s', (ignore) => {
-    const template = `<button ${ignore} @tap="save"/><button ${ignore} @tap="handlers[key]($event)"/><button ${ignore} @tap.stop="save($event)"/><button ${ignore} v-on:[name]="save($event)"/><custom-button ${ignore} @click="save($event)"/><input ${ignore} @input="save($event)"/>`
+    const template = `<button ${ignore} @tap="save"/><button ${ignore} v-on:[name]="save($event)"/><custom-button ${ignore} @click="save($event)"/><input ${ignore} @input="save($event)"/>`
     expect(transformAutoTrackTemplate(template)).toEqual({ code: template, changed: false, warnings: [] })
+    // 可插桩的写法仍携带 ignore 字段，由运行时统一丢弃。
+    for (const handler of ['handlers[key]($event)', 'save($event)']) {
+      const supported = transformAutoTrackTemplate(`<button ${ignore} @tap.stop="${handler}"/>`)
+      expect(supported.warnings).toEqual([])
+      expect(handlers(supported.code)[0]).toContain('ignored:')
+    }
     const warnings: string[] = []
     expect(gioUniappAutoTrack().transform.call({ warn: warning => warnings.push(warning) }, source(template), 'ignored.vue')).toBeNull()
     expect(warnings).toEqual([])
   })
   it.each(['data-growing-ignore="false"', 'data-growing-ignore="0"', ':data-growing-ignore="false"', ':data-growing-ignore="0"', ':data-growing-ignore="ignore"', 'data-growing-ignore v-bind="attributes"', 'data-growing-ignore v-bind:[attribute]="value"', 'data-growing-ignore :data-growing-ignore="ignore"'])('retains diagnostics when exclusion is false or can change: %s', (ignore) => {
-    expect(transformAutoTrackTemplate(`<button ${ignore} @tap.stop="save($event)"/>`).warnings.map(warning => warning.code)).toEqual(['event_modifiers'])
+    expect(transformAutoTrackTemplate(`<button ${ignore} v-on:[name]="save($event)"/>`).warnings.map(warning => warning.code)).toEqual(['dynamic_event'])
   })
   it('keeps valid ignored probes, descendant diagnostics, and malformed handler diagnostics', () => {
-    const result = transformAutoTrackTemplate('<view data-growing-ignore @tap="save($event)"><button @tap.stop="save($event)"/></view><button data-growing-ignore @tap/>')
+    const result = transformAutoTrackTemplate('<view data-growing-ignore @tap="save($event)"><button v-on:[name]="save($event)"/></view><button data-growing-ignore @tap/>')
     expect(handlers(result.code)[0]).toContain('ignored:""')
-    expect(result.warnings.map(warning => warning.code)).toEqual(['event_modifiers', 'missing_handler'])
+    expect(result.warnings.map(warning => warning.code)).toEqual(['dynamic_event', 'missing_handler'])
     expect(transformAutoTrackTemplate('<view data-growing-ignore><button></view>').warnings[0]?.code).toBe('template_parse_error')
   })
   it.each(['input', 'textarea'])('selects blur before confirm before change on %s while preserving unselected listeners', (tag) => {
@@ -250,8 +256,9 @@ describe('schema v2 Vue instrumentation', () => {
     expect(listeners[2]).toContain('eventName:"blur"')
     expect(listeners[3]).toBe('change($event)')
     expect(listeners[4]).toContain('eventName:"finish"')
-    const unsupported = transformAutoTrackTemplate(`<${tag} @blur.stop="blur($event)" @change="change($event)"/>`)
-    expect(unsupported.changed).toBe(false)
+    const modified = handlers(transformAutoTrackTemplate(`<${tag} @blur.stop="blur($event)" @change="change($event)"/>`).code)
+    expect(modified[0]).toContain('eventName:"blur"')
+    expect(modified[1]).toBe('change($event)')
   })
   it.each(['type="password"', 'type="safe-password"', 'password', 'password="true"', ':password="true"', ':password="false"'])('retains a compiled password change without reading values: %s', (attr) => {
     const business = vi.fn(event => event)
@@ -304,11 +311,123 @@ describe('schema v2 Vue instrumentation', () => {
     const warnings: string[] = []
     const plugin = gioUniappAutoTrack()
     expect(plugin).toMatchObject({ name: 'gio-uniapp-autotrack', enforce: 'pre' })
-    expect(plugin.transform.call({ warn: (warning) => warnings.push(warning) }, source('<button @click.stop="save($event)"/>'), 'page.vue')).toBeNull()
-    expect(warnings[0]).toMatch(/page.vue:\d+ event_modifiers/)
+    expect(plugin.transform.call({ warn: (warning) => warnings.push(warning) }, source('<button v-on:[name]="save($event)"/>'), 'page.vue')).toBeNull()
+    expect(warnings[0]).toMatch(/page.vue:\d+ dynamic_event/)
     plugin.transform.call({ warn: (warning) => warnings.push(warning) }, '<view/>', 'page.nvue')
     expect(warnings[1]).toContain('page.nvue:0 .nvue_not_instrumented')
     expect(plugin.transform.call(undefined, 'const a = 1', 'entry.tsx')).toBeNull()
     expect(gioUniappAutoTrack({ enabled: false }).transform.call(undefined, source('<button @tap="save($event)"/>'), 'page.vue')).toBeNull()
+  })
+  it('instruments listeners inside event modifiers so the probe only follows business execution', () => {
+    const save = vi.fn((event: unknown) => event)
+    const dispatch = vi.fn()
+    const fixture = mountAutoTrackSfc(`<script setup>import { save } from 'fixture'</script><template><button @tap.stop="save($event)"/><view @tap.self="save($event)"/><button @tap.once="save($event)"/></template>`, dispatch, { fixture: { save } })
+    try {
+      expect(fixture.transformed.warnings).toEqual([])
+      const node = {}
+      const stopped = { stopPropagation: vi.fn(), target: node, currentTarget: node }
+      expect(fixture.fire(0, 'onTap', stopped)).toBe(stopped)
+      expect(stopped.stopPropagation).toHaveBeenCalledOnce()
+      // .self 未命中时业务与探针都不执行。
+      fixture.fire(1, 'onTap', { target: {}, currentTarget: node })
+      expect(save).toHaveBeenCalledTimes(1)
+      const self = { target: node, currentTarget: node }
+      expect(fixture.fire(1, 'onTap', self)).toBe(self)
+      expect(fixture.fire(0, 'onTapOnce', node)).toBe(node)
+      expect(save).toHaveBeenCalledTimes(3)
+      expect(dispatch.mock.calls.map(([probe]) => probe.eventName)).toEqual(['save', 'save', 'save'])
+    } finally { fixture.unmount() }
+  })
+  it('instruments computed member calls with the native event name and evaluates the member once', () => {
+    const reads = vi.fn()
+    const state = { handlers: { save: vi.fn((event: unknown) => event) }, get key() { reads(); return 'save' } }
+    const dispatch = vi.fn()
+    const fixture = mountAutoTrackSfc(`<script setup>import { state } from 'fixture'</script><template><button @tap="state.handlers[state.key]($event)"/></template>`, dispatch, { fixture: { state } })
+    try {
+      expect(fixture.transformed.warnings.map(warning => warning.code)).toEqual(['event_name_fallback'])
+      const event = {}
+      expect(fixture.fire(0, 'onTap', event)).toBe(event)
+      expect(reads).toHaveBeenCalledOnce()
+      expect(state.handlers.save).toHaveBeenCalledExactlyOnceWith(event)
+      expect(dispatch).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ eventName: 'tap' }), event)
+    } finally { fixture.unmount() }
+  })
+  describe('function references on App', () => {
+    const app = { references: true } as const
+    /** 分别挂载原始与插桩源码，以 Vue 原生缓存产物作为行为基准。 */
+    const both = (sfc: string, dispatch: (...args: unknown[]) => unknown, modules: Record<string, unknown>) => [
+      mountAutoTrackSfc(sfc, () => undefined, modules, false),
+      mountAutoTrackSfc(sfc, dispatch, modules, true, [], app),
+    ] as const
+
+    it('matches the cached Vue listener for arguments, receiver, getter reads and return values', () => {
+      const reads = vi.fn()
+      const receivers: unknown[] = []
+      const business = { save(this: unknown, ...args: unknown[]) { receivers.push(this); return args.length } }
+      const state = { get actions() { reads(); return business } }
+      const dispatch = vi.fn()
+      const [plain, instrumented] = both(`<script setup>import { state } from 'fixture'</script><template><button @tap="state.actions.save"/></template>`, dispatch, { fixture: { state } })
+      try {
+        expect(instrumented.transformed.warnings).toEqual([])
+        const event = {}
+        expect(plain.fire(0, 'onTap', event, 'extra')).toBe(2)
+        const plainReads = reads.mock.calls.length
+        expect(instrumented.fire(0, 'onTap', event, 'extra')).toBe(2)
+        expect(reads.mock.calls.length - plainReads).toBe(plainReads)
+        expect(receivers).toEqual([business, business])
+        expect(dispatch).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ eventName: 'state.actions.save' }), event)
+      } finally { plain.unmount(); instrumented.unmount() }
+    })
+    it('skips both business and probe when the referenced handler is empty', () => {
+      const dispatch = vi.fn()
+      const [plain, instrumented] = both(`<script>export default { data() { return { handler: null } } }</script><template><button @tap="handler"/></template>`, dispatch, {})
+      try {
+        expect(plain.fire(0, 'onTap', {})).toBeNull()
+        expect(instrumented.fire(0, 'onTap', {})).toBeNull()
+        expect(dispatch).not.toHaveBeenCalled()
+      } finally { plain.unmount(); instrumented.unmount() }
+    })
+    it('names Options API methods and falls back for computed references', () => {
+      const dispatch = vi.fn()
+      const fixture = mountAutoTrackSfc(`<script>export default { data() { return { key: 'save' } }, computed: { handlers() { return { save: this.save } } }, methods: { save(e) { return e } } }</script><template><button @tap="save"/><button @tap.stop="handlers[key]"/></template>`, dispatch, {}, true, [], app)
+      try {
+        expect(fixture.transformed.warnings.map(warning => warning.code)).toEqual(['event_name_fallback'])
+        const event = { stopPropagation: vi.fn() }
+        expect(fixture.fire(0, 'onTap', event)).toBe(event)
+        expect(fixture.fire(1, 'onTap', event)).toBe(event)
+        expect(event.stopPropagation).toHaveBeenCalledOnce()
+        expect(dispatch.mock.calls.map(([probe]) => probe.eventName)).toEqual(['save', 'tap'])
+      } finally { fixture.unmount() }
+    })
+    it('does not shadow template bindings that share generated local names', () => {
+      const fixture = mountAutoTrackSfc(`<script setup>const args = { fn: () => 'business' }; const gioAutoTrackArgs = 1</script><template><button @tap="args.fn"/></template>`, vi.fn(), {}, true, [], app)
+      try {
+        expect(fixture.transformed.code).toContain('gioAutoTrack1Args')
+        expect(fixture.fire(0, 'onTap', {})).toBe('business')
+      } finally { fixture.unmount() }
+    })
+    it.each([
+      '<view v-for="item in items"><button @tap="item.fn"/></view>',
+      '<button v-for="(item, index) in items" @tap="handlers[index]"/>',
+      '<card><template #default="{ slotFn }"><button @tap="slotFn"/></template></card>',
+      '<view v-once><button @tap="save"/></view>',
+      '<button @tap="(save as any)"/>',
+      '<button @tap="this.save"/>',
+    ])('keeps references Vue does not cache: %s', (template) => {
+      expect(transformAutoTrackTemplate(template, 'gioAutoTrack', app)).toMatchObject({ code: template, changed: false, warnings: [{ code: 'complex_handler' }] })
+    })
+    it('only rewrites references for App builds', () => {
+      const previous = process.env.UNI_PLATFORM
+      try {
+        for (const [platform, changed] of [['app', true], ['app-harmony', true], ['mp-weixin', false], [undefined, false]] as const) {
+          if (platform === undefined) delete process.env.UNI_PLATFORM
+          else process.env.UNI_PLATFORM = platform
+          expect(gioUniappAutoTrack().transform.call(undefined, source('<button @tap="save"/>'), 'page.vue') !== null).toBe(changed)
+        }
+      } finally {
+        if (previous === undefined) delete process.env.UNI_PLATFORM
+        else process.env.UNI_PLATFORM = previous
+      }
+    })
   })
 })

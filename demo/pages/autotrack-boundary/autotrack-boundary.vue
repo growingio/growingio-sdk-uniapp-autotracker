@@ -2,18 +2,10 @@
   <scroll-view class="page" scroll-y>
     <view class="section">
       <text class="title">预期不采集的写法</text>
-      <text class="hint">本页展示当前不支持自动采集的写法，均明确标记 ignore，构建不产生采集告警。以下操作只更新业务计数，不产生 VIEW_CLICK / VIEW_CHANGE。</text>
+      <text class="hint">本页展示当前不支持自动采集的写法，均明确标记 ignore，构建不产生采集告警。以下操作只更新业务计数，不产生 VIEW_CLICK / VIEW_CHANGE。函数引用、计算成员调用和事件修饰符已支持，见无埋点验收页第 2 组。</text>
       <text class="result">业务执行次数：{{ count }}；{{ lastAction }}</text>
     </view>
     <view class="section">
-      <button id="boundary-reference" data-growing-ignore @tap="onReference">直接函数引用</button>
-      <text class="hint">保留 Vue 的引用行为，不强制改成调用。</text>
-      <button id="boundary-computed" data-growing-ignore @tap="handlers[handlerKey]($event)">计算成员调用</button>
-      <text class="hint">无法固定业务函数名，保留原表达式。</text>
-      <view id="boundary-stop-parent" data-growing-ignore @tap="onParent">
-        <button id="boundary-stop" data-growing-ignore @tap.stop="onStopped($event)">带 .stop 的按钮</button>
-      </view>
-      <text class="hint">保留 .stop；子按钮业务执行，父层不执行。父层也使用函数引用，不生成自动事件。</text>
       <button id="boundary-dynamic" data-growing-ignore v-on:[nativeEventName]="onDynamic($event)">动态事件名</button>
       <text class="hint">动态事件仍交给 Vue 绑定。</text>
       <auto-track-boundary-emit data-growing-ignore @click="onCustomClick($event)" />
@@ -34,22 +26,10 @@ import AutoTrackBoundaryEmit from '@/components/auto-track-boundary-emit/auto-tr
 export default {
   components: { AutoTrackBoundaryEmit },
   /** 初始化边界演示状态，不保存实际输入内容。 */
-  data() { return { count: 0, lastAction: '尚未操作。', nativeEventName: 'click', handlerKey: 'save' } },
-  computed: {
-    /** 提供计算成员访问的业务函数，验证不安全表达式保持原样。 */
-    handlers() { return { save: this.onComputed } }
-  },
+  data() { return { count: 0, lastAction: '尚未操作。', nativeEventName: 'click' } },
   methods: {
     /** 更新页面业务计数和最近动作，用于确认监听器确实执行。 */
     mark(name) { this.count++; this.lastAction = name },
-    /** 记录函数引用监听的业务执行结果，采集侧保持既有边界。 */
-    onReference() { this.mark('函数引用业务已执行') },
-    /** 记录计算成员监听的业务执行结果。 */
-    onComputed() { this.mark('计算成员业务已执行') },
-    /** 记录带停止冒泡修饰符的子层业务调用。 */
-    onStopped() { this.mark('.stop 子按钮业务已执行') },
-    /** 记录父层业务调用，用于核对停止冒泡是否仍生效。 */
-    onParent() { this.mark('父层业务已执行；点击子按钮不应走到这里') },
     /** 记录动态事件名监听的业务执行结果。 */
     onDynamic() { this.mark('动态事件业务已执行') },
     /** 记录自定义组件 emit 到达父层的业务结果。 */

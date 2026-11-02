@@ -5,7 +5,7 @@
 ## 行为与升级
 
 - 普通模板 `VIEW_CLICK/VIEW_CHANGE.xpath` 在运行时生成 `id#eventName`。严格选择 `currentTarget || target`；主目标没有 id 时生成 `#eventName`，不会借用子节点 id。
-- Vite 用 Vue SFC/template AST 与 Babel 事件表达式 AST 插桩。可安全分析的显式调用、同步函数与显式调用条件分支可插桩；函数引用、返回函数的条件表达式和复杂组件选项保持原样。普通 `setup()` 保持原实现，通过静态 methods 别名暴露 dispatcher，不复制组件。
+- Vite 用 Vue SFC/template AST 与 Babel 事件表达式 AST 插桩。可安全分析的显式调用（含计算成员调用）、同步函数、显式调用条件分支和事件修饰符可插桩；函数引用仅在 App 构建按 Vue 缓存产物改写；返回函数的条件表达式和复杂组件选项保持原样。普通 `setup()` 保持原实现，通过静态 methods 别名暴露 dispatcher，不复制组件。
 - 双目标 ignore/sensitive、文件和动态 type 输入会拒绝整条自动事件。密码、安全密码及动态 password 保留 `VIEW_CHANGE`，但始终不读取、不上报 `textValue`，track 不能覆盖；显式 sensitive 的密码框仍整条忽略。非敏感 change 仅在 track 放行后读取值；swiper 保留 autoplay 与 title 专属规则。
 - change 按组件处理 input、textarea、switch、slider、radio-group、checkbox-group、picker、picker-view、swiper；保留 `0`、`false` 和空值事件。picker 优先使用 range 文案，无法映射时使用规范下标。
 - input / textarea 输入完成按 `blur → confirm → change` 选择一个已声明的监听器，避免 App 不转发原生 change 时漏采；原业务回调保留，上报仍为 `VIEW_CHANGE`。仅声明 change 的输入框应改用 blur / confirm。
@@ -13,7 +13,7 @@
 - tabBar 为 `#onTabItemTap`、一基 index，pagePath 进入 hyperlink。普通 click 的 data-index 只接受大于 0 且小于 2147483647 的规范十进制整数。
 - v1/v2 编译探针互不兼容。SDK、demo 与使用方 App 必须整体重建，不能混用旧产物；历史结构路径的圈选、看板和规则须按新标识重新配置。
 
-动态事件、自定义组件、事件修饰符、计算成员和无法安全改写的复杂 handler 保持原样并产生构建告警；`.nvue` 不插桩。picker-view 仅从固定列的静态文本或字面量 v-for 提取 range；动态 range 回退规范下标，不重复读取业务 getter。完整边界见[设计文档](./uniapp-autotrack-design.md)。
+动态事件、自定义组件、小程序端函数引用和无法安全改写的复杂 handler 保持原样并产生构建告警；`.nvue` 不插桩。picker-view 仅从固定列的静态文本或字面量 v-for 提取 range；动态 range 回退规范下标，不重复读取业务 getter。完整边界见[设计文档](./uniapp-autotrack-design.md)。
 
 明确标记静态 `data-growing-ignore` 的监听已经主动排除采集，不再报告上述采集边界告警，原监听不改写。可正常插桩的 ignore 控件仍保留探针与运行时隐私检查。只有确定启用的标记（空值、true、1 及对应字符串字面量）适用；false / 0、动态绑定、对象或动态属性 v-bind 可能覆盖的标记仍保留诊断。模板语法和缺失 handler 的错误不受此规则影响。
 

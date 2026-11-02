@@ -52,7 +52,7 @@ pnpm demo:check
 
 无埋点页按真机验收顺序分为六组，包含有/无 id 的 click 与 tap、严格主目标、动态 id/metadata、无 id 列表、`v-if` / `v-show`、条件 handler、Options API、`<script setup>`、普通 `setup()` 返回别名、input/textarea 完成事件、所有已支持 change 组件、`uni-link` 与 tabBar。页面会显示业务 handler 执行次数和每项预期 xpath，便于同时确认业务没有被重复调用。此 demo 的 vite.config.ts 显式设置 `__GIO_AUTOTRACK_VERIFICATION__: true`，用于开放三端待验收的无埋点链路；它不会把生产能力表标为已验收，正式应用不要复制。密码框保留不含 `textValue` 的 `VIEW_CHANGE`，即使带 track 也不读取密码值；显式 sensitive、currentTarget/target 任一 ignore 和未放行的 autoplay 不生成自动事件。生产开放必须以逐端真机请求和 collector 接收证据为准。
 
-函数引用及条件返回函数等不安全写法不会插桩，编译器会给出告警；当前页面的条件调用和括号箭头场景应无告警。列表动态元数据从原生 dataset 获取；动态 picker range 回退下标，不能再按显示文案验收。
+条件返回函数等不安全写法不会插桩，编译器会给出告警。第 2 组的函数引用在 App 构建插桩，小程序构建保持原样并输出 `complex_handler`；计算成员调用固定输出一条 `event_name_fallback`，这是本页唯一预期的 App 构建提示。列表动态元数据从原生 dataset 获取；动态 picker range 回退下标，不能再按显示文案验收。
 
 无埋点覆盖补齐后的操作矩阵：
 
@@ -71,11 +71,12 @@ pnpm demo:check
 | 文本边界 | 第 4 组填长文本 / 特殊字符 / 清空，再聚焦并失焦；取消全部多选 | 填充按钮不伪造完成事件；长文本截到 100 字符，控制字符归为空格；空值事件保留但省略 textValue |
 | 采集关闭与恢复 | 采集开关页暂停后点击 / 输入，恢复后重复 | 业务计数始终增加；关闭无 VIEW；恢复后 VIEW 使用新 sessionId 和当前页 path |
 | uni-link 真实组合 | 第 6 组点击链接 | navigator 内部探针和父层监听共同走真实 emit 路径，最终同一交互只发送一次 |
-| 编译边界 | 第 6 组进入“预期不采集”页面 | 函数引用、计算成员、.stop、动态事件名、自定义组件 emit、input 打字均只执行业务；.stop 保留阻止冒泡的行为 |
+| 函数引用 / 计算成员 / 修饰符 | 第 2 组依次点击三个按钮 | App 各一次 VIEW_CLICK：reference-action#onReferenceAction、computed-action#tap、modifier-stop#onModifierStop；.stop 保留阻止冒泡，父层不执行；业务计数共增加 3 |
+| 编译边界 | 第 6 组进入“预期不采集”页面 | 动态事件名、自定义组件 emit、input 打字均只执行业务 |
 
 传统 input 的[官方事件列表](https://uniapp.dcloud.net.cn/component/input.html#属性说明)明确列出 blur / confirm；当前 Android 与鸿蒙 App 输入组件不转发原生 change。SDK 按 `blur → confirm → change` 选择一个已声明的完成事件：三事件控件在 blur 时生成一条 `VIEW_CHANGE`，xpath 使用 `onCompletionBlur`，confirm 和 change 原业务回调保留。独立 change 控件仅观察兼容路径，不能将受控测试中手动触发 change 当成 App 支持证据；仅绑定 change 的业务应改用 blur / confirm。验收时使用真实失焦和键盘完成操作，不从页面代码手动派发生命周期或原生完成事件。
 
-所有 demo 页面均要求无采集编译告警。“预期不采集”页面对边界监听显式声明 `data-growing-ignore`，保留函数引用、计算成员、修饰符、动态事件、自定义组件 emit 和 input 打字的原业务行为。编译器只对可确定启用的静态 ignore 跳过采集边界诊断；ignore 为 false / 0、动态表达式或可能被 v-bind 覆盖时仍保留诊断，语法错误和缺失 handler 也仍会报告。自定义组件内部按钮同样明确 ignore，不会把内部事件混入父组件 emit 的边界验证。
+除第 2 组计算成员调用的 `event_name_fallback` 外，所有 demo 页面均要求无采集编译告警（App 构建）。“预期不采集”页面对边界监听显式声明 `data-growing-ignore`，保留动态事件、自定义组件 emit 和 input 打字的原业务行为。编译器只对可确定启用的静态 ignore 跳过采集边界诊断；ignore 为 false / 0、动态表达式或可能被 v-bind 覆盖时仍保留诊断，语法错误和缺失 handler 也仍会报告。自定义组件内部按钮同样明确 ignore，不会把内部事件混入父组件 emit 的边界验证。
 
 受控集成测试直接编译并挂载这些真实页面和子组件，执行按钮 listener，再经公共 gdp、生产 dispatcher 和协议到模拟 request 接收端。uni-link 使用真实组件组合，不再作为原生标签或空组件替身；测试验证两个探针只产生一条 VIEW_CLICK。它们仍不替代 Android / iOS / HarmonyOS 设备上的原生事件、冒泡、键盘行为和最终 collector 接收验证。
 

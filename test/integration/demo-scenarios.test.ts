@@ -88,7 +88,9 @@ describe('demo scenarios', () => {
     expect(transformed.code).toContain("onAction(&#39;普通点击&#39;)")
     expect(transformed.code).toContain('onInputComplete($event)')
     expect(transformed.code).toContain('eventName:&quot;openURL&quot;')
-    expect(transformed.warnings).toEqual([])
+    // 小程序构建不改写函数引用；App 构建只剩计算成员调用的事件名回退提示。
+    expect(transformed.warnings.map((warning) => warning.code)).toEqual(['complex_handler', 'event_name_fallback'])
+    expect(transformAutoTrackSfc(source, runtimeImport, { references: true }).warnings.map((warning) => warning.code)).toEqual(['event_name_fallback'])
     for (const marker of ['currentTarget 无 id', 'v-if 用例', 'v-show 用例', 'data-growing-sensitive', '<uni-link']) {
       expect(source).toContain(marker)
     }

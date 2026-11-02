@@ -67,6 +67,16 @@
       <button id="arrow-object" @tap="e => ({ saved: onObjectArrow(e) })">箭头返回对象</button>
       <button id="arrow-nested" @tap="(e) => ((onNestedArrow(e)))">箭头包含多层括号</button>
       <text class="expected">预期：页面正常编译；各自产生 arrow-grouped#onGroupedArrow、arrow-object#onObjectArrow、arrow-nested#onNestedArrow。每点一次业务计数只增加 1。</text>
+
+      <text class="case-title">函数引用、计算成员与修饰符</text>
+      <button id="reference-action" @tap="onReferenceAction">直接函数引用</button>
+      <text class="expected">预期（App）：reference-action#onReferenceAction。小程序构建保持原引用、不采集，并输出 complex_handler 告警。</text>
+      <button id="computed-action" @tap="referenceHandlers[referenceKey]($event)">计算成员调用</button>
+      <text class="expected">预期：computed-action#tap（无法确定业务函数名，回退原生事件名；构建输出 event_name_fallback）。</text>
+      <view id="modifier-parent" class="tap-card" @tap="onModifierParent($event)">
+        <button id="modifier-stop" @tap.stop="onModifierStop($event)">带 .stop 的子按钮</button>
+      </view>
+      <text class="expected">预期：只产生 modifier-stop#onModifierStop；.stop 仍阻止冒泡，父层业务与采集都不执行，业务计数增加 1。</text>
     </view>
 
     <view class="section">
@@ -234,7 +244,7 @@ export default {
       privacyIgnore: false, privacySensitive: false, privacyTrack: false,
       falseMarkerIndex: 0, falseMarkers: [false, 0, '0', 'false'], falseMarkerLabels: ['布尔 false', '数字 0', '字符串 "0"', '字符串 "false"'],
       numericInput: false, maskPassword: true, boundaryText: '', selectedTags: [],
-      literalCity: 0, literalPlan: 0, staticColumns: [0, 0], trackedAutoplay: false, itemRevision: 0, itemSerial: 2,
+      literalCity: 0, literalPlan: 0, staticColumns: [0, 0], trackedAutoplay: false, itemRevision: 0, itemSerial: 2, referenceKey: 'save',
       cities: [{ name: '杭州' }, { name: '上海' }],
       regions: ['浙江', '江苏'], periods: ['上午', '下午'],
       items: initialItems(),
@@ -245,7 +255,9 @@ export default {
   },
   computed: {
     /** 按页面开关选择输入类型，验证动态属性下的保守采集规则。 */
-    dynamicInputType() { return this.numericInput ? 'number' : 'text' }
+    dynamicInputType() { return this.numericInput ? 'number' : 'text' },
+    /** 提供计算成员访问的业务函数，验证计算成员调用的插桩。 */
+    referenceHandlers() { return { save: this.onComputedAction } },
   },
   methods: {
     /** 累计业务动作并刷新页面提示，作为业务监听器执行的可见证据。 */
@@ -292,6 +304,14 @@ export default {
     onObjectArrow() { this.mark('箭头对象返回'); return this.actionCount },
     /** 提供多层括号箭头的业务结果。 */
     onNestedArrow() { this.mark('多层括号箭头'); return this.actionCount },
+    /** 记录直接函数引用的业务执行，返回参数个数以核对参数透传。 */
+    onReferenceAction(...args) { this.mark('直接函数引用'); return args.length },
+    /** 记录计算成员调用的业务执行。 */
+    onComputedAction() { this.mark('计算成员调用') },
+    /** 记录 .stop 子按钮的业务执行。 */
+    onModifierStop() { this.mark('.stop 子按钮') },
+    /** 记录父层业务；点击 .stop 子按钮时不应走到这里。 */
+    onModifierParent() { this.mark('父层业务：.stop 未生效') },
     /** 记录由条件创建的按钮交互。 */
     onConditionalIf() { this.mark('v-if 按钮') },
     /** 记录由显示开关控制的按钮交互。 */

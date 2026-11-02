@@ -48,12 +48,15 @@ function mountButton(dispatch: (...args: unknown[]) => unknown, template = condi
 }
 
 describe('demo 条件 handler 代码回归', () => {
-  it('真实页面经过 Vite 插件时正常插桩且不产生告警', () => {
-    const warn = vi.fn()
-    const result = gioUniappAutoTrack().transform.call({ warn }, pageSource, pagePath)
-    expect(result).not.toBeNull()
-    expect(result?.code).not.toBe(pageSource)
-    expect(warn).not.toHaveBeenCalled()
+  it.each([['app', ['event_name_fallback']], ['mp-weixin', ['complex_handler', 'event_name_fallback']]] as const)('真实页面经过 %s Vite 插件时正常插桩，只产生预期告警', (platform, expected) => {
+    vi.stubEnv('UNI_PLATFORM', platform)
+    try {
+      const warn = vi.fn()
+      const result = gioUniappAutoTrack().transform.call({ warn }, pageSource, pagePath)
+      expect(result).not.toBeNull()
+      expect(result?.code).not.toBe(pageSource)
+      expect(warn.mock.calls.map(([message]) => String(message).split(' ').at(-1))).toEqual(expected)
+    } finally { vi.unstubAllEnvs() }
   })
 
   it.each([

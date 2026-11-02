@@ -5,10 +5,14 @@ import { CHANGE_ELEMENTS, TEMPLATE_ELEMENTS } from '../plugins/gioEventAutoTrack
 import { containsProbe, expression, metadataExpression, node, rewriteHandler, walk } from './handler.js'
 
 export type AutoTrackTransformWarning = Readonly<{
-  code: 'sfc_parse_error' | 'template_parse_error' | 'dynamic_event' | 'missing_handler' | 'event_modifiers' | 'custom_component' | 'unsupported_event' | 'complex_handler' | 'complex_component_options' | 'event_name_fallback' | '.nvue_not_instrumented'
+  code: 'sfc_parse_error' | 'template_parse_error' | 'dynamic_event' | 'missing_handler' | 'custom_component' | 'unsupported_event' | 'complex_handler' | 'complex_component_options' | 'event_name_fallback' | '.nvue_not_instrumented'
   offset: number
 }>
 export type AutoTrackTemplateTransform = Readonly<{ code: string; warnings: readonly AutoTrackTransformWarning[]; changed: boolean }>
+export type AutoTrackTransformOptions = Readonly<{
+  /** 目标编译器会把成员表达式监听器缓存为 `ref && ref(...args)` 时才改写函数引用，目前仅 App。 */
+  references?: boolean
+}>
 export type VueSfcTransform = AutoTrackTemplateTransform
 
 type Replacement = Readonly<{ start: number; end: number; value: string }>
@@ -173,10 +177,32 @@ function openingEnd(element: ElementNode): number | null {
   }
   return null
 }
+/** 提取 v-for 别名和 v-slot 参数中的标识符；宁可多收，也不把作用域变量当成可缓存引用。 */
+function scopeNames(element: ElementNode): string[] {
+  const names: string[] = []
+  for (const prop of element.props) {
+    if (prop.type !== NodeTypes.DIRECTIVE || prop.exp?.type !== NodeTypes.SIMPLE_EXPRESSION) continue
+    const source = prop.name === 'for' ? prop.exp.content.split(/\s+(?:in|of)\s+/)[0] ?? '' : prop.name === 'slot' ? prop.exp.content : ''
+    names.push(...source.match(/[A-Za-z_$][\w$]*/g) ?? [])
+  }
+  return names
+}
+type VisitContext = Readonly<{
+  dispatcher: string
+  references: boolean
+  /** 外层 v-for / v-slot 引入的作用域变量；Vue 不缓存引用这些变量的监听器。 */
+  scope: ReadonlySet<string>
+  /** v-once 内的监听器不缓存，引用值固定为首次渲染时的结果。 */
+  once: boolean
+}>
 /** 遍历模板元素并收集可安全插桩的监听器替换及边界告警。 */
-function visit(nodes: readonly TemplateChildNode[], dispatcher: string, replacements: Replacement[], warnings: AutoTrackTransformWarning[]): void {
+function visit(nodes: readonly TemplateChildNode[], context: VisitContext, replacements: Replacement[], warnings: AutoTrackTransformWarning[]): void {
+  const { dispatcher } = context
   for (const element of nodes) {
     if (element.type !== NodeTypes.ELEMENT) continue
+    const added = scopeNames(element)
+    const scope = added.length === 0 ? context.scope : new Set([...context.scope, ...added])
+    const once = context.once || element.props.some((prop) => prop.type === NodeTypes.DIRECTIVE && prop.name === 'once')
     const selected = inputEvents.find((name) => element.props.some((prop) => prop.type === NodeTypes.DIRECTIVE && prop.name === 'on' && prop.arg?.type === NodeTypes.SIMPLE_EXPRESSION && prop.arg.isStatic && prop.arg.content === name))
     const ignored = explicitlyIgnored(element)
     let hasClick = false
@@ -195,12 +221,15 @@ function visit(nodes: readonly TemplateChildNode[], dispatcher: string, replacem
       if (prop.exp?.type !== NodeTypes.SIMPLE_EXPRESSION || prop.exp.content.trim() === '') { warn('missing_handler'); continue }
       const parsed = expression(prop.exp.content)
       if (parsed !== null && containsProbe(parsed, dispatcher)) continue
-      if (prop.modifiers.length > 0) { warn('event_modifiers'); continue }
       if (!(TEMPLATE_ELEMENTS as readonly string[]).includes(element.tag)) { warn('custom_component'); continue }
       if (!click && (!inputEvents.includes(nativeName) || !(CHANGE_ELEMENTS as readonly string[]).includes(element.tag)
         || (nativeName !== 'change' && element.tag !== 'input' && element.tag !== 'textarea'))) { warn('unsupported_event'); continue }
       if (!click && (element.tag === 'input' || element.tag === 'textarea') && nativeName !== selected) continue
-      const rewritten = rewriteHandler(prop.exp.content, nativeName, dispatcher, (name, event = '$event') => `try{${dispatcher}(${probeFields(element, click ? 'click' : 'change', name)},${event})}catch{}`)
+      // 修饰符包裹在 handler 外层，探针位于其内，只随业务 handler 实际执行。
+      // 只有 Vue 会缓存的引用才改写；作用域变量与 v-once 内的引用按渲染时取值，保持原样。
+      const cached = context.references && !once && !(prop.exp.content.match(/[A-Za-z_$][\w$]*/g) ?? []).some((name) => scope.has(name))
+      const reference = cached ? { args: `${dispatcher}Args`, handler: `${dispatcher}Handler` } : undefined
+      const rewritten = rewriteHandler(prop.exp.content, nativeName, dispatcher, (name, event = '$event') => `try{${dispatcher}(${probeFields(element, click ? 'click' : 'change', name)},${event})}catch{}`, reference)
       if (rewritten === null) { warn('complex_handler'); continue }
       if (rewritten.fallback) warn('event_name_fallback')
       const before = element.loc.source[prop.exp.loc.start.offset - element.loc.start.offset - 1]
@@ -211,12 +240,12 @@ function visit(nodes: readonly TemplateChildNode[], dispatcher: string, replacem
       const end = openingEnd(element)
       if (end !== null) replacements.push({ start: end, end, value: ` @click="${attribute(`($event)=>{try{${dispatcher}(${probeFields(element, 'click', 'openURL')},$event)}catch{}}`)}"` })
     }
-    visit(element.children, dispatcher, replacements, warnings)
+    visit(element.children, { ...context, scope, once }, replacements, warnings)
   }
 }
 
 /** 解析模板并应用探针替换；语法错误时保留原模板和诊断。 */
-export function transformAutoTrackTemplate(template: string, dispatcher = 'gioAutoTrack'): AutoTrackTemplateTransform {
+export function transformAutoTrackTemplate(template: string, dispatcher = 'gioAutoTrack', options: AutoTrackTransformOptions = {}): AutoTrackTemplateTransform {
   const warnings: AutoTrackTransformWarning[] = []
   let root
   try { root = parse(template, {
@@ -226,12 +255,12 @@ export function transformAutoTrackTemplate(template: string, dispatcher = 'gioAu
   catch { return { code: template, warnings: [{ code: 'template_parse_error', offset: 0 }], changed: false } }
   if (warnings.length > 0) return { code: template, warnings, changed: false }
   const replacements: Replacement[] = []
-  visit(root.children, dispatcher, replacements, warnings)
+  visit(root.children, { dispatcher, references: options.references === true, scope: new Set(), once: false }, replacements, warnings)
   return { code: apply(template, replacements), warnings, changed: replacements.length > 0 }
 }
 
 /** 处理完整 Vue SFC，选择无名称冲突的运行时导入并保持重复处理幂等。 */
-export function transformAutoTrackSfc(source: string, runtimeImport = 'gio-uniapp-autotracker/autotrack'): VueSfcTransform {
+export function transformAutoTrackSfc(source: string, runtimeImport = 'gio-uniapp-autotracker/autotrack', options: AutoTrackTransformOptions = {}): VueSfcTransform {
   const parsed = parseSfc(source)
   if (parsed.errors.length > 0) return { code: source, changed: false, warnings: parsed.errors.map((error) => ({ code: 'sfc_parse_error', offset: typeof error === 'object' && 'loc' in error ? error.loc?.start.offset ?? 0 : 0 })) }
   const { template, script, scriptSetup } = parsed.descriptor
@@ -276,7 +305,7 @@ export function transformAutoTrackSfc(source: string, runtimeImport = 'gio-uniap
   let dispatcher = 'gioAutoTrack'
   for (let suffix = 1; [...names].some((name) => name.startsWith(dispatcher)); suffix++) dispatcher = `gioAutoTrack${suffix}`
   dispatcher = existing ?? dispatcher
-  const transformed = transformAutoTrackTemplate(template.content, dispatcher)
+  const transformed = transformAutoTrackTemplate(template.content, dispatcher, options)
   const warnings = transformed.warnings.map((warning) => ({ ...warning, offset: warning.offset + template.loc.start.offset }))
   if (!transformed.changed) return { code: source, warnings, changed: false }
   if (unsafeOptions) return { code: source, changed: false, warnings: [...warnings, { code: 'complex_component_options', offset: script?.loc.start.offset ?? 0 }] }
@@ -318,7 +347,9 @@ export function gioUniappAutoTrack(options?: string | UniAppAutoTrackViteOptions
       if (typeof options !== 'string' && options?.enabled === false) return null
       if (id.endsWith('.nvue')) { this?.warn?.(`[gio-uniapp-autotrack] ${id}:0 .nvue_not_instrumented`); return null }
       if (!id.endsWith('.vue')) return null
-      const result = transformAutoTrackSfc(source, runtimeImport)
+      // App 端模板编译固定开启 cacheHandlers；小程序编译器按渲染时取值，不改写函数引用。
+      const references = ['app', 'app-plus', 'app-harmony'].includes(process.env.UNI_PLATFORM ?? '')
+      const result = transformAutoTrackSfc(source, runtimeImport, { references })
       for (const warning of result.warnings) this?.warn?.(`[gio-uniapp-autotrack] ${id}:${warning.offset} ${warning.code}`)
       return result.changed ? { code: result.code } : null
     },

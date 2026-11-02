@@ -51,7 +51,7 @@ xpath = `${id}#${eventName}`
 | 运行端 | Android、iOS、HarmonyOS App |
 | 支持动作 | 内置组件的 `click` / `tap`；白名单组件的 `change`；input / textarea 独立声明的 `blur` 或 `confirm`；`uni-link`；tabBar |
 | Vite 顺序 | `gioUniappAutoTrack()` 必须在 `uni()` 前 |
-| 不支持 | `.nvue`、Vue 2 / Webpack、H5 DOM 委托、web-view 内 H5、动态事件名、自定义组件、带事件修饰符的 listener、无法安全改写的复杂表达式 |
+| 不支持 | `.nvue`、Vue 2 / Webpack、H5 DOM 委托、web-view 内 H5、动态事件名、自定义组件、无法安全改写的复杂表达式；小程序端的函数引用 |
 
 不支持不等于业务报错：插桩器保持原模板表达式不变，输出可定位的构建告警；SDK 不尝试全局 DOM 监听或全局改写 `App/Page/Component` 来补采。
 
@@ -61,7 +61,7 @@ xpath = `${id}#${eventName}`
 
 1. 敏感组件直接忽略，整个自动采集事件不生成；`data-growing-track` 不能覆盖；
 2. 普通模板 `data-index` 与小程序、uni-app x 对齐，只接受大于 0 且小于 2147483647 的规范十进制整数；
-3. 事件修饰符不纳入一期支持，原模板保持不变并输出构建告警。
+3. 事件修饰符随所修饰的 handler 一起插桩：探针位于修饰符包裹的 handler 内，只随业务 handler 实际执行（见 4.3）。
 
 ## 3. 协议和内部数据边界
 
@@ -142,27 +142,31 @@ Vite 先使用 `@vue/compiler-sfc.parse()` 取得完整 template block 和准确
 
 | 表达式 | 传入的 `eventName` | 说明 |
 |---|---|---|
-| `@tap="submit"` | 不插桩 | 保留 Vue 对函数引用的求值、缓存和调用语义 |
+| `@tap="submit"` | App：`submit`；小程序：不插桩 | 按 Vue 缓存产物 `submit && submit(...args)` 改写，见下文函数引用规则 |
 | `@tap="submit(item)"` | `submit` | 取 CallExpression 的 callee |
-| `@click="actions.save"` | 不插桩 | 不额外读取 getter 或改写引用 |
+| `@click="actions.save"` | App：`actions.save`；小程序：不插桩 | getter 读取次数与 Vue 缓存产物一致 |
 | `@click="actions.save(item)"` | `actions.save` | 非计算成员调用 |
+| `@click="actions[key](item)"` | 原生事件名，如 `click` | 计算成员调用，输出 `event_name_fallback` |
 | `@click="ready ? save : cancel"` | 不插桩 | 原表达式返回函数，绝不能改成调用 |
 | `@click="ready ? save($event) : cancel($event)"` | `save` 或 `cancel` | 条件只求值一次，保持原分支执行 |
 | `@click="(event) => save(event)"` | `save` | 可从匿名表达式内找到唯一可读方法路径 |
 | 无可读方法路径但可安全改写 | 对应静态原生事件名，如 `click` / `tap` / `change` | 与 uni-app x 的明确 fallback 一致 |
 | `v-on:[name]`、无 handler、无法安全改写 | 不插桩 | 保留原表达式并给出 warning |
 
-计算属性路径（如 `actions[key]`）不能伪造成 `actions.key`，一期直接按 `complex_handler` 跳过，不以原生事件名冒充一个动态业务 handler。支持的条件表达式按“条件只求值一次 → 选择分支 → 派发该分支名 → 执行原表达式”处理，不能在条件外预先报固定的 `save` 或 `cancel`。所有重写保持：原 handler 一次调用、完整参数列表、this、arguments、返回值、抛错和求值次数不变；SDK 探针及元数据求值异常隔离，不得影响后续业务表达式。
+计算属性路径（如 `actions[key]`）不能伪造成 `actions.key`。计算成员调用 `actions[key](item)` 本身就是一条内联语句，Vue 编译为 `$event => actions[key](item)`；探针插在它前面，不读取计算成员，成员仍只在原位置求值一次，因此可以插桩，事件名回退为静态原生事件名并输出 `event_name_fallback`。可选调用 `a?.()`、`a?.[k]()` 在目标为空时不执行业务，仍不插桩。
+
+函数引用只在 App 构建改写。App 端模板编译固定开启 `cacheHandlers`，Vue 把成员表达式监听器编译为 `(...args) => ref && ref(...args)`。插桩产物按同一形态生成 `(...args)=>{let h=ref;if(!h)return h;probe(args[0]);return ref(...args)}`：参数全部透传、空值时业务与探针都不执行、`a.b` 的 this 不变、getter 读取次数与原产物相同。以下情况 Vue 不缓存、按渲染时取值，改写会改变读取时机，因此保持原样并输出 `complex_handler`：引用中出现 v-for 别名或 v-slot 参数、位于 v-once 内、带 TypeScript 包装或以 `this` 开头。小程序编译器默认不缓存监听器，引用在渲染时读取并支持数组 handler，同样不改写。插件按 `UNI_PLATFORM`（`app`、`app-plus`、`app-harmony`）判断是否为 App 构建。支持的条件表达式按“条件只求值一次 → 选择分支 → 派发该分支名 → 执行原表达式”处理，不能在条件外预先报固定的 `save` 或 `cancel`。所有重写保持：原 handler 一次调用、完整参数列表、this、arguments、返回值、抛错和求值次数不变；SDK 探针及元数据求值异常隔离，不得影响后续业务表达式。
 
 Options API、普通 `setup()` 与 `<script setup>` 的最终事件口径相同，但代码生成路径必须分开验证，不能用一个字符串前缀覆盖全部场景：
 
 | 原 listener 形态 | 插桩要求 |
 |---|---|
-| 纯方法引用 `@click="submit"` | 原样保留，不插桩并输出 `complex_handler` |
+| 纯方法引用 `@click="submit"` | App 按 Vue 缓存产物改写；小程序、作用域变量与 v-once 内原样保留并输出 `complex_handler` |
 | 内联调用 `@click="submit(item)"` | probe 后执行原表达式一次，参数和返回/抛错保持不变 |
 | 箭头或函数表达式 | 保留原函数与参数，仅在函数体插入探针；异步、生成器、无首参数、解构首参数、严格模式指令等不支持写法原样跳过 |
 | 顶层条件表达式 | 条件只求值一次，probe 与业务调用必须命中同一分支 |
-| 计算成员、嵌套条件、多语句歧义表达式 | 保留原代码，输出 `complex_handler`，一期不插桩 |
+| 计算成员调用 | probe 后执行原表达式一次，事件名回退原生事件名并输出 `event_name_fallback` |
+| 嵌套条件、多语句、可选调用等歧义表达式 | 保留原代码，输出 `complex_handler`，不插桩 |
 
 普通 Options / setup 组件仅向可静态确认的 methods 字面量插入独立名称，不复制组件对象、不改写 setup 的返回值。导出变量、工厂调用、动态 methods、顶层 spread / 计算选项等输出 `complex_component_options` 并保持整份 SFC 原样。
 
@@ -179,13 +183,13 @@ Options API、普通 `setup()` 与 `<script setup>` 的最终事件口径相同�
 | `uni-link` | 自动补充 `click` | `click` | `openURL` |
 | tabBar | `onTabItemTap` | `click` | `onTabItemTap` |
 
-同一 input / textarea 按确定性顺序 `blur → confirm → change` 选择一个已声明的完成事件，只插入一个 `VIEW_CHANGE` probe；未选中的业务 handler 仍完全保留。传统 App 的输入组件不转发底层 DOM change，因此应使用 blur / confirm；仅声明 change 时保留兼容插桩，不承诺 App 会触发，也不注入未声明的监听器或补发业务事件。选中的监听器含不支持的修饰符或表达式时仍保守跳过，不改用低优先级事件。`switch`、`slider`、`radio-group`、`checkbox-group`、`picker`、`picker-view`、`swiper` 的 change 支持仍以白名单和三端真机结果为准。
+同一 input / textarea 按确定性顺序 `blur → confirm → change` 选择一个已声明的完成事件，只插入一个 `VIEW_CHANGE` probe；未选中的业务 handler 仍完全保留。传统 App 的输入组件不转发底层 DOM change，因此应使用 blur / confirm；仅声明 change 时保留兼容插桩，不承诺 App 会触发，也不注入未声明的监听器或补发业务事件。选中的监听器含不支持的表达式时仍保守跳过，不改用低优先级事件。`switch`、`slider`、`radio-group`、`checkbox-group`、`picker`、`picker-view`、`swiper` 的 change 支持仍以白名单和三端真机结果为准。
 
 ### 4.3 不插桩与告警
 
-下列情况不改写业务代码，并输出文件名、偏移量和原因：`sfc_parse_error`、`template_parse_error`、`dynamic_event`、`missing_handler`、`event_modifiers`、`custom_component`、`unsupported_event`、`complex_handler`、`event_name_fallback`、`.nvue_not_instrumented`。其中 `event_name_fallback` 只表示仍可安全插桩但无法获得业务函数名；它上报静态原生事件名，不上报模板路径。
+下列情况不改写业务代码，并输出文件名、偏移量和原因：`sfc_parse_error`、`template_parse_error`、`dynamic_event`、`missing_handler`、`custom_component`、`unsupported_event`、`complex_handler`、`event_name_fallback`、`.nvue_not_instrumented`。其中 `event_name_fallback` 只表示仍可安全插桩但无法获得业务函数名；它上报静态原生事件名，不上报模板路径。
 
-事件修饰符不是一期能力。遇到 `.stop`、`.prevent`、`.once`、`.capture`、`.self` 等修饰符时，不改写 handler、不添加 probe，只输出 `event_modifiers`；原修饰符继续完全由 uni-app/Vue 编译器处理。
+事件修饰符不改变插桩方式。Vue 把 `.stop`、`.prevent`、`.self` 等编译为包在 handler 外层的 `withModifiers(handler, [...])`，`.once`、`.capture`、`.passive` 编译为事件选项；探针位于被包裹的 handler 内，只在修饰符放行、业务 handler 实际执行时触发。小程序端的 `.stop` 编译为 `catch` 绑定，handler 表达式不变。修饰符本身继续完全由 uni-app/Vue 编译器处理。
 
 当前 Vite 插件必须把 AST 返回的 warnings 通过 Vite `this.warn()` 输出；仅生成 warnings 而不透出会让接入方误以为被采集。
 
@@ -206,7 +210,7 @@ Options API、普通 `setup()` 与 `<script setup>` 的最终事件口径相同�
 | `v-for` 中的 `:id` / `:data-index` / `:data-title` / `:data-src` | 取触发瞬间值 | `id` 进入 `xpath`；`data-index` 只进入 `VIEW_CLICK.index`；其余进入各自允许字段 |
 | `@click="select(item)"` 或 `@click="() => select(item)"` | `eventName = select` | 闭包参数照常由原 Vue listener 求值；SDK 不保存 `item` |
 | `@click="ready ? save(item) : cancel(item)"` | `save` 或 `cancel` | 运行时按真实分支先派发相应名称，再执行该分支 listener |
-| `@click="handlers[item.type]"` | 不采集 | 计算成员不是稳定业务 handler 名，输出 `complex_handler` 并保持原代码 |
+| `@click="handlers[item.type]"` | 不采集 | 引用了 v-for 别名，Vue 不缓存该监听器，输出 `complex_handler` 并保持原代码 |
 | `v-on:[eventName]` | 不采集 | 事件种类和 handler 无法在构建期可靠归类，输出 `dynamic_event` |
 
 `v-for` 的 `:key` 只服务 Vue 的虚拟节点复用，不能当作自动采集 id。列表需要稳定元素标识时，业务必须同时提供稳定 `:id`；只有 `data-index` 的列表仍会上报相同的 `#handlerName`，外加合法的 click index。空 id 是正常口径，不回退到模板路径。
@@ -344,7 +348,8 @@ tabBar 不从模板 native event 取 id。页面 lifecycle bridge 将 `onTabItem
 | `v-if` / `v-show` | 仅真实触发的可见/可达分支产生一次事件；不改变 xpath 公式 |
 | `v-for` 动态 id 和 metadata | 每个实例取触发瞬间的 id/dataset；`key` 与循环下标不进入 xpath；`data-index=0` 被忽略，正整数保留 |
 | `v-for` 无 id | 多个实例均为 `#handlerName`；测试明确证明没有结构路径兜底 |
-| 动态计算 handler、动态事件名、动态组件、事件修饰符与 JSX | 输出对应 warning、完全跳过插桩，且业务代码与行为不变 |
+| 作用域内的函数引用、动态事件名、动态组件与 JSX | 输出对应 warning、完全跳过插桩，且业务代码与行为不变 |
+| 函数引用、计算成员调用、事件修饰符 | 与未插桩的 Vue 编译产物对照：参数、this、返回值、getter 次数、空值跳过与修饰符行为不变 |
 | 方法调用、成员路径、箭头、条件分支 | 名称正确；业务 listener 调用次数、参数、返回值、抛错保持不变 |
 | 无可读名称 | 仅安全可改写时回退静态原生事件名并告警；其余不插桩 |
 | `uni-link` | `#openURL` 与静态/动态 href 的 hyperlink 正确 |
@@ -393,4 +398,4 @@ HarmonyOS 任一 `VIEW_CHANGE` 组件不能证明事件到达、值归一、业�
 
 ## 业务行为保护补充
 
-动态 `data-title`、`data-index`、`data-src` 和隐私标记依赖原生事件的 dataset；编译器仅复制无副作用的字面量。动态 href 不会在点击时再次读取，需采集时可在业务模板中明确声明 `data-src`。不应为增加采集范围而把客户原有函数引用改成调用。源码转换前后使用真实 Vue listener 对照验证参数、this、返回值、异常、条件/元数据 getter 次数和组件选项 getter 时机；不支持的写法保持整份表达式或 SFC 原样。
+动态 `data-title`、`data-index`、`data-src` 和隐私标记依赖原生事件的 dataset；编译器仅复制无副作用的字面量。动态 href 不会在点击时再次读取，需采集时可在业务模板中明确声明 `data-src`。不应为增加采集范围而把客户原有函数引用改成普通调用；App 端只按 Vue 缓存产物的等价形态改写。源码转换前后使用真实 Vue listener 对照验证参数、this、返回值、异常、条件/元数据 getter 次数和组件选项 getter 时机；不支持的写法保持整份表达式或 SFC 原样。

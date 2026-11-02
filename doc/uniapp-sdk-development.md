@@ -566,11 +566,11 @@ Vite 插件不得直接构建网络事件，它只调用 runtime 的稳定 schem
 
 ### 7.3 click 支持规则
 
-一期支持白名单内置组件上没有修饰符的静态 `@click`、`@tap`，以及 `uni-link` 和 TabBar。普通元素没有业务 handler 时不凭空添加 listener；只有 `uni-link` 可以按明确宿主语义补充 `openURL` 采集 handler。动态事件名、自定义组件、计算成员/复杂表达式和带 `.stop`、`.prevent`、`.once`、`.capture`、`.self` 等修饰符的 listener 均保持原代码、不插桩并输出构建告警。
+支持白名单内置组件上的静态 `@click`、`@tap`（含事件修饰符），以及 `uni-link` 和 TabBar。普通元素没有业务 handler 时不凭空添加 listener；只有 `uni-link` 可以按明确宿主语义补充 `openURL` 采集 handler。动态事件名、自定义组件、复杂表达式以及小程序端和作用域内的函数引用均保持原代码、不插桩并输出构建告警；计算成员调用可插桩，事件名回退原生事件名。
 
 对可安全插桩的 handler，必须按纯方法引用、内联调用、箭头/函数表达式和顶层条件表达式分别生成代码，保证原 handler 只执行一次，`$event`、参数、返回值、抛错与求值次数不变。Options API、普通 `setup()` 与 `<script setup>` 的事件名口径相同，但 import 注入、模板绑定和 Ref 自动解包必须分别验证；完整改写矩阵以[无埋点方案](./uniapp-autotrack-design.md#41-推导规则)为准。
 
-编译器注入的调用必须在原 handler 之前执行且永不 await：这样业务 handler 即使立即跳转/销毁页面，自动采集仍使用触发瞬间的 pageKey 和元素元数据。采集侧异常由 dispatcher 吞掉并记诊断；业务 handler 的返回值、抛错、参数个数以及调用次数不受影响。带修饰符的 listener 根本不进入这条改写链。
+编译器注入的调用必须在原 handler 之前执行且永不 await：这样业务 handler 即使立即跳转/销毁页面，自动采集仍使用触发瞬间的 pageKey 和元素元数据。采集侧异常由 dispatcher 吞掉并记诊断；业务 handler 的返回值、抛错、参数个数以及调用次数不受影响。带修饰符的 listener 中，探针位于修饰符包裹的 handler 内，只随业务 handler 执行。
 
 ### 7.4 change 支持规则
 
@@ -953,7 +953,7 @@ export default defineConfig({
 - `data-*` 元数据与静态 input type；
 - 对 `uni-link` 等无业务 handler 的组件添加只采集调用。
 
-SFC block 必须由 `@vue/compiler-sfc` 提取，template 内容再交给 `@vue/compiler-dom`；禁止用正则截取 SFC。普通元素缺失 handler、动态事件名、计算成员、复杂嵌套表达式、自定义组件事件和任何事件修饰符都不在一期范围内，必须报清晰的 build warning 并保留原业务代码。绝不能生成会改变业务 handler 参数/返回值的“半正确”代码。
+SFC block 必须由 `@vue/compiler-sfc` 提取，template 内容再交给 `@vue/compiler-dom`；禁止用正则截取 SFC。普通元素缺失 handler、动态事件名、复杂嵌套表达式和自定义组件事件都不在支持范围内，必须报清晰的 build warning 并保留原业务代码。绝不能生成会改变业务 handler 参数/返回值的“半正确”代码。
 
 ### 12.3 改写时序
 
@@ -1068,7 +1068,7 @@ type Capability = {
 - 普通元素无 handler 时不插桩并告警；`uni-link` 无 handler 时只补 `openURL` 探针；
 - 普通方法 / 带 event 的方法 / 带业务参数的方法；
 - 内联表达式、箭头函数、三元表达式；
-- 修饰符保持源码、不插桩并产生可定位 warning；
+- 修饰符保持在外层，探针只随被修饰的业务 handler 执行；
 - `v-for` 动态 dataset；
 - input password、safe-password 与动态 password 即使带 track 也只保留无值 `VIEW_CHANGE`；显式 sensitive、file 与动态 type 仍不生成事件；
 - input / textarea / switch / slider / radio / checkbox / picker / picker-view / swiper；

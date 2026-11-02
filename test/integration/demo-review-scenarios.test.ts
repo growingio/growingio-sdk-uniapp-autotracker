@@ -70,15 +70,18 @@ async function demo(route: string, initialNetwork = 'wifi', debug = false) {
   }
   for (const name of ['auto-track-script-setup', 'auto-track-setup-alias', 'uni-link', 'auto-track-boundary-emit']) {
     const componentSource = readFileSync(resolve(import.meta.dirname, `../../demo/components/${name}/${name}.vue`), 'utf8')
-    modules[`@/components/${name}/${name}.vue`] = { default: compileAutoTrackSfc(componentSource, dispatch).component }
+    modules[`@/components/${name}/${name}.vue`] = { default: compileAutoTrackSfc(componentSource, dispatch, {}, true, [], app).component }
   }
   // uni-link 须挂载真实 navigator 并执行 emit，不能用原生标签替身跳过组件逻辑。
-  const fixture = mountAutoTrackSfc(source, dispatch, modules, true, ['uni-link'])
+  const fixture = mountAutoTrackSfc(source, dispatch, modules, true, ['uni-link'], app)
   fixtures.push(fixture)
-  expect(fixture.transformed.warnings).toEqual([])
+  // 计算成员调用无法得到业务函数名，是验收页唯一预期的构建提示。
+  expect(fixture.transformed.warnings.map(warning => warning.code)).toEqual(route === 'autotrack' ? ['event_name_fallback'] : [])
   return { fixture, received, host, hooks, page, gdp, dataCollectionState, dispatch, probeCount: () => probeCount, setNetwork: (value: string) => { network = value } }
 }
 
+// 受控宿主模拟 App，按 App 构建开启函数引用插桩。
+const app = { references: true } as const
 let eventSequence = 0
 /** 依据当前渲染节点构造 dataset 和目标快照，避免使用过期静态元数据。 */
 function nativeEvent(fixture: Fixture, id: string, name = 'onClick', detail: unknown = {}) {
@@ -500,16 +503,28 @@ describe('实际 demo 页面中的修复场景', () => {
     ])
   })
 
+  it('函数引用、计算成员调用与 .stop 修饰符各采集一次，业务语义不变', async () => {
+    const { fixture, received } = await demo('autotrack')
+    const state = fixture.instance as unknown as { actionCount: number }
+    const before = state.actionCount
+    const reference = nativeEvent(fixture, 'reference-action', 'onTap')
+    expect(fireEvent(fixture, 'reference-action', 'onTap', reference)).toBe(1)
+    fire(fixture, 'computed-action', 'onTap')
+    const stopped = nativeEvent(fixture, 'modifier-stop', 'onTap')
+    fireEvent(fixture, 'modifier-stop', 'onTap', stopped)
+    expect(stopped.stopPropagation).toHaveBeenCalledOnce()
+    expect(state.actionCount - before).toBe(3)
+    expect(received.filter(event => event.eventType === 'VIEW_CLICK').map(event => event.xpath)).toEqual([
+      'reference-action#onReferenceAction', 'computed-action#tap', 'modifier-stop#onModifierStop',
+    ])
+  })
+
   it('负向边界页无编译告警，真实组件 emit 和全部原业务回调仍执行', async () => {
     const { fixture, received } = await demo('autotrack-boundary')
-    expect(fixture.transformed.warnings).toEqual([])
-    for (const id of ['boundary-reference', 'boundary-computed', 'boundary-emit-inner']) fire(fixture, id, 'onTap')
+    fire(fixture, 'boundary-emit-inner', 'onTap')
     fire(fixture, 'boundary-dynamic', 'onClick')
-    const stopped = nativeEvent(fixture, 'boundary-stop', 'onTap')
-    fireEvent(fixture, 'boundary-stop', 'onTap', stopped)
-    expect(stopped.stopPropagation).toHaveBeenCalledOnce()
     fire(fixture, 'boundary-input', 'onInput', { value: 'demo-typing' })
-    expect((fixture.instance as unknown as { count: number }).count).toBe(6)
+    expect((fixture.instance as unknown as { count: number }).count).toBe(3)
     expect(received.some(event => event.eventType.startsWith('VIEW_'))).toBe(false)
     expect(JSON.stringify(received)).not.toContain('demo-typing')
   })

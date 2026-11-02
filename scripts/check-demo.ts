@@ -43,8 +43,10 @@ for (const file of required.filter((file) => file.endsWith('.vue'))) {
   if (source.includes('page-lifecycle') || source.includes("from '../../analytics'") || source.includes('$gio')) {
     throw new Error(`demo page must not import lifecycle or expose a tracker instance: ${file}`)
   }
-  const warnings = transformAutoTrackSfc(source).warnings
-  if (warnings.length > 0) throw new Error(`demo must compile without collection warnings: ${file}: ${warnings.map(warning => warning.code).join(', ')}`)
+  // App 构建会改写函数引用；计算成员调用只能回退原生事件名，是验收页唯一预期的提示。
+  const expected = file === 'demo/pages/autotrack/autotrack.vue' ? 'event_name_fallback' : ''
+  const warnings = transformAutoTrackSfc(source, undefined, { references: true }).warnings.map(warning => warning.code).join(', ')
+  if (warnings !== expected) throw new Error(`demo must compile without unexpected collection warnings: ${file}: ${warnings}`)
 }
 
 for (const file of ['demo/main.ts', 'demo/vite.config.ts']) {
@@ -88,8 +90,8 @@ const viteConfig = readFileSync(resolve(root, 'demo/vite.config.ts'), 'utf8')
 if (!viteConfig.includes('__GIO_AUTOTRACK_VERIFICATION__: true')) throw new Error('demo must explicitly enable the autotrack verification build')
 
 const autoTrackPage = readFileSync(resolve(root, 'demo/pages/autotrack/autotrack.vue'), 'utf8')
-const transformed = transformAutoTrackSfc(autoTrackPage, '@/uni_modules/gio-uniapp-autotracker/autotrack.js')
-if (!transformed.changed || transformed.warnings.length > 0 || !transformed.code.includes('dispatchAutoTrack as gioAutoTrack') || !transformed.code.includes('ignored:&quot;&quot;') || !transformed.code.includes('sensitive:true') || !transformed.code.includes('schemaVersion:2') || !transformed.code.includes('eventName:&quot;openURL&quot;') || transformed.code.includes('xpath:')) {
+const transformed = transformAutoTrackSfc(autoTrackPage, '@/uni_modules/gio-uniapp-autotracker/autotrack.js', { references: true })
+if (!transformed.changed || transformed.warnings.some(warning => warning.code !== 'event_name_fallback') || !transformed.code.includes('eventName:&quot;onReferenceAction&quot;') || !transformed.code.includes('dispatchAutoTrack as gioAutoTrack') || !transformed.code.includes('ignored:&quot;&quot;') || !transformed.code.includes('sensitive:true') || !transformed.code.includes('schemaVersion:2') || !transformed.code.includes('eventName:&quot;openURL&quot;') || transformed.code.includes('xpath:')) {
   throw new Error('auto-track showcase must compile without warnings to dispatcher calls that preserve ignore and sensitive markers')
 }
 for (const file of [
@@ -101,7 +103,7 @@ for (const file of [
   const result = transformAutoTrackSfc(readFileSync(resolve(root, file), 'utf8'), '@/uni_modules/gio-uniapp-autotracker/autotrack.js')
   if (!result.changed || result.warnings.length > 0) throw new Error(`auto-track demo component must compile without warnings: ${file}`)
 }
-for (const marker of ['currentTarget 无 id', 'v-if 用例', 'v-show 用例', '<auto-track-script-setup', '<auto-track-setup-alias', 'data-growing-sensitive', '<uni-link', 'input-all-completions', 'privacy-ignore-toggle', 'bubble-child', 'picker-static-columns', 'banner-tracked', 'boundary-text', 'list-update', 'boundary-route']) {
+for (const marker of ['currentTarget 无 id', 'v-if 用例', 'v-show 用例', '<auto-track-script-setup', '<auto-track-setup-alias', 'data-growing-sensitive', '<uni-link', 'input-all-completions', 'privacy-ignore-toggle', 'bubble-child', 'picker-static-columns', 'banner-tracked', 'boundary-text', 'list-update', 'boundary-route', 'reference-action', 'computed-action', 'modifier-stop']) {
   if (!autoTrackPage.includes(marker)) throw new Error(`auto-track showcase is missing acceptance case: ${marker}`)
 }
 

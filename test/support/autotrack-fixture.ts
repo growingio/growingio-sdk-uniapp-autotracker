@@ -1,7 +1,7 @@
 import * as Vue from 'vue'
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
 import ts from 'typescript'
-import { transformAutoTrackSfc } from '../../src/compiler/vite.js'
+import { transformAutoTrackSfc, type AutoTrackTransformOptions } from '../../src/compiler/vite.js'
 import { CHANGE_ELEMENTS, TEMPLATE_ELEMENTS } from '../../src/plugins/gioEventAutoTracking/contract.js'
 import type { AppCapabilityProfile } from '../../src/constants/platform.js'
 
@@ -44,8 +44,8 @@ function makeNode(type: string): TestNode {
 }
 
 /** 使用真实 SFC 编译器编译原始或插桩源码，并注入受控模块与探针接收器。 */
-export function compileAutoTrackSfc(source: string, dispatch: (...args: unknown[]) => unknown, modules: Record<string, unknown> = {}, instrument = true, componentTags: readonly string[] = []) {
-  const transformed = instrument ? transformAutoTrackSfc(source, '@sdk/runtime') : { code: source, warnings: [], changed: false }
+export function compileAutoTrackSfc(source: string, dispatch: (...args: unknown[]) => unknown, modules: Record<string, unknown> = {}, instrument = true, componentTags: readonly string[] = [], options: AutoTrackTransformOptions = {}) {
+  const transformed = instrument ? transformAutoTrackSfc(source, '@sdk/runtime', options) : { code: source, warnings: [], changed: false }
   const { descriptor } = parse(transformed.code)
   const script = compileScript(descriptor, { id: 'gio-test', genDefaultAs: '__Component' })
   const isTS = (descriptor.scriptSetup?.lang ?? descriptor.script?.lang) === 'ts'
@@ -74,8 +74,8 @@ export function compileAutoTrackSfc(source: string, dispatch: (...args: unknown[
 }
 
 /** 以受控 Vue 渲染器挂载编译结果，暴露节点查询、触发和卸载能力。 */
-export function mountAutoTrackSfc(source: string, dispatch: (...args: unknown[]) => unknown, modules: Record<string, unknown> = {}, instrument = true, componentTags: readonly string[] = []) {
-  const { transformed, component } = compileAutoTrackSfc(source, dispatch, modules, instrument, componentTags)
+export function mountAutoTrackSfc(source: string, dispatch: (...args: unknown[]) => unknown, modules: Record<string, unknown> = {}, instrument = true, componentTags: readonly string[] = [], options: AutoTrackTransformOptions = {}) {
+  const { transformed, component } = compileAutoTrackSfc(source, dispatch, modules, instrument, componentTags, options)
   const renderer = Vue.createRenderer<TestNode, TestNode>({
     createElement: makeNode,
     /** 创建独立文本节点，保留实际渲染文案。 */
