@@ -203,7 +203,7 @@ export function createApp() {
 
 ### 页面识别和上下文
 
-继续使用 Vue 接入和纯数据快照。每个平台验证 `$mpType`、`$scope`、路由和页面实例的实际形态，只转发明确属于 App 或 Page 的生命周期；普通组件、无法识别的页面不能回退成 App，避免生成额外 VISIT 或 APP_CLOSED。
+继续使用 Vue 接入和纯数据快照。每个平台验证 `$mpType`、`$scope`、路由和页面实例的实际形态，只转发明确属于 App 或 Page 的生命周期；普通组件、无法识别的页面不能回退成 App，避免生成额外 VISIT 或 APP_CLOSED。App 端同样适用：实例声明了 `$mpType` 时只有 `app` 被当作 App，声明为 `page` 但读不到路由的实例被忽略；只有未声明类型的旧宿主沿用“不是页面即 App”的判断。
 
 本机微信运行时代码为原生页面的 `$page` 设置的是 `fullPath`，因此当前读取 `$page.route` 的逻辑不能直接视为已适配。路由读取应兼容已验证的原生页面 `route`、Vue 页面元数据及现有 `__route__`；同路由多实例继续使用独立实例标识，不能以 route 作为唯一页面键。
 

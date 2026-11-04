@@ -124,6 +124,59 @@ describe('AppSystemContextPort', () => {
     })
   })
 
+  it.each([[400, 880], [840, 900]])('Android 折叠屏（铰链传感器）折叠或展开（%s×%s dp）都上报 FOLD', async (width, height) => {
+    const activity = {}
+    const packageManager = {}
+    const invoke = vi.fn((value: unknown, method: string, feature?: string) => value === activity && method === 'getPackageManager' ? packageManager
+      : value === packageManager && method === 'hasSystemFeature' ? feature === 'android.hardware.sensor.hinge_angle' : '')
+    vi.stubGlobal('plus', { android: { runtimeMainActivity: () => activity, invoke } })
+    const port = new AppSystemContextPort({
+      getDeviceInfo: () => ({ platform: 'android', screenWidth: width, screenHeight: height }), getSystemInfoSync: () => ({}), getAppBaseInfo: () => ({ packageName: 'com.example' }),
+    }, '0.1.0', null)
+    await expect(port.load()).resolves.toMatchObject({ deviceType: 'FOLD' })
+  })
+
+  it('Android 折叠特性查询失败或不支持时回退 600dp 规则', async () => {
+    vi.stubGlobal('plus', { android: { runtimeMainActivity: () => ({}), invoke: () => { throw new Error('native_unavailable') } } })
+    const port = new AppSystemContextPort({
+      getDeviceInfo: () => ({ platform: 'android', screenWidth: 800, screenHeight: 1280 }), getSystemInfoSync: () => ({}), getAppBaseInfo: () => ({ packageName: 'com.example' }),
+    }, '0.1.0', null)
+    await expect(port.load()).resolves.toMatchObject({ deviceType: 'PAD' })
+    vi.stubGlobal('plus', { android: { runtimeMainActivity: () => ({}), invoke: (_value: unknown, method: string) => method === 'getPackageManager' ? {} : false } })
+    await expect(port.load()).resolves.toMatchObject({ deviceType: 'PAD' })
+  })
+
+  it.each([['phone', 800, 'PHONE'], ['pad', 360, 'PAD'], ['pc', 800, 'PAD']] as const)('Android 优先采用 uni.getDeviceInfo().deviceType=%s，取不到才按 600dp 推断', async (reported, width, expected) => {
+    const port = new AppSystemContextPort({
+      getDeviceInfo: () => ({ platform: 'android', deviceType: reported, screenWidth: width, screenHeight: 1280 }),
+      getSystemInfoSync: () => ({}), getAppBaseInfo: () => ({ packageName: 'com.example' }),
+    }, '0.1.0', null)
+    await expect(port.load()).resolves.toMatchObject({ deviceType: expected })
+  })
+
+  it('鸿蒙优先读取官方 bundleName，空串时回退 packageName 与宿主包名，不调用 Native.js', async () => {
+    const invoke = vi.fn(() => 'native.should.not.be.used')
+    vi.stubGlobal('plus', { android: { runtimeMainActivity: () => ({}), invoke }, ios: { invoke } })
+    const load = (app: Record<string, unknown>, system: Record<string, unknown> = {}) => new AppSystemContextPort({
+      getDeviceInfo: () => ({ platform: 'harmonyos' }), getSystemInfoSync: () => system, getAppBaseInfo: () => app,
+    }, '0.1.0', null).load()
+    await expect(load({ bundleName: 'com.example.harmony', packageName: 'com.other' })).resolves.toMatchObject({ domain: 'com.example.harmony' })
+    await expect(load({ bundleName: ' ', packageName: 'com.example.package' })).resolves.toMatchObject({ domain: 'com.example.package' })
+    await expect(load({ bundleName: '', hostPackageName: '' }, { hostPackageName: 'com.example.host' })).resolves.toMatchObject({ domain: 'com.example.host' })
+    await expect(load({})).resolves.toMatchObject({ domain: '' })
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('Android / iOS 官方包名字段可用时不调用 Native.js', async () => {
+    const invoke = vi.fn(() => 'native.should.not.be.used')
+    vi.stubGlobal('plus', { android: { runtimeMainActivity: () => ({}), invoke: (value: unknown, method: string) => method === 'getPackageManager' ? {} : method === 'hasSystemFeature' ? false : invoke() }, ios: { invoke } })
+    const android = new AppSystemContextPort({ getDeviceInfo: () => ({ platform: 'android' }), getSystemInfoSync: () => ({}), getAppBaseInfo: () => ({ packageName: 'com.example.android' }) }, '0.1.0', null)
+    const ios = new AppSystemContextPort({ getDeviceInfo: () => ({ platform: 'ios' }), getSystemInfoSync: () => ({}), getAppBaseInfo: () => ({ bundleId: 'com.example.ios' }) }, '0.1.0', null)
+    await expect(android.load()).resolves.toMatchObject({ domain: 'com.example.android' })
+    await expect(ios.load()).resolves.toMatchObject({ domain: 'com.example.ios' })
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
   it('classifies Android device type from the standard 600dp shortest-edge threshold', async () => {
     const port = new AppSystemContextPort({
       getDeviceInfo: () => ({ platform: 'android', deviceType: 'unknown', screenWidth: 800, screenHeight: 1280 }),

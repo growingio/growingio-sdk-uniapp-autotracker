@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createAppTracker, type AppRuntimeHost } from '../../src/platform/index.js'
+import { APP_QUEUE_PERSIST_DELAY_MS } from '../../src/core/storage/index.js'
 import type { ProtocolEvent } from '../../src/core/dataStore/protocol.js'
 
 type NetworkNotification = Readonly<{ networkType?: unknown; isConnected?: unknown }>
@@ -66,11 +67,11 @@ describe.each(['android', 'ios', 'harmonyos'])('%s App 自动补发', platform =
     f.tracker.init({ accountId: 'account', dataSourceId: 'source' })
     await f.tracker.whenReady()
     f.tracker.onAppShow({ path: 'pages/home', query: '' })
-    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(APP_QUEUE_PERSIST_DELAY_MS)
     const saved = f.tracker.queuedEvents()
     const attributes = Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`field_${index}`, '中😀'.repeat(500)]))
     for (let index = 0; index < 20; index++) expect(f.tracker.track('offline_event', { ...attributes, index })).toBe(true)
-    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(APP_QUEUE_PERSIST_DELAY_MS)
     expect(f.tracker.queuedEvents()).toHaveLength(21)
     const persisted = f.storage.get('gio:v1:source:queue:v1')!
     const persistedEvents = JSON.parse(persisted).entries.map((entry: { event: ProtocolEvent }) => entry.event)
@@ -79,7 +80,7 @@ describe.each(['android', 'ios', 'harmonyos'])('%s App 自动补发', platform =
     expect(persistedEvents.slice(0, saved.length)).toEqual(saved)
     quotaReached = false
     expect(f.tracker.track('storage_recovered')).toBe(true)
-    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(APP_QUEUE_PERSIST_DELAY_MS)
     expect(JSON.parse(f.storage.get('gio:v1:source:queue:v1')!).entries.map((entry: { event: ProtocolEvent }) => entry.event))
       .toEqual(f.tracker.queuedEvents())
     expect(f.received).toEqual([])
@@ -97,7 +98,7 @@ describe.each(['android', 'ios', 'harmonyos'])('%s App 自动补发', platform =
     for (let index = 0; index < count; index++) {
       expect(f.tracker.track('offline_event', { ...attributes, index })).toBe(true)
     }
-    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(APP_QUEUE_PERSIST_DELAY_MS)
     const cached = f.tracker.queuedEvents()
     expect(cached).toHaveLength(count + 1)
     const persisted = f.storage.get('gio:v1:source:queue:v1')!
@@ -110,7 +111,7 @@ describe.each(['android', 'ios', 'harmonyos'])('%s App 自动补发', platform =
     expect(await restarted.tracker.whenReady()).toBe(true)
     expect(restarted.tracker.queuedEvents()).toEqual(cached)
     restarted.reconnect()
-    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(APP_QUEUE_PERSIST_DELAY_MS)
     expect(restarted.received).toEqual(cached)
     expect(restarted.tracker.queuedEvents()).toEqual([])
     const requests = vi.mocked(restarted.host.request).mock.calls
@@ -162,13 +163,13 @@ describe.each(['android', 'ios', 'harmonyos'])('%s App 自动补发', platform =
     const persisted = JSON.parse(f.storage.get('gio:v1:source:queue:v1')!)
     expect(persisted.entries[0].retryCount).toBe(0)
     f.reconnect()
-    await vi.advanceTimersByTimeAsync(2_000)
+    await vi.advanceTimersByTimeAsync(2_000 + APP_QUEUE_PERSIST_DELAY_MS)
     expect(f.received.filter(event => event.eventType === 'CUSTOM')).toEqual(cached)
     expect(f.tracker.queuedEvents()).toEqual([])
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  it.each([503, 400])('服务端持续返回 %s 时不丢弃事件，重启后服务恢复仍能补发', async (status) => {
+  it.each([503, 429, 408])('服务端持续返回 %s 时不丢弃事件，重启后服务恢复仍能补发', async (status) => {
     const f = app(platform, 'normal', 'wifi')
     f.setStatus(status)
     f.tracker.init({ accountId: 'account', dataSourceId: 'source' })
@@ -193,6 +194,30 @@ describe.each(['android', 'ios', 'harmonyos'])('%s App 自动补发', platform =
     expect(restarted.tracker.queuedEvents()).toEqual([])
   })
 
+  it('批次被 400 拒绝时拆批定位坏事件，单条累计被拒 3 次后丢弃，同批正常事件照常送达', async () => {
+    const f = app(platform, 'normal')
+    const poisonRequests = vi.fn()
+    f.tracker.init({ accountId: 'account', dataSourceId: 'source' })
+    await f.tracker.whenReady()
+    f.tracker.onAppShow({ path: 'pages/home', query: '' })
+    for (const name of ['before', 'poison', 'after']) f.tracker.track(name)
+    f.host.request = vi.fn<AppRuntimeHost['request']>(options => {
+      const events = JSON.parse(options.data) as ProtocolEvent[]
+      if (events.some(event => event.eventName === 'poison')) { poisonRequests(); options.success({ statusCode: 400 }); return }
+      f.received.push(...events)
+      options.success({ statusCode: 204 })
+    })
+    f.reconnect()
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(f.received.map(event => event.eventName ?? event.eventType)).toEqual(expect.arrayContaining(['VISIT', 'before', 'after']))
+    expect(f.received.some(event => event.eventName === 'poison')).toBe(false)
+    expect(f.tracker.queuedEvents()).toEqual([])
+    // 整批 1 次 + 拆分后含坏事件的半批 1 次 + 单条 3 次。
+    expect(poisonRequests).toHaveBeenCalledTimes(5)
+    await vi.advanceTimersByTimeAsync(APP_QUEUE_PERSIST_DELAY_MS)
+    expect(JSON.parse(f.storage.get('gio:v1:source:queue:v1')!).entries).toEqual([])
+  })
+
   it('413 与原生 Android 一致删除对应批次，后续事件照常发送', async () => {
     const f = app(platform, 'normal', 'wifi')
     f.setStatus(413)
@@ -215,7 +240,7 @@ describe.each(['android', 'ios', 'harmonyos'])('%s App 自动补发', platform =
     await f.tracker.whenReady()
     f.tracker.onAppShow({ path: 'pages/home', query: '' })
     for (let index = 0; index < 20; index++) f.tracker.track('offline_event', { index })
-    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(APP_QUEUE_PERSIST_DELAY_MS)
     expect(vi.getTimerCount()).toBe(1)
     const reads = query.mock.calls.length
     await vi.advanceTimersByTimeAsync(2_000)
@@ -228,7 +253,7 @@ describe.each(['android', 'ios', 'harmonyos'])('%s App 自动补发', platform =
     expect(query).toHaveBeenCalledTimes(reads + 1)
     f.reconnect()
     f.tracker.onAppShow({ path: 'pages/home', query: '' })
-    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(APP_QUEUE_PERSIST_DELAY_MS)
     expect(f.received.filter(event => event.eventType === 'CUSTOM')).toHaveLength(20)
     expect(f.tracker.queuedEvents()).toEqual([])
     expect(vi.getTimerCount()).toBe(0)

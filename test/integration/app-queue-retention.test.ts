@@ -69,6 +69,9 @@ describe('App 缓存过期的运行时调度', () => {
     let notify: (state: NetworkState) => void = () => undefined
     const storage = new RuntimeStorage()
     const sent: unknown[] = []
+    // 队列落盘在合并窗口后执行；测试按需触发已登记的定时器，不让未授权的重试自动循环。
+    const timers: Array<() => void> = []
+    const runTimers = () => { for (const callback of timers.splice(0)) callback() }
     const create = () => runtimeFixture({
       storage, clock: { now: () => now },
       network: {
@@ -77,14 +80,14 @@ describe('App 缓存过期的运行时调度', () => {
       },
       upload: {
         transport: { dispatch: (request, done) => { sent.push(...JSON.parse(request.body)); done({ kind: 'success', status: 204 }) } },
-        runtime: { now: () => now, random: () => 0.5, setTimeout: () => 1, clearTimeout: () => undefined },
+        runtime: { now: () => now, random: () => 0.5, setTimeout: callback => timers.push(callback), clearTimeout: () => undefined },
       },
     }).tracker
     const first = create()
     first.init(config); first.onAppLaunch(entry); first.onAppShow(entry); await first.whenReady()
     first.track('cached')
     const original = first.queuedEvents()
-    await settleStorage()
+    runTimers(); await settleStorage()
 
     now += APP_QUEUE_RETENTION_MS - 1
     const second = create()
@@ -93,7 +96,7 @@ describe('App 缓存过期的运行时调度', () => {
     expect(second.queuedEvents()).toEqual(original)
     second.onAppLaunch(entry); second.onAppShow(entry)
     second.track('fresh_before_expiry')
-    await settleStorage()
+    runTimers(); await settleStorage()
     expect(JSON.parse(storage.values.get(keys.queue)!).entries).toHaveLength(4)
 
     now++
@@ -102,7 +105,7 @@ describe('App 缓存过期的运行时调度', () => {
     expect(sent).toMatchObject([{ eventType: 'VISIT', timestamp: now - 1 }, { eventName: 'fresh_before_expiry', timestamp: now - 1 }])
     expect(sent).toHaveLength(2)
     expect(second.queuedEvents()).toEqual([])
-    await settleStorage()
+    runTimers(); await settleStorage()
     expect(JSON.parse(storage.values.get(keys.queue)!).entries).toEqual([])
   })
 

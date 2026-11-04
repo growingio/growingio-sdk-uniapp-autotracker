@@ -13,6 +13,27 @@ type HookSet = Readonly<{
 
 describe('installUniAppLifecycle', () => {
   afterEach(() => vi.unstubAllGlobals())
+  it('App 端声明为页面但读不到路由的实例不会被当成 App 前后台', () => {
+    let hooks!: HookSet
+    const calls: string[] = []
+    const target = {
+      onAppLaunch: () => { calls.push('app-launch'); return true }, onAppShow: () => { calls.push('app-show'); return true },
+      onAppHide: () => { calls.push('app-hide'); return true }, onPageLoad: () => { calls.push('page-load'); return true },
+      onPageShow: () => { calls.push('page-show'); return true }, onPageHide: () => { calls.push('page-hide'); return true },
+      onPageUnload: () => { calls.push('page-unload'); return true },
+    }
+    installUniAppLifecycle({ mixin: options => { hooks = options as HookSet } }, target, { host: {} })
+    const routeless = { $mpType: 'page', $page: {} }
+    hooks.onShow.call(routeless, {})
+    hooks.onHide.call(routeless)
+    expect(calls).toEqual([])
+    const declaredApp = { $mpType: 'app' }
+    hooks.onShow.call(declaredApp, { path: 'pages/home' })
+    hooks.onHide.call(declaredApp)
+    hooks.onShow.call({}, { path: 'pages/home' })
+    expect(calls).toEqual(['app-show', 'app-hide', 'app-show'])
+  })
+
   it('owns App and Page lifecycle forwarding through one Vue global mixin', () => {
     let hooks!: HookSet
     const app: UniAppVueApp = {

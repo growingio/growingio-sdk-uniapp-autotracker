@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { APP_QUEUE_LIMITS, APP_QUEUE_RETENTION_MS, EventQueue } from '../../src/core/queue.js'
+import { APP_QUEUE_LIMITS, APP_QUEUE_MAX_ITEMS, APP_QUEUE_RETENTION_MS, EventQueue } from '../../src/core/queue.js'
 import type { ProtocolEvent } from '../../src/core/dataStore/protocol.js'
 
 /** 构造字段齐全且序号可控的协议事件，供容量和批次边界验证。 */
@@ -48,15 +48,57 @@ describe('EventQueue', () => {
     expect(JSON.parse(queue.captureSerializedEntries()())).toEqual([{ requestId: 'q9', retryCount: 0, event: first }])
   })
 
-  it('App 恢复大积压时不受函数参数个数上限影响', () => {
+  it('App 恢复超过上限的大积压时保留最新事件，且不受函数参数个数上限影响', () => {
     const queue = new EventQueue(APP_QUEUE_LIMITS)
     const entries = Array.from({ length: 150_000 }, (_, index) => ({
       requestId: `q${index + 1}`, event: { eventType: 'CUSTOM' as const, eventName: 'cached', eventSequenceId: index + 1 }, retryCount: 0,
     }))
     expect(queue.restore(entries)).toBe(true)
-    expect(queue.size()).toBe(150_000)
-    expect(queue.nextBatch().map(entry => entry.event.eventSequenceId)).toEqual(Array.from({ length: 50 }, (_, index) => index + 1))
-    expect(queue.enqueue(event(150_001))).toEqual({ ok: true, requestId: 'q150001' })
+    expect(queue.size()).toBe(APP_QUEUE_MAX_ITEMS)
+    expect(queue.lastRestoreDropped()).toBe(150_000 - APP_QUEUE_MAX_ITEMS)
+    const oldest = 150_000 - APP_QUEUE_MAX_ITEMS + 1
+    expect(queue.nextBatch().map(entry => entry.event.eventSequenceId)).toEqual(Array.from({ length: 50 }, (_, index) => oldest + index))
+    expect(queue.enqueue(event(150_001))).toEqual({ ok: true, requestId: 'q150001', evicted: 1 })
+    expect(queue.size()).toBe(APP_QUEUE_MAX_ITEMS)
+    expect(queue.nextBatch()[0]!.event.eventSequenceId).toBe(oldest + 1)
+  })
+
+  it('App 队列达到条数上限时淘汰最旧事件，新事件始终可入队', () => {
+    const queue = new EventQueue({ ...APP_QUEUE_LIMITS, maxItems: 3 })
+    for (let index = 1; index <= 3; index++) expect(queue.enqueue(event(index)).ok).toBe(true)
+    expect(queue.enqueue(event(4))).toMatchObject({ ok: true, evicted: 1 })
+    expect(queue.snapshot().map(entry => entry.event.eventSequenceId)).toEqual([2, 3, 4])
+  })
+
+  it('App 队列达到字节上限时按需淘汰多条最旧事件，落盘快照不超过上限', () => {
+    const small = (n: number) => ({ ...event(n), attributes: { v: 'x'.repeat(100) } }) as ProtocolEvent
+    const probe = new EventQueue(APP_QUEUE_LIMITS)
+    probe.enqueue(small(1))
+    const one = probe.serializedEntries().length
+    const limit = one * 5
+    const queue = new EventQueue({ ...APP_QUEUE_LIMITS, maxPersistedBytes: limit })
+    for (let index = 1; index <= 4; index++) expect(queue.enqueue(small(index)).ok).toBe(true)
+    const big = { ...event(5), attributes: { v: 'x'.repeat(one * 2) } } as ProtocolEvent
+    const result = queue.enqueue(big)
+    expect(result.ok).toBe(true)
+    expect(result.ok && result.evicted).toBeGreaterThanOrEqual(2)
+    expect(queue.snapshot().at(-1)!.event.eventSequenceId).toBe(5)
+    expect(Buffer.byteLength(`{"version":1,"revision":9007199254740991,"entries":${queue.serializedEntries()}}`)).toBeLessThanOrEqual(limit)
+  })
+
+  it('恢复时只丢弃无效或重复的条目，保留其余事件', () => {
+    const queue = new EventQueue(APP_QUEUE_LIMITS)
+    const valid = (n: number): ProtocolEvent => ({ eventType: 'CUSTOM', eventName: `event_${n}`, eventSequenceId: n })
+    expect(queue.restore([
+      { requestId: 'q1', event: valid(1), retryCount: 0 },
+      { requestId: 'q2', event: { eventType: 'CUSTOM', eventName: 'forged' } as ProtocolEvent, retryCount: 0 },
+      { requestId: 'q1', event: valid(3), retryCount: 0 },
+      { requestId: 'q4', event: valid(4), retryCount: 0 },
+    ])).toBe(true)
+    expect(queue.snapshot().map(entry => entry.event.eventSequenceId)).toEqual([1, 4])
+    expect(queue.lastRestoreDropped()).toBe(2)
+    expect(queue.restore([{ requestId: 'q9', event: valid(9), retryCount: 0 }, { requestId: 'bad', event: valid(10), retryCount: 0 }], true)).toBe(false)
+    expect(queue.snapshot().map(entry => entry.event.eventSequenceId)).toEqual([1, 4])
   })
 
   it('App 事件满 7 天到期，较新的事件及回拨时钟下的事件仍保留', () => {

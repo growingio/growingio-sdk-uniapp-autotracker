@@ -214,7 +214,7 @@ stateDiagram-v2
   connected --> suspended: 结果未知或有效身份意图失败
   connected --> dormant: App隐藏或本地停采
   connecting --> dormant: App隐藏或本地停采
-  suspended --> connecting: 下次前台或显式恢复
+  suspended --> connecting: 前台内自动恢复、下次前台或显式恢复
   connected --> connecting: 已获知宿主关闭后的恢复探测
   dormant --> disposed: 内部销毁
   connecting --> disposed: 内部销毁
@@ -236,7 +236,7 @@ stateDiagram-v2
 | setOptions(false) | 先关门，再清队列 / timer、失效连接；不等待 Native 回复，不回放旧事件 |
 | 收到 host.dataCollect=false 或可见性 false | 停止新采集，清未发队列和页面基线；已接纳的本条照其结果结束，不改写为失败 |
 | 下一次前台 / 显式启用 | 开新握手轮；只恢复连接，identityBlocked 独立保留 |
-| 事件或身份结果未知 | suspended；本地取消等待并清所有未发操作；不由下一条普通 track 自动解除这种挂起 |
+| 事件或身份结果未知 | suspended；本地取消等待并清所有未发操作；不由下一条普通 track 解除，但前台内按 3 / 6 / 12 / 24 / 30 秒退避自动重新 hello（最多 5 轮，回前台重置）；不重投结果未知的操作，身份阻断仍需新的身份命令解除 |
 | dispose | 标记 disposed、清 timers / 回调 / 队列 / 页面 / 自有监听，随后所有回调短路；不公开为新 gdp 命令 |
 
 宿主独立关闭后又开启、或预加载容器变为可见但没有新 JS App.onShow 时，允许新的采集尝试触发 hello 探测；触发它的调用当次 false，不读取其属性。该探测只用于已知 hostGate 关闭的状态，每轮起点至少间隔 5 秒，且永远只有一轮；不能绕过结果未知后的 suspended 限制。不设常驻轮询。
@@ -249,7 +249,7 @@ stateDiagram-v2
 
 同一时刻只等待一次 hello；超时后发下一代次时旧 Native 请求可能仍存在，因此必须有第 3 节的 Native fencing。JS 忽略旧代次成功，不能借它恢复连接。
 
-期限由独立 SchedulerPort 管理：调度延迟回调、取消回调；生产端包装 JS 定时器，测试端使用可推进的虚拟调度器。每个待发项建立 5 秒到期标记，发送时取消并换成 1 秒应答计时器；本轮 hello 另有 5 秒总计时器。到期只向协调器提交状态变化，由其集中清理与继续队列。墙上时间仅用于事件 timestamp，不用 Date.now 差值计算 TTL，也不假设 uniMP 一定提供 performance.now。
+期限由独立 SchedulerPort 管理：调度延迟回调、取消回调；生产端包装 JS 定时器，测试端使用可推进的虚拟调度器。每个待发项建立 5 秒到期标记，发送时取消并换成 3 秒应答计时器（`HYBRID_RESPONSE_TIMEOUT_MS`）；本轮 hello 另有 5 秒总计时器。到期只向协调器提交状态变化，由其集中清理与继续队列。墙上时间仅用于事件 timestamp，不用 Date.now 差值计算 TTL，也不假设 uniMP 一定提供 performance.now。
 
 这些窗口是 JS 调度器中的等待上限，不是主线程阻塞、系统冻结时仍能兑现的硬实时承诺。后台由 onHide 清理；恢复时优先处理已有生命周期 / 到期标记再 pump，框架实际定时器与生命周期顺序必须做真机验证。不要把 Date.now 钳制为非递减就声称解决了时钟回拨。
 
@@ -261,7 +261,7 @@ stateDiagram-v2
 
 所有未发与在途业务操作合计最多 50 条、其规范化 wire 报文合计最多 256 KiB；每条报文亦受同样字节上限。报文限额是 wire / 排队预算，不声称 JS 进程堆只占这么多。hello 不占业务队列但同样受单报文上限约束。新业务操作超限时拒绝最新项，不挤掉较早身份命令给新事件腾位置。
 
-队列项从本地接纳起最多等 5 秒才可调用 module；一旦调用转入最多 1 秒的应答窗口，两段分别计时。到期的普通事件丢弃并继续；PAGE 到期处理其依赖；身份到期按第 7 节终止本轮。身份命令和用户属性不得走旁路抢在事件前执行。
+队列项从本地接纳起最多等 5 秒才可调用 module；一旦调用转入最多 3 秒的应答窗口，两段分别计时。到期的普通事件丢弃并继续；PAGE 到期处理其依赖；身份到期按第 7 节终止本轮。身份命令和用户属性不得走旁路抢在事件前执行。
 
 每次调用前重检本地门禁、连接代次与页面依赖；不能因为接纳时通过就绕过其后的本地停采。已调用项无法取消 Native 副作用，JS 只可结束自己的等待。异常、超时、非法的匹配应答均按结果未知处理；不把 invoke 抛错解释成“原生一定没收到”。
 
@@ -334,9 +334,9 @@ sequenceDiagram
 | 本地未接纳 | 参数非法、已知停采、无权限、普通事件超限 | 同步 false；不发消息、不重试；固定诊断 |
 | 单条明确拒绝 | 普通事件 invalid_payload / queue_full / page_unavailable | 结束该条；PAGE 失败清依赖，其余合法队列可继续 |
 | 宿主采集关闭 | collection_disabled 或应答 HostGate 关闭 | 停采、清未发与页面基线；新机会再探测，触发调用不缓存 |
-| 连接需重建 | stale_connection / host_not_ready / source_closed | 结束本轮、清未发；等待前台或显式恢复 |
+| 连接需重建 | stale_connection / host_not_ready / source_closed | 结束本轮、清未发；前台内按同一退避有限次自动重新握手，否则等待前台或显式恢复 |
 | 不兼容 / 不允许 | unsupported_version / configuration_mismatch / app_not_allowed / unsupported_event | incompatible；不重复握手，需修正宿主或接入配置并重建 runtime |
-| 无法判断副作用 | unknown 应答 / timeout / invoke_error / invalid_reply | suspended；不重投本条，清未发；输出 outcome:unknown |
+| 无法判断副作用 | unknown 应答 / timeout / invoke_error / invalid_reply | suspended；不重投本条，清未发；输出 outcome:unknown；前台内有限次自动重新握手 |
 | 有效身份意图失败 | 包含上述所有在接纳流程中发生的身份失败 | 无论原分类，额外设置 identityBlocked；不能只跳过登录继续发送 |
 
 原生关闭是受控状态；若关闭时尚有身份命令未完成，依然设置 identityBlocked。一个已 accepted 的事件应答同时返回 host.dataCollect:false 时，先记录该条已接纳，再关闭后续；不能把实际已接纳改记成 unknown。
@@ -422,7 +422,7 @@ duplicate_request 对本 SDK 是异常：从不重投业务请求，正常不应
 | T16 | Native 总开关关闭后 JS 尚未获知 | Native 不接纳；承认通信滞后；获知后 JS 不再取值 | JS + Native |
 | T17 | 宿主再次开启但无 App.onShow；业务尝试多次 | 最多一轮 / 5 秒，触发调用 false，不缓存属性 | JS |
 | T18 | onHide / setOptions(false) 时有未完成身份与事件 | 清未发、身份阻断；已调用项不可撤回；旧回调无副作用 | JS + Native |
-| T19 | 确定未发的普通事件等待超过 5 秒；业务回复超过 1 秒 | 前者过期单条、后者 unknown 并挂起，不混为 HTTP 重试 | JS |
+| T19 | 确定未发的普通事件等待超过 5 秒；业务回复超过 3 秒 | 前者过期单条、后者 unknown 并挂起，随后前台内有限次自动重新握手，不重投该条、不混为 HTTP 重试 | JS |
 | T20 | 50 条 / 256 KiB 边界，中文、emoji、在途与待发混合 | 按 UTF-8 实际预算，含在途，不因字符数误判 | JS |
 | T21 | 响应版本、ID、status、字段类型错误及重复回调 | 正确区分不关联与非法匹配；一次终态 / 一次释放 | JS |
 | T22 | Date.now 回拨、同毫秒两次 onShow、长桥接延迟 | viewId 不冲突；期限不延长；timestamp / 页面关联保留 | JS + 设备 |

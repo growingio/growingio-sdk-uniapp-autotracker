@@ -1,11 +1,11 @@
 import { EventComposer, EventSequence, EventDispatcher } from './dataStore/index.js'
 import { BootstrapBuffer, hydrateTrackerState, TrackerEventGate, type TrackerIntent, TrackerLifecycle, type DataCollectTransition } from './lifecycle.js'
 import type { GioInitOptions, ResolvedGioConfig } from '../constants/config.js'
-import { IdentityPersistence, type DeviceIdFactory, MetaPersistence, QueuePersistence, SessionPersistence, storageKeys } from './storage/index.js'
+import { APP_QUEUE_PERSIST_DELAY_MS, IdentityPersistence, type DeviceIdFactory, MetaPersistence, QueuePersistence, SessionPersistence, storageKeys } from './storage/index.js'
 import { assignedDeviceId, updateIdentity, type Identity, LocationState, SessionManager, type SessionIdFactory } from './userStore.js'
 import { readLegacyMiniProgramIdentity, type LegacyIdentityPort } from './storage/legacyIdentity.js'
 import { embeddedGioInfo } from '../plugins/gioHybridAdapter/info.js'
-import { NativeIdentifierState, type NativeIdentifiersPort } from '../plugins/gioNativeIdentifiers/index.js'
+import { NativeIdentifierState, supportedNativeIdentifierFields, type NativeIdentifiersPort } from '../plugins/gioNativeIdentifiers/index.js'
 import { PageStore, type PageLoadInput, type PageOrientation, PageLifecycle } from './dataStore/page.js'
 import type { ClockPort, LoggerPort, MiniProgramTarget, NetworkPort, NetworkState, StoragePort, SystemContextPort, TimezonePort, TransportPort } from '../types/index.js'
 import { buildAppEvent, buildMiniProgramEvent, isValidCustomEventName, normalizeAttributes, type ProtocolEvent } from './dataStore/protocol.js'
@@ -104,7 +104,7 @@ export class LocalTrackerRuntime {
   /** 返回已注册内置插件名称，用于入口去重。 */
   public registeredPluginNames(): readonly string[] { return this.lifecycle.registeredPlugins().map((plugin) => plugin.name) }
 
-  /** 同步校验配置并启动异步状态恢复；返回 true 不等同于运行时已经就绪。 */
+  /** 同步校验配置并启动异步状态恢复；返回 true 不等同于运行时已经就绪。恢复失败后可再次调用。 */
   public init(options: unknown): boolean {
     this.log('info', '[GrowingIO]：Gio uni-app SDK 初始化中...')
     const result = this.lifecycle.init(options as GioInitOptions)
@@ -117,9 +117,11 @@ export class LocalTrackerRuntime {
       )
       return false
     }
+    this.bootstrapFailed = false
     this.awaitingIdentify = result.config.forceLogin === true
     this.hydration = this.hydrate(result.config).catch(() => {
       this.bootstrapFailed = true
+      this.lifecycle.markFailed()
       this.log('error', '[GrowingIO]：SDK初始化失败，运行时初始化异常!')
     })
     return true
@@ -235,7 +237,8 @@ export class LocalTrackerRuntime {
     if (state === null) return false
     const entries = state.queue.snapshot().map(entry => this.restoredRequests.has(entry.requestId) ? entry
       : { ...entry, event: { ...entry.event, deviceId } })
-    if (!state.queue.restore(entries)) return false
+    // 改写设备身份必须整体成功，任一事件超出预算都保持原队列。
+    if (!state.queue.restore(entries, true)) return false
     this.updateIdentity({ ...state.identity.value, deviceId, deviceIdAssigned: true })
     this.awaitingIdentify = false
     this.persistAfterEvent()
@@ -346,7 +349,14 @@ export class LocalTrackerRuntime {
         : () => readLegacyMiniProgramIdentity(this.dependencies.legacyIdentity!, migration, config.idMapping, this.dependencies.clock.now()))
     const sessionPersistence = config.miniprogram === undefined ? new SessionPersistence(this.dependencies.storage, keys.session) : null
     const metaPersistence = new MetaPersistence(this.dependencies.storage, keys.meta)
-    const queuePersistence = this.dependencies.storage.persistentQueue ? new QueuePersistence(this.dependencies.storage, keys.queue) : null
+    const timers = this.dependencies.upload?.runtime
+    // App 队列整队落盘：合并 1 秒内的写入并移出业务调用栈；进入后台时立即写入。
+    const queuePersistence = this.dependencies.storage.persistentQueue ? new QueuePersistence(this.dependencies.storage, keys.queue,
+      config.miniprogram === undefined && timers !== undefined ? {
+        setTimeout: (callback, delayMs) => timers.setTimeout(callback, delayMs),
+        clearTimeout: handle => timers.clearTimeout(handle),
+        delayMs: APP_QUEUE_PERSIST_DELAY_MS,
+      } : undefined) : null
     const hydrated = await hydrateTrackerState({
       /** 恢复当前数据源的设备与登录身份。 */
       hydrateIdentity: () => identityPersistence.hydrate(),
@@ -361,10 +371,15 @@ export class LocalTrackerRuntime {
     })
     if (!hydrated.ok) {
       this.bootstrapFailed = true
-      this.log('error', '[GrowingIO]：SDK初始化失败!')
+      this.lifecycle.markFailed()
+      this.log('error', '[GrowingIO]：SDK初始化失败，可修正宿主环境后再次调用 init!')
       return
     }
     if (config.miniprogram !== undefined && hydrated.state.systemContext.appVersion === '') this.log('warn', '[GrowingIO]: mini-program appVersion unavailable')
+    // 包名读取失败时事件省略 domain；鸿蒙 uni 未提供 bundleName 时无 JS 兜底，需明确提示接入方。
+    if (config.miniprogram === undefined && hydrated.state.systemContext.domain === '') {
+      this.log('warn', `[GrowingIO]: app domain unavailable on ${hydrated.state.systemContext.platform}, events will omit domain`)
+    }
 
     const sessions = new SessionManager(config.sessionPolicy, this.dependencies.sessionIdFactory, hydrated.state.session.snapshot,
       hydrated.state.identity.identity.lastUserId ?? hydrated.state.identity.identity.userId)
@@ -387,8 +402,13 @@ export class LocalTrackerRuntime {
     let networkState: NetworkState = hydrated.state.systemContext.networkState
     const pages = new PageStore()
     const nativePlugin = this.lifecycle.registeredPlugins().find(plugin => plugin.name === 'gioNativeIdentifiers')
+    const appPlatform = hydrated.state.systemContext.platform as import('../types/index.js').AppPlatform
     const nativeIdentifiers = nativePlugin?.name === 'gioNativeIdentifiers' && config.miniprogram === undefined
-      ? new NativeIdentifierState(this.dependencies.nativeIdentifiers, nativePlugin.options.fields, hydrated.state.systemContext.platform as import('../types/index.js').AppPlatform) : null
+      ? new NativeIdentifierState(this.dependencies.nativeIdentifiers, nativePlugin.options.fields, appPlatform) : null
+    if (nativeIdentifiers !== null && nativePlugin?.name === 'gioNativeIdentifiers' && supportedNativeIdentifierFields(nativePlugin.options.fields, appPlatform).length === 0) {
+      // 已注册插件但当前平台读取不到任何声明字段（如鸿蒙，或 Android 只声明了 idfa），不能静默无效。
+      this.log('warn', `[GrowingIO]: gioNativeIdentifiers has no readable fields on ${appPlatform}`)
+    }
     const composer = new EventComposer(
       config, hydrated.state.systemContext, () => identity.value, sessions, sequence, queue,
       this.dependencies.clock, this.dependencies.timezone, location, () => networkState, () => pages.current(), () => nativeIdentifiers?.current() ?? {},
@@ -411,7 +431,7 @@ export class LocalTrackerRuntime {
       config.accountId,
       (drop) => this.log('warn', `[GrowingIO]: upload dropped (${drop.reason})`),
       () => {
-        if (!this.awaitingIdentify) void queuePersistence?.persist(queue)
+        if (!this.awaitingIdentify) queuePersistence?.request(queue)
         scheduleNetworkRecovery()
       },
       config.debug ? (events) => this.debugEvents(events) : undefined,
@@ -645,7 +665,7 @@ export class LocalTrackerRuntime {
     }
     if (state.pages.current() !== shownBefore) this.autoTrackDispatcher.reset()
     if (emitted || lifecycleHandled) this.debugAction(intent.kind, payload)
-    this.persistAfterEvent()
+    this.persistAfterEvent(intent.kind === 'app-hide')
     return emitted
   }
 
@@ -670,11 +690,14 @@ export class LocalTrackerRuntime {
     this.persistAfterEvent()
   }
 
-  /** 保存队列及序号快照，再立即尝试上传；持久化失败不阻塞主调用。 */
-  private persistAfterEvent(): void {
+  /** 合并保存队列并保存序号快照，再立即尝试上传；immediate 用于进入后台，持久化失败不阻塞主调用。 */
+  private persistAfterEvent(immediate = false): void {
     const state = this.state
     if (state === null) return
-    if (!this.awaitingIdentify) void state.queuePersistence?.persist(state.queue)
+    if (!this.awaitingIdentify) {
+      if (immediate) void state.queuePersistence?.flush(state.queue)
+      else state.queuePersistence?.request(state.queue)
+    }
     void state.metaPersistence.persist(state.sequence.current())
     state.uploader?.schedule()
     state.scheduleNetworkRecovery()

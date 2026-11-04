@@ -78,7 +78,7 @@ gdp('registerPlugins', [{
 }])
 ```
 
-插件必须显式列出字段。iOS 只读取 `idfa` / `idfv`；Android 只读取 `oaid` / `googleAdvertisingId` / `androidId` / `imei`；HarmonyOS 不读取这些字段。小程序及 uniMP 托管模式拒绝此插件。
+插件必须显式列出字段。iOS 只读取 `idfa` / `idfv`；Android 只读取 `oaid` / `googleAdvertisingId` / `androidId` / `imei`；HarmonyOS 不读取这些字段（鸿蒙 uni 运行时不支持 `requireNativePlugin`，当前没有原生读取通道）。注册后若当前平台没有任何可读字段，SDK 会输出一次警告，而不是静默无效。小程序及 uniMP 托管模式拒绝此插件。
 
 JS 仅在已同意采集后延迟加载 `uni.requireNativePlugin('GrowingIOUniAppEnhance')`，请求接口为：
 

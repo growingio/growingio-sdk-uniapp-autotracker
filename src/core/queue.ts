@@ -7,6 +7,9 @@ export const MAX_EVENT_BYTES = 512 * 1024
 export const MAX_BATCH_EVENTS = 50
 export const MAX_BATCH_BYTES = 512 * 1024
 export const APP_QUEUE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+/** App 持久队列上限：整队序列化一次的成本与宿主单值存储（含鸿蒙 preferences）都需要有界。 */
+export const APP_QUEUE_MAX_ITEMS = 10_000
+export const APP_QUEUE_MAX_PERSISTED_BYTES = 4 * 1024 * 1024
 
 export type QueueRetention = Readonly<{
   maxAgeMs: number
@@ -19,6 +22,8 @@ export type QueueLimits = Readonly<{
   maxEventBytes: number
   maxBatchEvents: number
   maxBatchBytes: number
+  /** reject：满时拒绝新事件（小程序内存队列）；evict-oldest：淘汰最旧事件以接纳新事件（App 持久队列）。 */
+  overflow?: 'reject' | 'evict-oldest'
 }>
 
 export type QueueEntry = Readonly<{
@@ -28,7 +33,7 @@ export type QueueEntry = Readonly<{
 }>
 
 export type EnqueueResult =
-  | Readonly<{ ok: true; requestId: string }>
+  | Readonly<{ ok: true; requestId: string; evicted?: number }>
   | Readonly<{ ok: false; code: 'event_not_serializable' | 'event_too_large' | 'queue_full' }>
 
 const DEFAULT_LIMITS: QueueLimits = {
@@ -39,11 +44,12 @@ const DEFAULT_LIMITS: QueueLimits = {
   maxBatchBytes: MAX_BATCH_BYTES,
 }
 
-/** App 不按总条数或总字节拒绝积压事件，单事件和发送批次仍受限。 */
+/** App 积压有总条数和总字节上限；达到上限时淘汰最旧事件，新事件始终可入队。 */
 export const APP_QUEUE_LIMITS: QueueLimits = {
   ...DEFAULT_LIMITS,
-  maxItems: Infinity,
-  maxPersistedBytes: Infinity,
+  maxItems: APP_QUEUE_MAX_ITEMS,
+  maxPersistedBytes: APP_QUEUE_MAX_PERSISTED_BYTES,
+  overflow: 'evict-oldest',
 }
 
 // 为持久化信封预留最长合法修订号，容量判断包含实际落盘字段。
@@ -125,6 +131,7 @@ export class EventQueue {
   private nextExpiryAt = Infinity
   private removedRevision = 0
   private nextRequestNumber = 1
+  private restoreDropped = 0
 
   /** 注入容量限制与事件协议；仅 App 装配按事件时间清理的保留策略。 */
   public constructor(
@@ -163,6 +170,12 @@ export class EventQueue {
     return this.removedRevision
   }
 
+  /** 读取事件当前的持久重试计数；事件不在队列时返回 null。 */
+  public retryCountOf(requestId: string): number | null {
+    if (!this.encoded.has(requestId)) return null
+    return this.entries.find(entry => entry.requestId === requestId)?.retryCount ?? null
+  }
+
   /** 检查事件是否仍在队列，避免延迟重试重新发送已过期的批次副本。 */
   public has(requestId: string): boolean {
     return this.encoded.has(requestId)
@@ -177,13 +190,31 @@ export class EventQueue {
       return { ok: false, code: 'event_too_large' }
     }
     this.pruneExpired()
-    if (this.entries.length >= this.limits.maxItems) return { ok: false, code: 'queue_full' }
+    const evict = this.limits.overflow === 'evict-oldest'
+    if (!evict && this.entries.length >= this.limits.maxItems) return { ok: false, code: 'queue_full' }
     const normalized = cloneEvent(serialized)
     if (normalized === null) return { ok: false, code: 'event_not_serializable' }
 
     const requestId = this.allocateRequestId()
     const entry = { requestId, event: normalized, retryCount: 0 }
     const entryBytes = utf8ByteLength(encodeEntry(entry, serialized))
+    if (QUEUE_ENVELOPE_BYTES + entryBytes > this.limits.maxPersistedBytes || this.limits.maxItems < 1) return { ok: false, code: 'queue_full' }
+    let evicted = 0
+    if (evict) {
+      // 按入队顺序淘汰最旧事件，直到新事件能放入条数和字节预算。
+      let count = 0
+      let bytes = this.persistedBytes
+      let length = this.entries.length
+      while (length > 0 && (length >= this.limits.maxItems || bytes + entryBytes + 1 > this.limits.maxPersistedBytes)) {
+        bytes -= this.encoded.get(this.entries[count]!.requestId)!.entryBytes + (length > 1 ? 1 : 0)
+        length -= 1
+        count += 1
+      }
+      if (count > 0) {
+        this.remove(this.entries.slice(0, count).map(item => item.requestId))
+        evicted = count
+      }
+    }
     const nextBytes = this.persistedBytes + entryBytes + (this.entries.length === 0 ? 0 : 1)
     if (nextBytes > this.limits.maxPersistedBytes) {
       return { ok: false, code: 'queue_full' }
@@ -194,7 +225,7 @@ export class EventQueue {
     this.nextExpiryAt = Math.min(this.nextExpiryAt, this.eventExpiry(normalized))
     this.persistedBytes = nextBytes
     this.serializedSnapshot = null
-    return { ok: true, requestId }
+    return evicted > 0 ? { ok: true, requestId, evicted } : { ok: true, requestId }
   }
 
   /** 选取最早的合法 JSON 数组批次，不从队列删除记录。 */
@@ -274,37 +305,58 @@ export class EventQueue {
     }
   }
 
-  /** 迁移旧版字段后仅恢复完整有效的持久快照；校验失败时保留现有队列。 */
-  public restore(entries: readonly QueueEntry[]): boolean {
-    if (entries.length > this.limits.maxItems) return false
-    const migrated = entries.map(migrateQueueEntry)
-    if (migrated.some((entry) => !this.validEntry(entry))) return false
-    const normalized = migrated.map((entry) => ({
-      requestId: entry.requestId,
-      event: cloneEvent(JSON.stringify(entry.event))!,
-      retryCount: entry.retryCount,
-    }))
-    const encoded = new Map(normalized.map(entry => {
+  /**
+   * 迁移旧版字段后按条恢复：无效或重复标识的条目单独丢弃，超出容量时保留最新事件。
+   * 只有存在输入但没有任何条目可恢复时返回 false，并保留现有队列。
+   * strict 用于运行期整体改写（如 identify）：任一条目无法保留即返回 false，现有队列不变。
+   */
+  public restore(entries: readonly QueueEntry[], strict = false): boolean {
+    this.restoreDropped = 0
+    if (!Array.isArray(entries)) return false
+    const seen = new Set<string>()
+    const normalized: QueueEntry[] = []
+    for (const raw of entries) {
+      let entry: QueueEntry
+      try { entry = migrateQueueEntry(raw) } catch { continue }
+      if (!this.validEntry(entry) || seen.has(entry.requestId)) continue
+      seen.add(entry.requestId)
+      normalized.push({ requestId: entry.requestId, event: cloneEvent(JSON.stringify(entry.event))!, retryCount: entry.retryCount })
+    }
+    if ((entries.length > 0 && normalized.length === 0) || (strict && normalized.length !== entries.length)) { this.restoreDropped = entries.length - normalized.length; return false }
+    const encodedList = normalized.map(entry => {
       const json = JSON.stringify(entry.event)
-      return [entry.requestId, { json, bytes: utf8ByteLength(json), entryBytes: utf8ByteLength(encodeEntry(entry, json)) }]
-    }))
-    const persistedBytes = QUEUE_ENVELOPE_BYTES + [...encoded.values()].reduce((sum, entry) => sum + entry.entryBytes, 0) + Math.max(0, normalized.length - 1)
-    if (encoded.size !== normalized.length || persistedBytes > this.limits.maxPersistedBytes) return false
+      return { json, bytes: utf8ByteLength(json), entryBytes: utf8ByteLength(encodeEntry(entry, json)) }
+    })
+    // 容量不足时从最旧条目开始舍弃，与入队时的淘汰顺序一致。
+    let first = 0
+    let persistedBytes = QUEUE_ENVELOPE_BYTES + encodedList.reduce((sum, entry) => sum + entry.entryBytes, 0) + Math.max(0, normalized.length - 1)
+    while (first < normalized.length && (normalized.length - first > this.limits.maxItems || persistedBytes > this.limits.maxPersistedBytes)) {
+      persistedBytes -= encodedList[first]!.entryBytes + (normalized.length - first > 1 ? 1 : 0)
+      first += 1
+    }
+    const kept = normalized.slice(first)
+    this.restoreDropped = entries.length - kept.length
+    if ((entries.length > 0 && kept.length === 0) || (strict && this.restoreDropped > 0)) return false
     this.entries.length = 0
-    for (const entry of normalized) this.entries.push(entry)
+    for (const entry of kept) this.entries.push(entry)
     this.encoded.clear()
-    for (const [id, value] of encoded) this.encoded.set(id, value)
+    kept.forEach((entry, index) => this.encoded.set(entry.requestId, encodedList[first + index]!))
     this.persistedBytes = persistedBytes
     this.invalidateSnapshots()
     this.advanceRemovalRevision()
-    this.nextExpiryAt = normalized.length === 0 ? Infinity : -Infinity
+    this.nextExpiryAt = kept.length === 0 ? Infinity : -Infinity
     this.claimed.clear()
-    const largestRequestNumber = normalized.reduce((largest, entry) => {
+    const largestRequestNumber = kept.reduce((largest, entry) => {
       const match = /^q(\d+)$/.exec(entry.requestId)
       return match === null ? largest : Math.max(largest, Number(match[1]))
     }, 0)
     this.nextRequestNumber = largestRequestNumber === Number.MAX_SAFE_INTEGER ? 1 : largestRequestNumber + 1
     return true
+  }
+
+  /** 最近一次 restore 丢弃的条目数（无效、重复或超出容量），供持久层决定是否重写清理后的快照。 */
+  public lastRestoreDropped(): number {
+    return this.restoreDropped
   }
 
   /** 生成不与当前队列冲突的标识，到达安全整数上限后循环寻找空位。 */

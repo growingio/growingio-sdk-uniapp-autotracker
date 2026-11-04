@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { performance } from 'node:perf_hooks'
 import { TrackerRuntime } from '../src/core/growingIO.js'
 import type { AppSystemContext, NetworkState, StoragePort, TransportResult } from '../src/types/index.js'
+import { APP_QUEUE_MAX_ITEMS } from '../src/core/queue.js'
 
 const system: AppSystemContext = {
   platform: 'Android', platformVersion: '14', domain: 'example.stress', appState: 'FOREGROUND',
@@ -26,6 +27,7 @@ async function setup(initiallyConnected: boolean, synchronous: boolean) {
   let requests = 0
   let received = 0
   let lastSequence = 0
+  let firstSequence = 0
   let session = 0
   let timerId = 0
   const timers = new Map<number, () => void>()
@@ -51,7 +53,10 @@ async function setup(initiallyConnected: boolean, synchronous: boolean) {
         assert.ok(Buffer.byteLength(request.body) <= 512 * 1024)
         for (const event of events) {
           received++
-          if (event.eventSequenceId !== undefined) assert.equal(event.eventSequenceId, ++lastSequence)
+          if (event.eventSequenceId === undefined) continue
+          // 离线积压超过上限时最旧事件已淘汰，补发须从首个保留序号起连续。
+          if (firstSequence === 0) { firstSequence = event.eventSequenceId; lastSequence = event.eventSequenceId - 1 }
+          assert.equal(event.eventSequenceId, ++lastSequence)
         }
         let completed = false
         const finish = (result: TransportResult) => {
@@ -72,8 +77,10 @@ async function setup(initiallyConnected: boolean, synchronous: boolean) {
   tracker.onPageShow('stress-page', 'Stress')
   return {
     tracker, pending, timers,
+    /** 触发当前已登记的定时器（队列合并落盘等），不循环执行其间新登记的定时器。 */
+    runTimers: () => { const due = [...timers.entries()]; for (const [id, callback] of due) { timers.delete(id); callback() } },
     reconnect: () => { connected = true; networkChanged('WIFI') },
-    stats: () => ({ requests, received, maxActive, active, lastSequence, storageWrites }),
+    stats: () => ({ requests, received, maxActive, active, firstSequence, lastSequence, storageWrites }),
     persisted: () => {
       const queue = values.get('gio:v1:stress-source:queue:v1')
       const meta = values.get('gio:v1:stress-source:meta')
@@ -94,7 +101,11 @@ export async function runRuntimeStress(onlineEvents = 10_000, offlineAttempts = 
   for (let event = 0; event < onlineEvents; event++) assert.equal(online.tracker.track('stress_event', { index: event, text: '中😀' }), true)
   const onlineMs = performance.now() - start
   assert.equal(online.stats().received, onlineEvents + 2)
+  assert.equal(online.stats().firstSequence, 1)
   assert.equal(online.tracker.queuedEvents().length, 0)
+  // 只剩一次合并落盘；执行后没有残留定时器。
+  assert.ok(online.timers.size <= 1)
+  online.runTimers()
   assert.equal(online.timers.size, 0)
   let reads = 0
   online.tracker.setDataCollect(false)
@@ -111,7 +122,9 @@ export async function runRuntimeStress(onlineEvents = 10_000, offlineAttempts = 
   for (let event = 0; event < offlineAttempts; event++) if (offline.tracker.track('stress_event', { index: event })) accepted++
   const offlineMs = performance.now() - start
   assert.equal(accepted, offlineAttempts)
-  assert.equal(offline.tracker.queuedEvents().length, offlineAttempts + 2)
+  // 积压受条数和字节上限约束，先达到的上限决定保留量；超出部分淘汰最旧事件。
+  const retained = offline.tracker.queuedEvents().length
+  assert.ok(retained > 0 && retained <= Math.min(offlineAttempts + 2, APP_QUEUE_MAX_ITEMS))
   assert.equal(offline.stats().requests, 0)
   offline.reconnect()
   assert.equal(offline.stats().active, 3)
@@ -121,10 +134,13 @@ export async function runRuntimeStress(onlineEvents = 10_000, offlineAttempts = 
     // 宿主重复回调不能触发重试、占用槽位或再次结算。
     complete({ kind: 'network' })
   }
-  assert.equal(offline.stats().received, offlineAttempts + 2)
+  assert.equal(offline.stats().received, retained)
+  assert.equal(offline.stats().requests, Math.ceil(retained / 50))
+  assert.equal(offline.stats().firstSequence, offlineAttempts + 2 - retained + 1)
   assert.equal(offline.stats().lastSequence, offlineAttempts + 2)
   assert.equal(offline.stats().active, 0)
   assert.equal(offline.tracker.queuedEvents().length, 0)
+  offline.runTimers()
   assert.equal(offline.timers.size, 0)
   // 等待有界写入槽位结算，检查最终落盘而非只检查内存。
   for (let step = 0; step < 12; step++) await Promise.resolve()
@@ -132,6 +148,6 @@ export async function runRuntimeStress(onlineEvents = 10_000, offlineAttempts = 
   assert.deepEqual(offline.persisted(), { entries: 0, sequence: offlineAttempts + 2 })
   return {
     online: { events: onlineEvents, elapsedMs: onlineMs, ...online.stats() },
-    offline: { attempts: offlineAttempts, accepted, rejected: offlineAttempts - accepted, elapsedMs: offlineMs, ...offline.stats() },
+    offline: { attempts: offlineAttempts, accepted, rejected: offlineAttempts - accepted, evicted: offlineAttempts + 2 - retained, elapsedMs: offlineMs, ...offline.stats() },
   }
 }

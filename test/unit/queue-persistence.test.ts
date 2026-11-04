@@ -65,6 +65,56 @@ describe('QueuePersistence', () => {
     expect(queue.snapshot().map(entry => entry.event)).toEqual([event(3)])
   })
 
+  it('合并窗口内的多次请求只写一次最新快照，且写入不在调用栈内同步执行', async () => {
+    const backend = storage()
+    const timers: Array<{ callback: () => void; delayMs: number }> = []
+    const persistence = new QueuePersistence(backend.port, 'queue', {
+      setTimeout: (callback, delayMs) => { timers.push({ callback, delayMs }); return timers.length }, clearTimeout: () => undefined, delayMs: 1000,
+    })
+    const queue = new EventQueue()
+    for (let index = 1; index <= 100; index++) { queue.enqueue(event(index)); persistence.request(queue) }
+    await Promise.resolve()
+    expect(backend.values()).toEqual([])
+    expect(timers).toHaveLength(1)
+    expect(timers[0]!.delayMs).toBe(1000)
+    timers[0]!.callback()
+    for (let step = 0; step < 6; step++) await Promise.resolve()
+    expect(backend.values()).toHaveLength(1)
+    expect(JSON.parse(backend.values()[0]!).entries).toHaveLength(100)
+  })
+
+  it('flush 立即写入窗口内的快照并取消定时写入，没有待写内容时不写', async () => {
+    const backend = storage()
+    const cleared: unknown[] = []
+    let scheduled: (() => void) | null = null
+    const persistence = new QueuePersistence(backend.port, 'queue', {
+      setTimeout: callback => { scheduled = callback; return 'timer' }, clearTimeout: handle => { cleared.push(handle) }, delayMs: 1000,
+    })
+    expect(persistence.flush()).toBeNull()
+    const queue = new EventQueue()
+    queue.enqueue(event(1)); persistence.request(queue)
+    expect(persistence.pending()).toBe(true)
+    expect(await persistence.flush()).toEqual({ kind: 'ok' })
+    expect(cleared).toEqual(['timer'])
+    expect(persistence.pending()).toBe(false)
+    scheduled!()
+    for (let step = 0; step < 6; step++) await Promise.resolve()
+    expect(backend.values()).toHaveLength(1)
+  })
+
+  it('部分条目损坏时只丢弃这些条目，并写回清理后的快照', async () => {
+    const backend = storage(JSON.stringify({ version: 1, revision: 3, entries: [
+      { requestId: 'q1', retryCount: 0, event: event(1) },
+      { requestId: 'q2', retryCount: 0, event: { eventType: 'CUSTOM', eventName: 'forged' } },
+      { requestId: 'q3', retryCount: 0, event: event(3) },
+    ] }))
+    const queue = new EventQueue()
+    expect(await new QueuePersistence(backend.port, 'queue').hydrate(queue)).toBe('restored')
+    expect(queue.snapshot().map(entry => entry.requestId)).toEqual(['q1', 'q3'])
+    for (let step = 0; step < 6; step++) await Promise.resolve()
+    expect(JSON.parse(backend.values().at(-1)!)).toMatchObject({ revision: 4, entries: [{ requestId: 'q1' }, { requestId: 'q3' }] })
+  })
+
   it('修订号到达安全整数上限后继续写入可恢复的记录', async () => {
     const backend = storage(JSON.stringify({ version: 1, revision: Number.MAX_SAFE_INTEGER, entries: [] }))
     const persistence = new QueuePersistence(backend.port, 'queue')

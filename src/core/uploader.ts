@@ -53,6 +53,14 @@ export function isRetainedAppFailure(result: TransportResult): boolean {
   return result.kind === 'network' || result.kind === 'timeout' || result.kind === 'aborted'
 }
 
+/** App 中可判定为“这批内容被拒”的客户端错误：拆批定位后丢弃；408 / 429 属于暂时性拒绝，继续退避保留。 */
+export function isClientRejection(result: TransportResult): boolean {
+  return result.kind === 'http' && result.status >= 400 && result.status < 500 && result.status !== 408 && result.status !== 413 && result.status !== 429
+}
+
+/** 单条事件被客户端错误拒绝达到该次数后丢弃，避免一条坏事件长期占用发送槽位并拖住同批正常事件。 */
+export const MAX_CLIENT_REJECTIONS = 3
+
 export interface TimerPort {
   /** 安排 SDK 自有的超时或延迟重试，返回可取消的句柄。 */
   setTimeout(callback: () => void, delayMs: number): unknown
@@ -295,11 +303,13 @@ export class Uploader {
       } else if ((result.kind === 'network' || result.kind === 'timeout') && !this.canDispatch()) {
         // 飞行中遇到明确断网也保留事件；恢复网络后继续，不额外消耗重试额度。
         this.readyRetries.push({ batch, attempt })
+      } else if (this.retryPolicy === 'retain' && isClientRejection(result)) {
+        this.handleClientRejection(batch, attempt, result)
       } else if (this.retryPolicy === 'retain' && isRetainedAppFailure(result)) {
         // 事件留在持久队列中，退避结束后与其他待发事件一起按顺序重新领取，不消耗重试额度。
         this.releaseReserved(requestIds)
         this.queue.release(requestIds)
-        for (const requestId of requestIds) this.readyRequests.add(requestId)
+        for (const requestId of requestIds) if (this.queue.has(requestId)) this.readyRequests.add(requestId)
         this.startBackoff()
       } else if (isRetryableCollectorFailure(result) && attempt < RETRY_DELAYS_MS.length) {
         this.queue.incrementRetries(requestIds)
@@ -324,6 +334,38 @@ export class Uploader {
       this.drain()
       this.notifyDrain()
     })
+  }
+
+  /**
+   * 客户端错误说明批次内容被拒：多条时对半拆分后在退避结束时分别重发，定位出具体事件；
+   * 单条事件累计被拒 MAX_CLIENT_REJECTIONS 次后丢弃，其余正常事件不再被拖住。
+   */
+  private handleClientRejection(batch: readonly QueueEntry[], attempt: number, result: TransportResult): void {
+    const live = batch.filter(entry => this.queue.has(entry.requestId))
+    if (live.length > 1) {
+      const middle = Math.ceil(live.length / 2)
+      // 两半仍保持领取与预留，只能经由 readyRetries 重发，不会与其他批次重新混合。
+      this.readyRetries.push({ batch: live.slice(0, middle), attempt }, { batch: live.slice(middle), attempt })
+      this.startBackoff()
+      return
+    }
+    const requestIds = live.map(entry => entry.requestId)
+    if (requestIds.length === 0) return
+    const rejections = (this.queue.retryCountOf(requestIds[0]!) ?? 0) + 1
+    if (rejections >= MAX_CLIENT_REJECTIONS) {
+      this.queue.remove(requestIds)
+      this.releaseReserved(requestIds)
+      this.onQueueChanged()
+      this.onDrop({ requestIds, reason: 'non_retryable', result })
+      return
+    }
+    // 被拒次数写入持久重试计数，冷启动后继续累计。
+    this.queue.incrementRetries(requestIds)
+    this.onQueueChanged()
+    this.releaseReserved(requestIds)
+    this.queue.release(requestIds)
+    for (const requestId of requestIds) this.readyRequests.add(requestId)
+    this.startBackoff()
   }
 
   /** 离线时也清理过期缓存，并清除入队清理留下的调度标识。 */

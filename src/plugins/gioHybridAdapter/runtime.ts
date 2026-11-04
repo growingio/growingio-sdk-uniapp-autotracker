@@ -33,6 +33,10 @@ type Entry = {
 const CLOSED_HOST: HostGate = { dataCollect: false, containerVisible: false }
 const INCOMPATIBLE = ['unsupported_version', 'configuration_mismatch', 'app_not_allowed', 'unsupported_event']
 const DISCONNECT = ['stale_connection', 'host_not_ready', 'source_closed']
+/** 业务操作的应答窗口；Android 切页或主线程繁忙时原生桥常超过 1 秒，过短会把正常抖动误判为结果未知。 */
+export const HYBRID_RESPONSE_TIMEOUT_MS = 3000
+/** 结果未知或连接断开挂起后，前台内按此退避自动重新握手；用尽后仍等待下次前台或显式恢复。 */
+export const HYBRID_RECOVERY_DELAYS_MS = [3000, 6000, 12000, 24000, 30000] as const
 
 /** Native 独占数据状态；本协调器只管理有界草稿、单 FIFO 与连接 / 身份 / 页面门禁。 */
 export class UniMPRuntime {
@@ -60,6 +64,8 @@ export class UniMPRuntime {
   private retryTimer: unknown
   private probeTimer: unknown
   private probeAllowed = true
+  private recoveryTimer: unknown
+  private recoveryAttempts = 0
   private queue: Entry[] = []
   private inFlight: Entry | null = null
   private bytes = 0
@@ -163,7 +169,7 @@ export class UniMPRuntime {
     if (this.config === null || this.phase === 'disposed') return false
     if (this.foreground) return true
     if (this.epoch >= Number.MAX_SAFE_INTEGER) { this.exhausted(); return false }
-    this.epoch++; this.foreground = true
+    this.epoch++; this.foreground = true; this.recoveryAttempts = 0
     if (this.config.dataCollect) this.connect()
     return true
   }
@@ -302,6 +308,18 @@ export class UniMPRuntime {
   private handshakeFailed(code: HybridErrorCode): void {
     this.clearHandshake(); this.phase = INCOMPATIBLE.includes(code) ? 'incompatible' : 'suspended'
     this.error({ code, phase: 'handshake', method: 'hello', outcome: 'not_sent' })
+    // 只有自动恢复发起的握手失败才继续退避；首次握手失败仍等待下次前台或显式恢复。
+    if (this.recoveryAttempts > 0 && code !== 'module_missing' && code !== 'invalid_module') this.scheduleRecovery()
+  }
+  /** 挂起后在前台内有限次数地重新握手；不重投结果未知的操作，身份阻断仍需新的身份命令解除。 */
+  private scheduleRecovery(): void {
+    if (this.phase !== 'suspended' || !this.foreground || this.config?.dataCollect !== true) return
+    if (this.recoveryTimer !== undefined || this.recoveryAttempts >= HYBRID_RECOVERY_DELAYS_MS.length) return
+    const delay = HYBRID_RECOVERY_DELAYS_MS[this.recoveryAttempts++]!
+    this.recoveryTimer = this.deps.scheduler.setTimeout(() => {
+      this.recoveryTimer = undefined
+      if (this.phase === 'suspended' && this.foreground && this.config?.dataCollect === true) this.connect()
+    }, delay)
   }
   private helloReply(request: UniMPRequest, raw: unknown): void {
     if (this.phase !== 'connecting' || this.pendingHello !== request) return
@@ -374,7 +392,7 @@ export class UniMPRuntime {
       this.release(entry); this.operationError(entry, 'page_unavailable', 'queue', 'not_sent'); this.pumpSoon(); return
     }
     this.cancel(entry.timer); this.inFlight = entry
-    entry.timer = this.deps.scheduler.setTimeout(() => { if (this.inFlight === entry) this.unknown(entry, 'response_timeout') }, 1000)
+    entry.timer = this.deps.scheduler.setTimeout(() => { if (this.inFlight === entry) this.unknown(entry, 'response_timeout') }, HYBRID_RESPONSE_TIMEOUT_MS)
     const request = JSON.parse(entry.wire) as UniMPRequest
     try { this.deps.port.request(request, raw => { void Promise.resolve().then(() => this.operationReply(entry, request, raw)) }) }
     catch { this.unknown(entry, 'invoke_error') }
@@ -395,6 +413,7 @@ export class UniMPRuntime {
         if (entry.method !== 'dispatchEvent' || pendingIdentityRevoked) this.identityBlocked = true
         this.operationError(entry, reply.code, 'dispatch', 'rejected')
         this.reset(reply.code, INCOMPATIBLE.includes(reply.code) ? 'incompatible' : 'suspended')
+        if (DISCONNECT.includes(reply.code)) this.scheduleRecovery()
         return
       }
       const revokedAttributes = reply.code === 'identity_not_allowed' ? this.removeQueuedUserAttributes() : []
@@ -402,6 +421,7 @@ export class UniMPRuntime {
       this.operationError(entry, reply.code, 'dispatch', 'rejected')
       if (revokedAttributes[0] !== undefined) this.operationError(revokedAttributes[0], 'identity_not_allowed', 'queue', 'not_sent', revokedAttributes.length)
     } else {
+      this.recoveryAttempts = 0
       if (entry.eventType === 'PAGE') entry.page!.status = 'accepted'
       if (entry.method !== 'dispatchEvent' && this.identityBlocked) {
         this.identityBlocked = false
@@ -436,6 +456,7 @@ export class UniMPRuntime {
     this.inFlight = null; this.release(entry)
     if (entry.method !== 'dispatchEvent') this.identityBlocked = true
     this.operationError(entry, code, 'dispatch', 'unknown'); this.reset(code, 'suspended')
+    this.scheduleRecovery()
   }
   private release(entry: Entry): void { this.cancel(entry.timer); this.bytes -= entry.bytes }
   private removeQueuedUserAttributes(): Entry[] {
@@ -459,6 +480,7 @@ export class UniMPRuntime {
   private reset(code: HybridErrorCode, phase: Phase): void {
     this.clearHandshake()
     this.cancel(this.probeTimer); this.probeTimer = undefined; this.probeAllowed = true
+    this.cancel(this.recoveryTimer); this.recoveryTimer = undefined
     const current = this.inFlight
     this.inFlight = null
     if (current !== null) {
@@ -480,7 +502,7 @@ export class UniMPRuntime {
     this.roundTimer = this.helloTimer = this.retryTimer = undefined; this.pendingHello = null
     this.resolveHandshake?.(ready); this.resolveHandshake = null; this.handshakeResult = null
   }
-  private clearTimers(): void { this.clearHandshake(); this.cancel(this.probeTimer) }
+  private clearTimers(): void { this.clearHandshake(); this.cancel(this.probeTimer); this.cancel(this.recoveryTimer); this.recoveryTimer = undefined }
   private cancel(handle: unknown): void { if (handle !== undefined) this.deps.scheduler.clearTimeout(handle) }
   private operationError(entry: Entry, code: HybridErrorCode, phase: HybridError['phase'], outcome: HybridError['outcome'], droppedCount?: number): void {
     this.error({ code, phase, method: entry.method, requestId: entry.requestId, outcome, ...(entry.eventType === undefined ? {} : { eventType: entry.eventType }), ...(droppedCount === undefined ? {} : { droppedCount }) })

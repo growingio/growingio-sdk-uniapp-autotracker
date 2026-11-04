@@ -82,9 +82,30 @@ function deviceType(value: unknown): AppSystemContext['deviceType'] {
   return normalized === 'PHONE' || normalized === 'PAD' || normalized === 'FOLD' ? normalized : 'UNKNOWN'
 }
 
-/** Android 使用逻辑短边是否达到 600dp 区分平板布局。 */
-function androidDeviceType(screenWidth: number): AppSystemContext['deviceType'] {
+/** uni 的 deviceType 只有 phone / pad / pc，没有折叠屏；Android 11+ 折叠屏声明铰链角度传感器特性，只能通过 Native.js 查询，宿主不可用时按非折叠屏处理。 */
+function androidFoldable(): boolean {
+  try {
+    const plus = record((globalThis as Record<string, unknown>).plus)
+    const android = record(plus.android)
+    const invoke = android.invoke
+    if (typeof invoke !== 'function' || typeof android.runtimeMainActivity !== 'function') return false
+    const packageManager = invoke.call(android, android.runtimeMainActivity.call(android), 'getPackageManager')
+    return packageManager != null && invoke.call(android, packageManager, 'hasSystemFeature', 'android.hardware.sensor.hinge_angle') === true
+  } catch { return false }
+}
+
+/** Android：折叠屏固定为 FOLD（uni 无此分类，展开后也不当作平板）；其余优先采用 uni.getDeviceInfo().deviceType，取不到时才用逻辑短边 600dp 推断。 */
+function androidDeviceType(screenWidth: number, reported: unknown): AppSystemContext['deviceType'] {
+  const uniType = deviceType(reported)
+  if (uniType === 'FOLD' || androidFoldable()) return 'FOLD'
+  if (uniType !== 'UNKNOWN') return uniType
   return screenWidth > 0 ? (screenWidth >= 600 ? 'PAD' : 'PHONE') : 'UNKNOWN'
+}
+
+/** 按 uni.getAppBaseInfo() 官方字段读取安装包标识：iOS bundleId、Android packageName、HarmonyOS bundleName；空值继续回退，不让空串挡住后续来源。 */
+function uniDomain(target: AppPlatform, app: Readonly<Record<string, unknown>>, system: Readonly<Record<string, unknown>>): string {
+  const own = target === 'iOS' ? text(app.bundleId) : target === 'Android' ? text(app.packageName) : text(app.bundleName) || text(app.packageName)
+  return own || text(app.hostPackageName) || text(system.hostPackageName)
 }
 
 /** 将标准 uni 系统信息转换为协议上下文，不向核心暴露原始宿主对象。 */
@@ -104,7 +125,8 @@ export class AppSystemContextPort implements SystemContextPort {
     const ratio = pixelRatio(device.devicePixelRatio) ?? pixelRatio(system.devicePixelRatio) ?? pixelRatio(system.pixelRatio) ?? 1
     const physicalWidth = Math.round(width * ratio)
     const physicalHeight = Math.round(height * ratio)
-    const domain = (targetPlatform === 'iOS' ? text(app.bundleId) : targetPlatform === 'Android' ? text(app.packageName) : text(app.bundleName ?? app.packageName)) || text(app.hostPackageName ?? system.hostPackageName) || nativeDomain(targetPlatform)
+    // 先用 uni 官方 API，只有官方字段都取不到时才通过 Native.js 读取实际安装包标识（鸿蒙没有 Native.js）。
+    const domain = uniDomain(targetPlatform, app, system) || nativeDomain(targetPlatform)
     const osVersion = text(device.osVersion, text(system.osVersion, text(device.platformVersion, text(system.system).replace(/^(?:iOS|Android|HarmonyOS)\s*/i, '') || 'UNKNOWN')))
     return {
       platform: targetPlatform,
@@ -119,7 +141,7 @@ export class AppSystemContextPort implements SystemContextPort {
       screenHeight: width === 0 || height === 0 ? 0 : Math.max(physicalWidth, physicalHeight),
       deviceBrand: text(device.deviceBrand ?? device.brand ?? system.deviceBrand ?? system.brand, 'UNKNOWN'),
       deviceModel: text(device.deviceModel ?? device.model ?? system.deviceModel ?? system.model, 'UNKNOWN'),
-      deviceType: targetPlatform === 'Android' ? androidDeviceType(Math.min(width, height)) : deviceType(device.deviceType),
+      deviceType: targetPlatform === 'Android' ? androidDeviceType(Math.min(width, height), device.deviceType) : deviceType(device.deviceType),
       appVersion: text(this.configuredAppVersion, text(app.appVersion, text(system.appVersion))),
       language: language(app.appLanguage ?? app.language),
       sdkVersion: this.sdkVersion,

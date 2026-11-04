@@ -23,7 +23,7 @@ async function sdk(platform = 'android') {
     removeStorageSync: key => { values.delete(key) },
     getDeviceInfo: () => ({ platform }),
     getSystemInfoSync: () => ({ deviceOrientation: 'portrait' }),
-    getAppBaseInfo: () => ({ appVersion: '1.0.0' }),
+    getAppBaseInfo: () => ({ appVersion: '1.0.0', packageName: 'com.example.contract', bundleId: 'com.example.contract', bundleName: 'com.example.contract' }),
     getNetworkType: options => options.success({ networkType: 'wifi' }),
     request: options => { received.push(...JSON.parse(options.data)); options.success({ statusCode: 204 }) },
   }
@@ -46,7 +46,7 @@ async function sdk(platform = 'android') {
 describe('SDK 公共命令与完整核心链路', () => {
   it.each(['android', 'ios', 'harmonyos'])('%s 显式 appVersion 优先于安装包版本并用于所有事件', async platform => {
     const { gdp, host, received, start } = await sdk(platform)
-    host.getAppBaseInfo = () => ({ appVersion: '0.1.0' })
+    host.getAppBaseInfo = () => ({ appVersion: '0.1.0', packageName: 'com.example.contract', bundleId: 'com.example.contract', bundleName: 'com.example.contract' })
     const tracker = await start({ appVersion: ' 1.0.0 ' })
     tracker.onAppShow({ path: '/pages/index', query: '' })
     tracker.onPageLoad({ instanceId: 'index', route: 'pages/index', query: '', referralPage: null })

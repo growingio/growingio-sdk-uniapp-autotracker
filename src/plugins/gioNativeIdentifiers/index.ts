@@ -5,6 +5,12 @@ export type NativeIdentifierField = typeof NATIVE_IDENTIFIER_FIELDS[number]
 export type NativeIdentifiers = Readonly<Partial<Record<NativeIdentifierField, string>>>
 export type NativeIdentifierOptions = Readonly<{ fields: readonly NativeIdentifierField[] }>
 
+/** 按平台保留可读取的字段：iOS 仅 idfa / idfv，Android 仅其余字段，鸿蒙当前没有可用的原生读取通道。 */
+export function supportedNativeIdentifierFields(fields: readonly NativeIdentifierField[], platform: AppPlatform): readonly NativeIdentifierField[] {
+  return fields.filter(field => NATIVE_IDENTIFIER_FIELDS.includes(field) && (platform === 'iOS' ? field === 'idfa' || field === 'idfv'
+    : platform === 'Android' ? field !== 'idfa' && field !== 'idfv' : false))
+}
+
 export interface NativeIdentifiersPort {
   /** 只读取已有授权可取得的标识，不申请权限；失败返回空对象。 */
   read(fields: readonly NativeIdentifierField[]): Promise<unknown>
@@ -39,8 +45,7 @@ export class NativeIdentifierState {
 
   public refresh(): void {
     const generation = ++this.generation
-    const fields = this.fields.filter(field => NATIVE_IDENTIFIER_FIELDS.includes(field) && (this.platform === 'iOS' ? field === 'idfa' || field === 'idfv'
-      : this.platform === 'Android' ? field !== 'idfa' && field !== 'idfv' : false))
+    const fields = supportedNativeIdentifierFields(this.fields, this.platform)
     if (this.port === undefined || fields.length === 0) return
     let reading: Promise<unknown>
     try { reading = this.port.read(fields) } catch { return }

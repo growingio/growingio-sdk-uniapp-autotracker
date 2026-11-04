@@ -21,6 +21,43 @@ describe('public API', () => {
     expect(runtimeApi).toHaveProperty('default')
   })
 
+  it('异步恢复失败后可再次 init，复用已安装的生命周期，失败期间拒绝业务事件', async () => {
+    vi.resetModules()
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const originalUni = (globalThis as Record<string, unknown>).uni
+    const app = { mixin: vi.fn() }
+    // 首次同步宿主检查通过，随后异步读取系统信息失败，模拟启动期宿主能力暂不可用。
+    let deviceReads = 0
+    const platform = 'android'
+    const writes: string[] = []
+    const host: AppRuntimeHost = {
+      getStorageSync: () => undefined,
+      setStorageSync: (_key, value) => { writes.push(value) },
+      removeStorageSync: () => undefined,
+      getDeviceInfo: () => ({ platform: ++deviceReads === 2 ? 'unsupported' : platform }),
+      getSystemInfoSync: () => ({}),
+      getAppBaseInfo: () => ({}),
+      getNetworkType: (options) => { options.success({}) },
+      request: () => undefined,
+    }
+    ;(globalThis as Record<string, unknown>).uni = host
+    try {
+      const { gdp } = await import('../../index.js')
+      expect(gdp('init', 'account', 'source', { uniVue: app })).toBe(true)
+      await vi.waitFor(() => expect(console.error).toHaveBeenCalled())
+      expect(gdp('track', 'while_failed')).toBe(false)
+      expect(gdp('init', 'account', 'source', { uniVue: app })).toBe(true)
+      expect(app.mixin).toHaveBeenCalledOnce()
+      await vi.waitFor(() => expect(gdp('track', 'after_retry')).toBe(true))
+      expect(gdp('init', 'account', 'source', { uniVue: app })).toBe(false)
+    } finally {
+      vi.restoreAllMocks()
+      if (originalUni === undefined) delete (globalThis as Record<string, unknown>).uni
+      else (globalThis as Record<string, unknown>).uni = originalUni
+    }
+  })
+
   it('initializes from the global uni host without caller-provided device or session factories', async () => {
     vi.resetModules()
     const originalUni = (globalThis as Record<string, unknown>).uni

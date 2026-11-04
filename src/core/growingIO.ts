@@ -18,6 +18,8 @@ export class TrackerRuntime {
   public init(options: unknown): boolean { return this.runtime.init(options) }
   public ready(): boolean { return this.runtime.ready() }
   public failed(): boolean { return this.runtime.failed() }
+  /** 本地采集的异步恢复失败后可再次 init；Native 托管模式的挂起不属于初始化失败。 */
+  public canRetryInit(): boolean { return this.runtime instanceof LocalTrackerRuntime && this.runtime.failed() }
   public whenReady(): Promise<boolean> { return this.runtime.whenReady() }
   public queuedEvents() { return this.runtime.queuedEvents() }
   public track(eventName: unknown, properties?: unknown): boolean { return this.runtime.track(eventName, properties) }

@@ -3,7 +3,7 @@ import { performance } from 'node:perf_hooks'
 import { TrackerRuntime } from '../src/core/growingIO.js'
 import type { ProtocolEvent } from '../src/core/dataStore/protocol.js'
 import { readIdentityRecord } from '../src/core/userStore.js'
-import { storageKeys } from '../src/core/storage/index.js'
+import { APP_QUEUE_PERSIST_DELAY_MS, storageKeys } from '../src/core/storage/index.js'
 import type { AppSystemContext, NetworkState, StoragePort, TransportResult } from '../src/types/index.js'
 
 const system: AppSystemContext = {
@@ -110,8 +110,18 @@ export async function runRecoveryStress(rounds = 75, eventsPerRound = 150) {
     assert.equal(tracker.init({ accountId: 'recovery-account', dataSourceId: 'recovery-source', idMapping: true }), true)
     assert.equal(await tracker.whenReady(), true)
 
-    /** 等待模拟宿主存储中的队列与各写入槽位稳定，之后才允许模拟进程退出。 */
+    /** 模拟合并落盘窗口到期：只触发队列落盘定时器，不推进网络恢复或重试。 */
+    function flushPersistTimers() {
+      for (const [id, timer] of [...timers.entries()]) {
+        if (timer.delayMs !== APP_QUEUE_PERSIST_DELAY_MS) continue
+        timers.delete(id)
+        timer.callback()
+      }
+    }
+
+    /** 等待合并窗口及模拟宿主存储中的各写入槽位稳定，之后才允许模拟进程退出。 */
     async function settleStorage() {
+      flushPersistTimers()
       let stable = 0
       let observedEpoch = writeEpoch
       for (let step = 0; step < 200 && stable < 8; step++) {
@@ -223,9 +233,9 @@ export async function runRecoveryStress(rounds = 75, eventsPerRound = 150) {
     }
     assert.deepEqual(restored.tracker.queuedEvents(), [])
     assert.equal(active, 0)
-    assert.equal(restored.timers.size, 0)
     assert.equal(delivered.size, expected.size, 'accepted_event_lost_during_restart')
     await restored.settleStorage()
+    assert.equal(restored.timers.size, 0)
     restored.seal()
   }
   assert.equal(deviceIds, 1)

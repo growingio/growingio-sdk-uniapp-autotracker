@@ -59,7 +59,7 @@ export class BuiltinPluginRegistry {
   }
 }
 
-export type TrackerStatus = 'new' | 'initializing' | 'ready'
+export type TrackerStatus = 'new' | 'initializing' | 'ready' | 'failed'
 export type TrackerInitResult =
   | Readonly<{ ok: true; config: ResolvedGioConfig }>
   | Readonly<{ ok: false; code: 'invalid_config' | 'already_initialized' }>
@@ -83,9 +83,9 @@ export class TrackerLifecycle {
     return this.plugins.register(...plugins).ok
   }
 
-  /** 仅允许首次有效初始化；配置通过后冻结插件注册并进入恢复阶段。 */
+  /** 仅允许首次有效初始化，或在异步恢复失败后重新初始化；配置通过后冻结插件注册并进入恢复阶段。 */
   public init(options: GioInitOptions): TrackerInitResult {
-    if (this.statusValue !== 'new') return { ok: false, code: 'already_initialized' }
+    if (this.statusValue !== 'new' && this.statusValue !== 'failed') return { ok: false, code: 'already_initialized' }
     const normalized = normalizeInitOptions(options, this.target)
     if (!normalized.ok) return { ok: false, code: 'invalid_config' }
     if (this.plugins.plugins().some(plugin => plugin.name === 'gioHybridAdapter')) return { ok: false, code: 'invalid_config' }
@@ -100,6 +100,13 @@ export class TrackerLifecycle {
   public markReady(): boolean {
     if (this.statusValue !== 'initializing') return false
     this.statusValue = 'ready'
+    return true
+  }
+
+  /** 异步状态恢复失败：停止接纳业务事件，保留有界的生命周期暂存，允许再次 init。 */
+  public markFailed(): boolean {
+    if (this.statusValue !== 'initializing') return false
+    this.statusValue = 'failed'
     return true
   }
 
@@ -208,6 +215,8 @@ export class TrackerEventGate {
     const config = this.lifecycle.config()
     if (config === null || !config.dataCollect) return false
     intent = { ...intent, collecting: config.dataCollect }
+    // 恢复失败后不再承诺业务事件；重新 init 成功前一律拒绝，避免返回 true 却永远不发送。
+    if (this.lifecycle.status() === 'failed') return false
     if (this.lifecycle.status() === 'initializing') return this.buffer.push({ order: this.nextOrder++, intent })
     if (this.lifecycle.status() !== 'ready') return false
     try {
@@ -221,7 +230,8 @@ export class TrackerEventGate {
   public submitLifecycle(intent: TrackerIntent, emit: (intent: TrackerIntent) => boolean): boolean {
     if (this.lifecycle.config() === null) return false
     intent = { ...intent, collecting: this.lifecycle.config()?.dataCollect }
-    if (this.lifecycle.status() === 'initializing') {
+    // 恢复失败期间继续有界暂存生命周期与状态命令，重新 init 成功后按原顺序回放，不丢首个会话边界。
+    if (this.lifecycle.status() === 'initializing' || this.lifecycle.status() === 'failed') {
       const buffer = lifecycleKinds.has(intent.kind) ? this.lifecycleBuffer : this.buffer
       return buffer.push({ order: this.nextOrder++, intent })
     }

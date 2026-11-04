@@ -93,8 +93,12 @@ export function installUniAppLifecycle(app: UniAppVueApp, target: LifecycleTarge
   const appBridge = createAppLifecycleBridge(target)
   let launch: AppEntrySnapshot | null = null
   let firstShow = true
-  const isApp = (instance: VueInstance) => options.miniprogram === undefined && !unimp ? !isPage(instance)
-    : (instance.$mpType ?? record(instance.$options)?.mpType) === 'app'
+  const isApp = (instance: VueInstance) => {
+    const mpType = instance.$mpType ?? record(instance.$options)?.mpType
+    if (options.miniprogram !== undefined || unimp) return mpType === 'app'
+    // App 端显式声明类型时只认 app；页面即使读不到路由也不能被当成 App 前后台。未声明类型的旧宿主保留原判断。
+    return mpType === undefined ? !isPage(instance) : mpType === 'app'
+  }
   const entry = (value: unknown, launching: boolean): AppEntrySnapshot => {
     if (unimp) return unimpEntrySnapshot(value)
     if (options.miniprogram === undefined) return appEntrySnapshot(value)

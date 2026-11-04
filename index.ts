@@ -145,6 +145,14 @@ function registerGdpPlugins(value: unknown): boolean {
 export const gdp = ((command: unknown, ...args: readonly unknown[]): boolean | string | null => {
   if (command === 'registerPlugins') return registerGdpPlugins(args[0])
   if (command === 'init') {
+    if (gdpTracker !== null && gdpTracker.canRetryInit()) {
+      // 上次初始化在异步恢复阶段失败：复用已安装的生命周期与插件，只重新校验配置并恢复状态。
+      if (typeof args[0] !== 'string' || typeof args[1] !== 'string') return false
+      const input = record(args[2])
+      if (input === null || !isUniVueApp(input.uniVue) || input.runtime === 'unimp') return false
+      const { uniVue: _app, sdkVersion: _ignoredVersion, ...init } = input
+      return gdpTracker.init({ ...init, accountId: args[0], dataSourceId: args[1] })
+    }
     if (gdpTracker !== null) {
       try { globalThis.console?.warn('[GrowingIO]：SDK重复初始化，请检查是否重复加载SDK或接入其他平台SDK导致冲突!') }
       catch { /* 诊断输出异常不应打断后续业务调用。 */ }

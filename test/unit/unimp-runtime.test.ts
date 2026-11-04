@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { UniMPRuntime } from '../../src/plugins/gioHybridAdapter/runtime.js'
+import { HYBRID_RECOVERY_DELAYS_MS, HYBRID_RESPONSE_TIMEOUT_MS, UniMPRuntime } from '../../src/plugins/gioHybridAdapter/runtime.js'
 import { UniMPNativeModulePort, HybridPortFailure } from '../../src/platform/unimp-native-module.js'
 import type { HybridOptions, UniMPRequest } from '../../src/plugins/gioHybridAdapter/contract.js'
 import { hybridFixture, hybridFlush, NativeExecutor, unimpConfig } from '../support/unimp-host.js'
@@ -112,7 +112,7 @@ describe('uniMP identity FIFO and failure recovery', () => {
     f.runtime.setUserId('A'); f.runtime.track('lost'); await hybridFlush()
     const old = 2; f.native.execute(old)
     expect(f.native.userId).toBe('A')
-    await vi.advanceTimersByTimeAsync(1000)
+    await vi.advanceTimersByTimeAsync(HYBRID_RESPONSE_TIMEOUT_MS)
     expect(f.runtime.failed()).toBe(true)
     expect(f.runtime.track('unsafe', badProperties())).toBe(false)
     f.runtime.setDataCollect(true); await f.accept()
@@ -352,7 +352,7 @@ describe('uniMP transport, gates and cleanup', () => {
   })
   it('fences a delayed Native identity execution after a newer hello, while JS also ignores the old reply', async () => {
     const f = hybridFixture(); await f.connect(false)
-    f.runtime.setUserId('old'); await hybridFlush(); await vi.advanceTimersByTimeAsync(1000)
+    f.runtime.setUserId('old'); await hybridFlush(); await vi.advanceTimersByTimeAsync(HYBRID_RESPONSE_TIMEOUT_MS)
     f.runtime.setDataCollect(true); await f.accept()
     f.native.reply(1); await hybridFlush()
     expect(f.native.userId).toBeNull()
@@ -389,17 +389,61 @@ describe('uniMP transport, gates and cleanup', () => {
     f.native.reply(1); f.native.reply(1); await hybridFlush()
     expect(f.ready).toHaveBeenCalledOnce()
   })
-  it.each(['unknown', 'duplicate_request', 'throw'] as const)('suspends business operations with unknown result (%s) without automatic resend', async mode => {
+  it.each(['unknown', 'duplicate_request', 'throw'] as const)('suspends business operations with unknown result (%s), then re-handshakes without resending them', async mode => {
     const f = hybridFixture(); await f.connect(false)
     f.runtime.track('once'); f.runtime.track('after'); await hybridFlush()
     const request = f.native.calls[1]!.request
-    if (mode === 'throw') await vi.advanceTimersByTimeAsync(1000)
+    if (mode === 'throw') await vi.advanceTimersByTimeAsync(HYBRID_RESPONSE_TIMEOUT_MS)
     else f.native.deliver(1, mode === 'duplicate_request' ? f.native.rejected(1, mode) : { version: 1, requestId: request.requestId, instanceId: request.instanceId, generation: request.generation,
       connectionId: 'connection-1', status: 'unknown', code: 'native_result_unknown' })
-    await hybridFlush(); await vi.advanceTimersByTimeAsync(10000)
-    expect(f.native.calls).toHaveLength(2)
+    await hybridFlush()
+    expect(f.runtime.failed()).toBe(true)
     expect(f.runtime.track('not_retry', badProperties())).toBe(false)
     expect(f.error).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'CUSTOM', outcome: 'unknown' }))
+    await vi.advanceTimersByTimeAsync(HYBRID_RECOVERY_DELAYS_MS[0] - 1)
+    expect(f.native.calls).toHaveLength(2)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(f.native.calls.map(call => call.request.method)).toEqual(['hello', 'dispatchEvent', 'hello'])
+    await f.accept()
+    expect(f.runtime.ready()).toBe(true)
+    expect(f.runtime.track('recovered')).toBe(true); await hybridFlush()
+    expect(f.native.calls.slice(3).map(call => custom(call.request)?.eventName)).toEqual(['recovered'])
+  })
+  it('a slow Native reply under the response window is not treated as unknown', async () => {
+    const f = hybridFixture(); await f.connect(false)
+    f.runtime.track('slow'); await hybridFlush()
+    await vi.advanceTimersByTimeAsync(HYBRID_RESPONSE_TIMEOUT_MS - 1)
+    await f.accept()
+    expect(f.runtime.ready()).toBe(true)
+    expect(f.runtime.track('next')).toBe(true)
+  })
+  it('stops automatic recovery after the bounded attempts and restarts the budget on the next foreground', async () => {
+    const f = hybridFixture(); await f.connect(false)
+    f.runtime.track('lost'); await hybridFlush()
+    await vi.advanceTimersByTimeAsync(HYBRID_RESPONSE_TIMEOUT_MS)
+    const hellos = () => f.native.calls.filter(call => call.request.method === 'hello').length
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+    // 原生端不再应答：每轮 5 秒内发出 4 次 hello（0 / 1250 / 2750 / 4750ms）；首次连接 1 次 + 有限轮恢复。
+    expect(hellos()).toBe(1 + HYBRID_RECOVERY_DELAYS_MS.length * 4)
+    expect(f.runtime.failed()).toBe(true)
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+    expect(hellos()).toBe(1 + HYBRID_RECOVERY_DELAYS_MS.length * 4)
+    f.runtime.onAppHide(); f.runtime.onAppShow({ path: null, query: null }); await f.accept()
+    expect(f.runtime.ready()).toBe(true)
+  })
+  it('does not recover automatically while in background or after consent is withdrawn', async () => {
+    const f = hybridFixture(); await f.connect(false)
+    f.runtime.track('lost'); await hybridFlush()
+    await vi.advanceTimersByTimeAsync(HYBRID_RESPONSE_TIMEOUT_MS)
+    f.runtime.onAppHide()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(f.native.calls.filter(call => call.request.method === 'hello')).toHaveLength(1)
+    const g = hybridFixture(); await g.connect(false)
+    g.runtime.track('lost'); await hybridFlush()
+    await vi.advanceTimersByTimeAsync(HYBRID_RESPONSE_TIMEOUT_MS)
+    g.runtime.setDataCollect(false)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(g.native.calls.filter(call => call.request.method === 'hello')).toHaveLength(1)
   })
   it.each(['queue_full', 'invalid_payload', 'payload_too_large', 'native_internal_error'] as const)('drops a known rejected business operation and continues (%s)', async code => {
     const f = hybridFixture(); await f.connect(false); f.runtime.track('reject'); f.runtime.track('next'); await hybridFlush()

@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { APP_QUEUE_RETENTION_MS, EventQueue } from '../../src/core/queue.js'
+import { APP_QUEUE_LIMITS, APP_QUEUE_RETENTION_MS, EventQueue } from '../../src/core/queue.js'
 import type { TransportPort, TransportResult } from '../../src/types/index.js'
-import { Uploader, type UploaderRuntime } from '../../src/core/uploader.js'
+import { Uploader, type UploaderDrop, type UploaderRuntime } from '../../src/core/uploader.js'
 import type { ProtocolEvent } from '../../src/core/dataStore/protocol.js'
 
 /** 构造上传测试的合法协议事件。 */
@@ -489,6 +489,48 @@ describe('Uploader', () => {
       expect(sent).toEqual([[1], [2]])
       expect(drops).toEqual([])
       expect(queue.snapshot()).toEqual([])
+    })
+
+    it('4xx 拒绝的批次对半拆分定位坏事件，坏事件累计被拒 3 次后丢弃，同批其余事件全部送达', () => {
+      const queue = new EventQueue(APP_QUEUE_LIMITS)
+      for (let index = 1; index <= 120; index++) queue.enqueue(event(index))
+      const clocks = runtime()
+      const delivered: number[] = []
+      const pending: Array<{ ids: number[]; done: (result: TransportResult) => void }> = []
+      const drops: UploaderDrop[] = []
+      const uploader = new Uploader(queue, { dispatch: (request, done) => {
+        pending.push({ ids: (JSON.parse(request.body) as ProtocolEvent[]).map(item => item.eventSequenceId as number), done })
+      } }, clocks.value, 'https://collector.example', 'account', drop => drops.push(drop), undefined, undefined, () => true, 0, undefined, 'retain')
+      uploader.flush()
+      for (let round = 0; round < 40 && (pending.length > 0 || clocks.scheduledDelays().length > 0); round++) {
+        while (pending.length > 0) {
+          const call = pending.shift()!
+          if (call.ids.includes(7)) call.done({ kind: 'success', status: 400 })
+          else { delivered.push(...call.ids); call.done({ kind: 'success', status: 204 }) }
+        }
+        for (const delay of clocks.scheduledDelays()) clocks.fireDelay(delay)
+      }
+      expect(queue.size()).toBe(0)
+      expect(delivered.sort((a, b) => a - b)).toEqual(Array.from({ length: 120 }, (_, index) => index + 1).filter(value => value !== 7))
+      expect(drops).toEqual([expect.objectContaining({ reason: 'non_retryable', requestIds: ['q7'] })])
+    })
+
+    it.each([408, 429])('HTTP %s 属于暂时拒绝，不拆批也不丢弃', status => {
+      const queue = new EventQueue(APP_QUEUE_LIMITS)
+      queue.enqueue(event(1)); queue.enqueue(event(2))
+      const clocks = runtime()
+      const sizes: number[] = []
+      const callbacks: Array<(result: TransportResult) => void> = []
+      const uploader = new Uploader(queue, { dispatch: (request, done) => { sizes.push(JSON.parse(request.body).length); callbacks.push(done) } },
+        clocks.value, 'https://collector.example', 'account', undefined, undefined, undefined, () => true, 0, undefined, 'retain')
+      uploader.flush()
+      for (let attempt = 0; attempt < 5; attempt++) {
+        callbacks.shift()!({ kind: 'http', status })
+        for (const delay of clocks.scheduledDelays()) clocks.fireDelay(delay)
+      }
+      expect(sizes).toEqual([2, 2, 2, 2, 2, 2])
+      expect(queue.size()).toBe(2)
+      expect(queue.snapshot().map(entry => entry.retryCount)).toEqual([0, 0])
     })
 
     it('HTTP 413 与原生 Android 一致删除对应批次，不进入退避', () => {

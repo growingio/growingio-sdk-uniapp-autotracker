@@ -268,13 +268,51 @@ function encodeQueue(revision: number, entries: string): string {
   return `{"version":1,"revision":${revision},"entries":${entries}}`
 }
 
+/** 合并写入所需的最小定时器端口。 */
+export type QueuePersistenceThrottle = Readonly<{
+  setTimeout: (callback: () => void, delayMs: number) => unknown
+  clearTimeout: (handle: unknown) => void
+  delayMs: number
+}>
+
+/** App 队列默认的合并写入窗口：突发事件只整队写一次，且写入不在业务调用栈内同步执行。 */
+export const APP_QUEUE_PERSIST_DELAY_MS = 1_000
+
 /** 串行写入并合并尚未开始的快照；内存最多保留一份在写和一份待写内容。 */
 export class QueuePersistence {
   private revision = 0
   private readonly writer = new LatestStorageWriter<() => string>(snapshot => this.write(snapshot()))
+  private scheduled: { handle: unknown; queue: EventQueue } | null = null
 
-  /** 绑定队列存储键，并建立按顺序执行的写入链。 */
-  public constructor(private readonly storage: StoragePort, private readonly key: string) {}
+  /** 绑定队列存储键，并建立按顺序执行的写入链；提供 throttle 时 request 在窗口结束后合并写入。 */
+  public constructor(private readonly storage: StoragePort, private readonly key: string, private readonly throttle?: QueuePersistenceThrottle) {}
+
+  /** 请求持久化：无 throttle 时立即写入；有 throttle 时窗口内多次请求只写一次最新快照。 */
+  public request(queue: EventQueue): void {
+    if (this.throttle === undefined || this.throttle.delayMs <= 0) { void this.persist(queue); return }
+    if (this.scheduled !== null) { this.scheduled.queue = queue; return }
+    const scheduled: { handle: unknown; queue: EventQueue } = { handle: undefined, queue }
+    this.scheduled = scheduled
+    scheduled.handle = this.throttle.setTimeout(() => {
+      if (this.scheduled !== scheduled) return
+      this.scheduled = null
+      void this.persist(scheduled.queue)
+    }, this.throttle.delayMs)
+  }
+
+  /** 立即写入尚在合并窗口内的快照，用于进入后台等可能被系统挂起或回收的时刻。 */
+  public flush(queue?: EventQueue): Promise<StorageWrite> | null {
+    const scheduled = this.scheduled
+    if (scheduled === null && queue === undefined) return null
+    if (scheduled !== null) {
+      this.scheduled = null
+      try { this.throttle?.clearTimeout(scheduled.handle) } catch { /* 定时器取消失败时由已清空的标记阻止重复写入。 */ }
+    }
+    return this.persist(queue ?? scheduled!.queue)
+  }
+
+  /** 是否存在尚未写入的合并请求。 */
+  public pending(): boolean { return this.scheduled !== null }
 
   /** 完整校验后恢复队列与修订号，损坏记录仅在本键范围内清理。 */
   public async hydrate(queue: EventQueue): Promise<QueueHydration> {
@@ -290,6 +328,8 @@ export class QueuePersistence {
       const parsed: unknown = JSON.parse(read.value)
       if (!validRecord(parsed) || !queue.restore(parsed.entries)) throw new Error('queue_record_corrupt')
       this.revision = parsed.revision
+      // 部分条目无效或超出容量时，立即写回清理后的快照，下次启动不再重复校验这些条目。
+      if (queue.lastRestoreDropped() > 0) void this.persist(queue)
       return 'restored'
     } catch {
       await this.storage.remove('queue', this.key)

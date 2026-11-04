@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { APP_QUEUE_PERSIST_DELAY_MS } from '../../src/core/storage/index.js'
 import { createAppTracker } from '../../src/platform/index.js'
 import { dispatchAutoTrack } from '../../src/plugins/gioEventAutoTracking/index.js'
 
@@ -137,7 +138,34 @@ describe('createAppTracker', () => {
     expect(tracker.queuedEvents().find(event => event.eventName === 'offline_after_query')).toMatchObject({ networkState: 'UNKNOWN' })
   })
 
+  it('App 队列合并落盘，进入后台时立即写入未落盘的事件', async () => {
+    vi.useFakeTimers()
+    const values = new Map<string, string>()
+    const writes: string[] = []
+    const tracker = createAppTracker({
+      getStorageSync: key => values.get(key), setStorageSync: (key, value) => { values.set(key, value); writes.push(key) }, removeStorageSync: key => { values.delete(key) },
+      getDeviceInfo: () => ({ platform: 'ios' }), getSystemInfoSync: () => ({}), getAppBaseInfo: () => ({}),
+      getNetworkType: options => options.success({ networkType: 'none' }), request: vi.fn(),
+    }, { sdkVersion: '0.1.0', deviceIdFactory: () => 'device', sessionIdFactory: () => 'session' })
+    tracker.init({ accountId: 'account', dataSourceId: 'source' })
+    await tracker.whenReady()
+    tracker.onAppShow({ path: '/home', query: '' })
+    for (let index = 0; index < 50; index++) tracker.track('burst', { index })
+    await vi.advanceTimersByTimeAsync(0)
+    const queueKey = 'gio:v1:source:queue:v1'
+    expect(writes.filter(key => key === queueKey)).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(APP_QUEUE_PERSIST_DELAY_MS)
+    expect(writes.filter(key => key === queueKey)).toHaveLength(1)
+    tracker.track('before_hide')
+    tracker.onAppHide()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(writes.filter(key => key === queueKey)).toHaveLength(2)
+    const persisted = JSON.parse(values.get(queueKey)!).entries.map((entry: { event: { eventName?: string; eventType: string } }) => entry.event.eventName ?? entry.event.eventType)
+    expect(persisted.slice(-2)).toEqual(['before_hide', 'APP_CLOSED'])
+  })
+
   it('断网冷启动先持久化，恢复为未知网络类型但明确联网时补发', async () => {
+    vi.useFakeTimers()
     const values = new Map<string, string>()
     let listener!: (result: { networkType: string; isConnected: boolean }) => void
     const request = vi.fn((options: { data: string; success: (value: { statusCode: number }) => void }) => options.success({ statusCode: 204 }))
@@ -150,7 +178,9 @@ describe('createAppTracker', () => {
     tracker.onAppShow({ path: '/home', query: '' })
     tracker.track('offline_event')
     await tracker.whenReady()
-    await vi.waitFor(() => expect([...values.values()].some(value => value.includes('offline_event'))).toBe(true))
+    // App 队列在合并窗口结束后落盘。
+    await vi.advanceTimersByTimeAsync(APP_QUEUE_PERSIST_DELAY_MS)
+    expect([...values.values()].some(value => value.includes('offline_event'))).toBe(true)
     expect(request).not.toHaveBeenCalled()
     expect(tracker.queuedEvents().map(event => event.eventType)).toEqual(['VISIT', 'CUSTOM'])
     listener({ networkType: 'unknown', isConnected: true })
