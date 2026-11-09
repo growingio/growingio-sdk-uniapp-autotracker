@@ -3,10 +3,12 @@
 GrowingIO 传统 uni-app Vue 3 数据采集 SDK。一行初始化即可自动采集页面浏览、App 生命周期与用户交互，同时支持手动埋点上报自定义事件、用户身份与属性。
 
 > 当前版本面向 **HarmonyOS（鸿蒙）端** 的 `.vue` App 发布，提供开箱即用的无埋点与手动埋点能力。
+>
+> 自动交互采集（点击、输入完成、选择器、TabBar）当前仅在鸿蒙端默认开启；Android 与 iOS 需通过验证构建另行开启，尚未纳入本次发布范围。
 
 ## 功能特性
 
-- **自动采集**：App / Page 生命周期、页面浏览（`VISIT`）、按钮点击、输入完成等交互，无需逐页面写埋点代码。
+- **自动采集**包括 App 会话开始（`VISIT`）、页面浏览（`PAGE`），以及鸿蒙端的按钮点击、输入完成等交互。
 - **手动埋点**：通过 `gdp()` 上报自定义事件、用户身份（`setUserId`）、用户属性（`setUserAttributes`）与位置信息。
 - **无埋点插桩**：Vite 构建期自动为模板插桩，业务代码无需改动，原有事件 handler 完整保留。
 - **隐私保护**：内置敏感字段拦截，密码、安全密码等输入内容永不读取、永不上报。
@@ -63,7 +65,7 @@ export function createApp() {
 | `accountId` | `string` | 是 | 账户 ID（`init` 第一个参数） |
 | `dataSourceId` | `string` | 是 | 数据源 ID（`init` 第二个参数） |
 | `serverUrl` | `string` | 否 | 数据上报地址 |
-| `dataCollect` | `boolean` | 否 | 是否开启采集，默认关闭 |
+| `dataCollect` | `boolean` | 否 | 是否开启采集，默认开启 |
 | `sessionExpires` | `number` | 否 | 会话过期时长（分钟），默认 0.5，最大 360 |
 | `appVersion` | `string` | 否 | 上报的应用版本，缺省时自动读取宿主版本 |
 | `idMapping` | `boolean` | 否 | 是否启用身份映射 |
@@ -89,7 +91,7 @@ gdp('clearUserId')
 gdp('setUserAttributes', { vip: true, level: 3 })
 
 // 设置位置信息
-gdp('setLocation', { latitude: 31.23, longitude: 121.47 })
+gdp('setLocation', 31.23, 121.47)
 
 // 清除位置信息
 gdp('clearLocation')

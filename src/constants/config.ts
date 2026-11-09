@@ -65,7 +65,7 @@ export type ConfigResult =
   | Readonly<{ ok: true; config: ResolvedGioConfig }>
   | Readonly<{ ok: false; code: ConfigErrorCode }>
 
-const DEFAULT_SERVER_URL = 'https://napi.growingio.com'
+export const DEFAULT_SERVER_URL = 'https://napi.growingio.com'
 const APP_DEFAULT_SESSION_TIMEOUT_MS = 30_000
 const MINI_PROGRAM_DEFAULT_KEEP_ALIVE_MS = 5 * 60_000
 const MINI_PROGRAM_MAX_KEEP_ALIVE_MINUTES = 60 * 24

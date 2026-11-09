@@ -1,12 +1,16 @@
 name: Release SDK
 
-# 推送 v* 标签时自动打包并发布：先构建、验证并发布 npm，npm 成功后
-# 再创建 GitHub Release 上传同一批交付包。npm 的 provenance 需要 id-token: write
-# 与 npm 侧 Trusted Publisher（工作流文件名须为 release.yml）。
+# 推送 v* 标签后先验证并归档交付包，再发布 npm 和 GitHub Release。
+# 首发和 Trusted Publisher 配置见 .github/RELEASING.md。
 on:
   push:
     tags:
       - 'v*'
+
+# 同一时刻只运行一次发布，保护正在执行的任务。
+concurrency:
+  group: sdk-publish
+  cancel-in-progress: false
 
 jobs:
   publish:
@@ -43,9 +47,16 @@ jobs:
       - name: Build and validate delivery packages
         run: pnpm run release:prepare
 
+      - name: 保存已验证交付包
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-${{ github.ref_name }}
+          path: dist/release/
+          if-no-files-found: error
+          overwrite: true
+
       - name: Enable npm Trusted Publishing
-        # Trusted Publishing 要求 npm >= 11.5.1；先升级并确认 OIDC 凭证已注入，
-        # 提前暴露 Trusted Publisher 未配置问题，而非等到 npm publish 时才失败。
+        # Trusted Publishing 要求 npm >= 11.5.1。包的授权由 npm 侧验证。
         run: |
           npm install --global npm@^11.5.1
           npm --version
@@ -54,14 +65,6 @@ jobs:
 
       - name: 发布到 npm
         run: pnpm exec tsx scripts/publish-release.ts
-
-      - name: 保存已验证交付包，供 release job 与失败重跑核对
-        uses: actions/upload-artifact@v4
-        with:
-          name: sdk-${{ github.ref_name }}
-          path: dist/release/
-          if-no-files-found: error
-          overwrite: true
 
   release:
     name: Create GitHub Release

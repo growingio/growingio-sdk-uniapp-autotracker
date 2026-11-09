@@ -23,6 +23,11 @@ for (const [directory, expected, channel] of [[npmDir, state.npm, 'npm'], [modul
   assert.equal(pkg.type, 'module')
   assert.equal(pkg.dependencies, undefined, '编译器依赖必须随 Vite 工具打包')
   assert.equal(pkg.devDependencies, undefined)
+  if (channel === 'uni_modules') {
+    assert.equal(pkg.dcloudext?.type, 'sdk-js', 'uni_modules 应使用通用 JS SDK 分类')
+    assert.ok(Array.isArray(pkg.keywords) && pkg.keywords.length >= 1 && pkg.keywords.length <= 5, '插件市场要求 1 到 5 个关键词')
+    assert.ok(pkg.dcloudext?.declaration?.data && pkg.dcloudext?.declaration?.permissions, '插件市场要求声明采集数据与权限')
+  }
   for (const entry of ['.', './vite', './autotrack']) {
     assert.ok(entries.includes(pkg.exports[entry].types.slice(2)))
     assert.ok(entries.includes(pkg.exports[entry].import.slice(2)))

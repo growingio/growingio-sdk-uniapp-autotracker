@@ -21,6 +21,14 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: 核心代码测试、覆盖率及交付包验收
         run: pnpm run release:prepare
+      - name: 保存通过检查的候选交付包
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-candidate
+          path: dist/release/
+          if-no-files-found: error
+          retention-days: 14
       - name: 保存代码测试报告
         if: always()
         uses: actions/upload-artifact@v4

@@ -1,8 +1,11 @@
+import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { transformAutoTrackSfc } from '../src/compiler/vite.js'
 
 const root = resolve(import.meta.dirname, '..')
+const manifestTemplate = JSON.parse(readFileSync(resolve(root, 'demo/manifest.example.json'), 'utf8'))
+assert.ok(!Object.hasOwn(manifestTemplate['app-harmony'].distribute, 'signingConfigs'), 'demo 模板必须将签名配置留在本机')
 const required = [
   'demo/App.vue',
   'demo/miniprogram-config.ts',

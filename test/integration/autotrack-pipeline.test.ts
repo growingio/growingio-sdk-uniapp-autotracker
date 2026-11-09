@@ -201,12 +201,19 @@ describe('SFC to mock collector pipeline', () => {
     expect(tracker.queuedEvents().at(-1)).toMatchObject({ eventType: 'VIEW_CLICK', xpath: '#save' })
   })
 
-  it.each(['Android', 'iOS', 'HarmonyOS'] as const)('keeps unverified %s capabilities disabled in the real runtime', async (platform) => {
+  it.each(['Android', 'iOS'] as const)('keeps unverified %s capabilities disabled in the real runtime', async (platform) => {
     const tracker = new TrackerRuntime({ ...trackerDependencies(), systemContext: { load: async () => ({ ...system, platform }) } })
     await show(tracker)
     expect(tracker.autoTrack({ schemaVersion: 2, source: 'template', kind: 'click', eventName: 'save' })).toBe(false)
     expect(tracker.autoTrack({ schemaVersion: 2, source: 'template', kind: 'change', eventName: 'save', elementType: 'switch' })).toBe(false)
     expect(createPageLifecycleBridge(tracker, 'home#1').onTabItemTap({ index: 0 })).toBe(false)
     expect(tracker.queuedEvents().map((event) => event.eventType)).toEqual(['VISIT', 'PAGE'])
+  })
+
+  it('collects HarmonyOS interactions in the production runtime', async () => {
+    const tracker = new TrackerRuntime({ ...trackerDependencies(), systemContext: { load: async () => ({ ...system, platform: 'HarmonyOS' }) } })
+    await show(tracker)
+    expect(tracker.autoTrack({ schemaVersion: 2, source: 'template', kind: 'click', eventName: 'save' })).toBe(true)
+    expect(tracker.queuedEvents().at(-1)).toMatchObject({ eventType: 'VIEW_CLICK', xpath: '#save' })
   })
 })

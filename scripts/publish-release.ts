@@ -9,9 +9,9 @@ import { archivesDir, metadata, sdkName } from './release-layout.js'
 import { releasePolicy } from './release-policy.js'
 import './check-release.js'
 
-// 发布必须在 GitHub Actions 中、且当前引用为与版本一致的 tag 形式；手动触发（workflow_dispatch）时 GITHUB_REF_TYPE 为 branch，故只校验 ref 名称与版本一致。
-if (process.env.GITHUB_ACTIONS !== 'true') throw new Error('publish_requires_github_actions')
-const policy = releasePolicy(metadata.version, process.env.GITHUB_REF_NAME)
+const gitTag = process.env.GITHUB_REF_NAME
+if (process.env.GITHUB_ACTIONS !== 'true' || process.env.GITHUB_REF_TYPE !== 'tag' || !gitTag) throw new Error('publish_requires_github_tag_workflow')
+const policy = releasePolicy(metadata.version, gitTag)
 const release = JSON.parse(await readFile(join(archivesDir, 'release.json'), 'utf8')) as { name: string; version: string; tag: string; prerelease: boolean; npmFile: string; npmIntegrity: string }
 assert.equal(release.name, sdkName)
 assert.equal(release.version, policy.version)

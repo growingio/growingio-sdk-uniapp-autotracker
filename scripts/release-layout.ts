@@ -36,7 +36,7 @@ export async function hashes(directory: string): Promise<Record<string, string>>
 export async function sourceHash(baseDirectory = root): Promise<string> {
   const inputs = ['index.ts', 'autotrack.ts', 'vite.ts', 'package.json', 'pnpm-lock.yaml', 'tsconfig.json', 'tsconfig.build.json', 'tsconfig.dev.json', 'vitest.config.ts', 'README.md', 'LICENSE',
     // 编译矩阵直接使用这些 demo 源码；不扫描生成的 demo/uni_modules，避免构建摘要自引用。
-    'demo/main.ts', 'demo/sdk-state.ts', 'demo/miniprogram-config.ts']
+    'demo/main.ts', 'demo/sdk-state.ts', 'demo/miniprogram-config.ts', 'demo/manifest.example.json']
   // 测试与门禁配置也属于本次构建依据，改动后不能沿用旧交付包的检查结果。
   // 注意：doc 不参与构建指纹，因为 doc 已不进入交付包，其变化不影响产物。
   for (const directory of ['src', 'scripts', 'test', '.github/workflows']) inputs.push(...(await files(join(baseDirectory, directory))).map((file) => `${directory}/${file}`))

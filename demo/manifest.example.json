@@ -18,18 +18,7 @@
     "mp-xhs" : { "appid" : "", "usingComponents" : true },
     "app-harmony" : {
         "distribute" : {
-            "bundleName" : "com.growingio.analytics",
-            "signingConfigs" : {
-                "default" : {
-                    "certpath" : "",
-                    "keyAlias" : "",
-                    "keyPassword" : "",
-                    "profile" : "",
-                    "signAlg" : "SHA256withECDSA",
-                    "storeFile" : "",
-                    "storePassword" : ""
-                }
-            }
+            "bundleName" : "com.growingio.analytics"
         }
     }
 }

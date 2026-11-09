@@ -4,13 +4,18 @@ import { CHANGE_ELEMENTS } from '../../src/plugins/gioEventAutoTracking/contract
 import { allAppCapabilityProfiles, appCapabilityProfile } from '../../src/constants/platform.js'
 
 describe('App capability profiles', () => {
-  it('keeps every unverified App feature disabled until device evidence is recorded', () => {
+  it('enables automatic interactions in production only on HarmonyOS', () => {
     expect(allAppCapabilityProfiles()).toHaveLength(3)
     expect(appCapabilityProfile('HarmonyOS')).toStrictEqual({
-      platform: 'HarmonyOS', appLifecycle: false, pageLifecycle: false, autoClick: false,
-      autoChange: Object.fromEntries(CHANGE_ELEMENTS.map((element) => [element, false])),
-      changeInput: false, changePicker: false, tabBar: false, appClosedBestEffort: false,
+      platform: 'HarmonyOS', appLifecycle: false, pageLifecycle: false, autoClick: true,
+      autoChange: Object.fromEntries(CHANGE_ELEMENTS.map((element) => [element, true])),
+      changeInput: true, changePicker: true, tabBar: true, appClosedBestEffort: false,
     })
+    for (const platform of ['Android', 'iOS']) {
+      const profile = appCapabilityProfile(platform)
+      expect(profile).toMatchObject({ autoClick: false, changeInput: false, changePicker: false, tabBar: false })
+      expect(Object.values(profile!.autoChange)).toEqual(CHANGE_ELEMENTS.map(() => false))
+    }
   })
 
   it('opens a separate verification profile without changing the acceptance matrix', () => {

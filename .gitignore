@@ -4,8 +4,10 @@ release/
 .pnpm-store/
 coverage/
 test-results/
-# 内部设计/评审/计划/验收文档仅团队内部维护，不随仓库外发到 GitHub。
+# 内部设计、评审和验收资料保留在本地。
 doc/
+demo/manifest.json
+demo/harmony-configs/build-profile.json5
 demo/unpackage/
 demo/dist/
 demo/uni_modules/

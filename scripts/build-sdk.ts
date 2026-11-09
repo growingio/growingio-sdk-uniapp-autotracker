@@ -1,9 +1,10 @@
-import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { copyFile, cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { constants, existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { build } from 'esbuild'
 import { dist, hashes, metadata, modulesDir, npmDir, root, runtimeEntries, sdkName, sourceHash } from './release-layout.js'
+import { DEFAULT_SERVER_URL } from '../src/constants/config.js'
 import { MINI_PROGRAM_TARGETS } from '../src/constants/miniprogram.js'
 
 // 只清理固定生成目录；公开入口和 src 中的开发源码不受影响。
@@ -69,15 +70,22 @@ await writeFile(join(modulesDir, 'package.json'), `${JSON.stringify({
   id: sdkName,
   displayName: 'GrowingIO uni-app 埋点 SDK（鸿蒙）',
   description: 'GrowingIO 传统 uni-app Vue 3 数据采集 SDK，本期仅发布鸿蒙端',
+  keywords: ['GrowingIO', 'uni-app', '鸿蒙', '统计', '埋点'],
   engines: { node: '>=20.19.0', HBuilderX: '>=5.24' },
   dcloudext: {
-    type: 'js',
+    type: 'sdk-js',
     sale: { regular: { price: '0.00' }, sourcecode: { price: '0.00' } },
     contact: { qq: '' },
+    // 声明字段供插件市场展示，按规范使用中文描述实际采集内容与所需权限。
     declaration: {
       ads: 'none',
-      data: 'collects basic app lifecycle events, custom events, and user identity fields',
-      permissions: 'network, local storage',
+      data: [
+        '采集应用生命周期、页面浏览及路由参数、自定义事件与属性，以及点击、输入完成、选择器和 TabBar 等交互。',
+        '事件包含设备和会话标识、接入方设置的用户标识，以及设备、系统、应用和网络信息。',
+        '按接入配置采集明确放行的非敏感输入值，以及接入方通过 setLocation 提供的经纬度。',
+        `数据发往初始化 serverUrl 指定的采集服务，默认接收地址为 ${DEFAULT_SERVER_URL}，用于埋点统计与产品分析。`,
+      ].join(''),
+      permissions: '网络访问、本地存储',
     },
   },
   // 本期仅发布鸿蒙端：仅 app.harmony 标 √，其余平台（App 双端、Web、八端小程序）一律 x，避免未验收端被误判为已支持。
@@ -92,4 +100,9 @@ await writeFile(join(dist, 'build-state.json'), JSON.stringify({ sourceHash: awa
 const demoModule = join(root, 'demo/uni_modules', sdkName)
 await rm(demoModule, { recursive: true, force: true })
 await cp(modulesDir, demoModule, { recursive: true })
+try {
+  await copyFile(join(root, 'demo/manifest.example.json'), join(root, 'demo/manifest.json'), constants.COPYFILE_EXCL)
+} catch (error) {
+  if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+}
 console.log(`sdk_built:${metadata.version}`)
