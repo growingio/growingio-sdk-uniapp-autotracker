@@ -2,7 +2,7 @@
 
 这是传统 uni-app Vue 3 App 的可运行 showcase。它与 uni-app x demo 对齐展示已实现的功能：生命周期、`PAGE` 上下文、自定义事件、用户身份/属性、Vite 无埋点业务交互、路由 query 和 `dataCollect` 动态开关。
 
-微信、支付宝、百度、抖音、QQ、快手、京东和小红书复用同一工程：在 `manifest.json` 对应目标中填写真实 appId，并按需填写 `miniprogram-config.ts` 的平台标识。`main.ts` 优先采用显式平台配置，其次读取可用账号信息；百度、抖音等无账号接口时必须显式填写。账号读取仅在 MP 条件编译中执行。运行前重新构建 SDK，并配置测试采集域名及平台网络白名单。小程序的保活默认为五分钟、事件按秒聚合、session 和事件队列不落盘；生产自动交互门控及真机状态见[小程序接入](../doc/miniprogram.md)。本 demo 的内部验证开关只用于验收，不能作为能力已经通过真机的证据。
+微信、支付宝、百度、抖音、QQ、快手、京东和小红书复用同一工程：在 `manifest.json` 对应目标中填写真实 appId，并按需填写 `miniprogram-config.ts` 的平台标识。`main.ts` 优先采用显式平台配置，其次读取可用账号信息；百度、抖音等无账号接口时必须显式填写。账号读取仅在 MP 条件编译中执行。运行前重新构建 SDK，并配置测试采集域名及平台网络白名单。小程序的保活默认为五分钟、事件按秒聚合、session 和事件队列不落盘。本 demo 的内部验证开关只用于验收，不能作为能力已经通过真机的证据。
 
 默认开启 `dataCollect`，因此首次 `App:onShow` 会创建 `VISIT`，随后在 uploader 真正发起请求前以 Debug JSON 输出。若业务需要等待隐私同意，可在 `sdk-state.ts` 将 `enabled` 设为 `false`（main.ts 与示例页面共用此状态），再通过「采集开关」页开启。SDK 的完整初始化与 App/Page 生命周期接入只在 `main.ts` 里使用小程序同款的 `gdp('registerPlugins')` 与 `gdp('init', ..., { uniVue: app })`；`App.vue` 和各演示页面都不需要 bridge 或 tracker import，业务调用也全部使用 `gdp('xxx')`，不暴露 `$gio` 或内部 tracker。`gioABTest`、微信分享和 `.nvue` 自动采集并非当前传统 App SDK 的能力；首页的“当前能力边界”区会明确说明，绝不伪造成功结果。
 
@@ -82,7 +82,7 @@ pnpm demo:check
 
 ## 鸿蒙实机与自动化
 
-2026-10-19 的实机记录见[鸿蒙验证报告](../doc/harmony-device-validation-2026-10-19.md)。SDK 的 App 运行时不得包含 Unicode 属性正则字面量；当前鸿蒙 JSVM 无法编译该语法，会使整个 demo 白屏。采集地址的 Unicode 扩展能力现已改为按需检测，ASCII 域名和 IP 不依赖该能力。
+SDK 的 App 运行时不得包含 Unicode 属性正则字面量；当前鸿蒙 JSVM 无法编译该语法，会使整个 demo 白屏。采集地址的 Unicode 扩展能力现已改为按需检测，ASCII 域名和 IP 不依赖该能力。
 
 禁用标记 picker 在本轮设备上出现确认回调缺少下标的情况。demo 会保留原选择，并提供“切换到下一种禁用标记”按钮，实际遍历 false、0、"0"、"false"。边界页的动态事件使用原生 click；动态 tap 在本轮传统 App 宿主没有触发业务回调。
 
@@ -97,7 +97,7 @@ pnpm demo:check
 
 ## 安卓真机与自动化
 
-2026-10-19 的小米 MI 6 / Android 9 验证见[安卓真机报告](../doc/android-device-validation-2026-10-19.md)，涵盖公共逻辑、原生无埋点交互、上传错误、真实断网、会话超时和进程重启。当前宿主未触发 input/textarea 的原生 change；独立 blur / confirm 已通过。安卓 picker 本轮能正常返回确认下标。
+2026-10-19 的小米 MI 6 / Android 9 验证涵盖公共逻辑、原生无埋点交互、上传错误、真实断网、会话超时和进程重启。当前宿主未触发 input/textarea 的原生 change；独立 blur / confirm 已通过。安卓 picker 本轮能正常返回确认下标。
 
 先构建 SDK，并在 `main.ts` 设置测试 collector 地址；使用本机 collector 时可通过 USB 连接。默认 mock collector 端口为 3100：
 
