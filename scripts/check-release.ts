@@ -15,7 +15,7 @@ for (const [directory, expected, channel] of [[npmDir, state.npm, 'npm'], [modul
   const rootFiles = new Set(['index.js', 'index.d.ts', 'autotrack.js', 'autotrack.d.ts', 'vite.js', 'vite.d.ts', 'vite-runtime.js', 'package.json', 'README.md', 'LICENSE', 'THIRD_PARTY_LICENSES.txt'])
   assert.ok(entries.every((file) => rootFiles.has(file)
     || /^src\/(?:adapters|constants|core|platform|plugins|types|utils)\/(?:[A-Za-z0-9-]+\/)*[A-Za-z0-9-]+\.(?:js|d\.ts)$/.test(file)
-    || file === 'src/compiler/vite.d.ts' || /^doc\/[a-z0-9-]+\.md$/.test(file)), '文件不在交付白名单内')
+    || file === 'src/compiler/vite.d.ts'), '文件不在交付白名单内')
   const pkg = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8'))
   assert.equal(pkg.name, sdkName)
   assert.equal(pkg.version, metadata.version)

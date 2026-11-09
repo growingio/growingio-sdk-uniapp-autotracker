@@ -1,0 +1,95 @@
+name: Release SDK
+
+# 推送 v* 标签时自动打包并发布：先构建、验证并发布 npm，npm 成功后
+# 再创建 GitHub Release 上传同一批交付包。npm 的 provenance 需要 id-token: write
+# 与 npm 侧 Trusted Publisher（工作流文件名须为 release.yml）。
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    name: Build and publish npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify tag matches SDK version
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(node -p "require('./package.json').version")"
+          if [ "$tag_version" != "$package_version" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match SDK package version $package_version"
+            exit 1
+          fi
+
+      - name: Build and validate delivery packages
+        run: pnpm run release:prepare
+
+      - name: Enable npm Trusted Publishing
+        # Trusted Publishing 要求 npm >= 11.5.1；先升级并确认 OIDC 凭证已注入，
+        # 提前暴露 Trusted Publisher 未配置问题，而非等到 npm publish 时才失败。
+        run: |
+          npm install --global npm@^11.5.1
+          npm --version
+          test -n "$ACTIONS_ID_TOKEN_REQUEST_URL"
+          test -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN"
+
+      - name: 发布到 npm
+        run: pnpm exec tsx scripts/publish-release.ts
+
+      - name: 保存已验证交付包，供 release job 与失败重跑核对
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-${{ github.ref_name }}
+          path: dist/release/
+          if-no-files-found: error
+          overwrite: true
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: publish
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 下载已验证交付包
+        uses: actions/download-artifact@v4
+        with:
+          name: sdk-${{ github.ref_name }}
+          path: dist/release/
+
+      - name: 创建 Release 并上传同一批交付文件
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          flags=()
+          if [ "$(node -p "JSON.parse(require('fs').readFileSync('dist/release/release.json','utf8')).prerelease")" = "true" ]; then
+            flags+=(--prerelease)
+          fi
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --generate-notes "${flags[@]}"
+          fi
+          gh release upload "$RELEASE_TAG" dist/release/*.tgz dist/release/release.json --clobber

@@ -1,8 +1,17 @@
 {
   "name": "gio-uniapp-autotracker",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
-  "description": "Traditional uni-app Vue 3 App and mini-program analytics SDK",
+  "description": "GrowingIO 传统 uni-app Vue 3 数据采集 SDK，本期仅发布鸿蒙端",
+  "keywords": [
+    "growingio",
+    "uni-app",
+    "uni_modules",
+    "analytics",
+    "tracking",
+    "埋点",
+    "统计"
+  ],
   "type": "module",
   "engines": {
     "node": ">=20.19.0"

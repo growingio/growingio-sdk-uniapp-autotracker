@@ -10,7 +10,7 @@ export const npmDir = join(dist, 'npm')
 export const modulesDir = join(dist, 'uni_modules', sdkName)
 export const archivesDir = join(dist, 'release')
 export const metadata = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as {
-  name: string; version: string; description: string
+  name: string; version: string; description: string; keywords?: string[]
 }
 export const runtimeEntries = ['index.js', 'index.d.ts', 'autotrack.js', 'autotrack.d.ts', 'src']
 
@@ -38,7 +38,8 @@ export async function sourceHash(baseDirectory = root): Promise<string> {
     // 编译矩阵直接使用这些 demo 源码；不扫描生成的 demo/uni_modules，避免构建摘要自引用。
     'demo/main.ts', 'demo/sdk-state.ts', 'demo/miniprogram-config.ts']
   // 测试与门禁配置也属于本次构建依据，改动后不能沿用旧交付包的检查结果。
-  for (const directory of ['src', 'doc', 'scripts', 'test', '.github/workflows']) inputs.push(...(await files(join(baseDirectory, directory))).map((file) => `${directory}/${file}`))
+  // 注意：doc 不参与构建指纹，因为 doc 已不进入交付包，其变化不影响产物。
+  for (const directory of ['src', 'scripts', 'test', '.github/workflows']) inputs.push(...(await files(join(baseDirectory, directory))).map((file) => `${directory}/${file}`))
   const hash = createHash('sha256')
   for (const file of inputs.sort()) hash.update(file).update('\0').update(await readFile(join(baseDirectory, file))).update('\0')
   return hash.digest('hex')

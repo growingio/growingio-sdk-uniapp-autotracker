@@ -42,17 +42,19 @@ for (const directory of [...licenseRoots].sort()) {
   notices.push(`${dependency.name}@${dependency.version}\n${dependency.license ?? ''}\n${(await Promise.all(licenses.map((name) => readFile(join(directory, name), 'utf8')))).join('\n')}`)
 }
 await writeFile(join(npmDir, 'THIRD_PARTY_LICENSES.txt'), notices.join('\n\n----------------\n\n'))
-for (const entry of ['README.md', 'LICENSE', 'doc']) await cp(join(root, entry), join(npmDir, entry), { recursive: true })
+for (const entry of ['README.md', 'LICENSE']) await cp(join(root, entry), join(npmDir, entry), { recursive: true })
+// 交付包不携带任何文档（doc/ 目录整体不外发，也不进入 Git 仓库）：设计、评审、计划与验收记录仅团队内部维护，
+// 避免暴露未验收项、内部决策与逐端能力边界。README 作为包级说明随包保留。
 
 const packageJson = {
   name: sdkName, version: metadata.version, description: metadata.description, type: 'module', private: false,
   license: 'GPL-3.0-only', repository: { type: 'git', url: 'https://github.com/growingio/gio-uniapp-autotracker.git' },
-  engines: { node: '>=20.19.0' }, main: './index.js', types: './index.d.ts',
+  keywords: metadata.keywords ?? [], engines: { node: '>=20.19.0' }, main: './index.js', types: './index.d.ts',
   exports: Object.fromEntries(['.', './vite', './autotrack'].map((entry) => {
     const name = entry === '.' ? 'index' : entry.slice(2)
     return [entry, { types: `./${name}.d.ts`, import: `./${name}.js` }]
   })),
-  files: ['*.js', '*.d.ts', 'src', 'doc', 'README.md', 'LICENSE', 'THIRD_PARTY_LICENSES.txt'],
+  files: ['*.js', '*.d.ts', 'src', 'README.md', 'LICENSE', 'THIRD_PARTY_LICENSES.txt'],
   publishConfig: { registry: 'https://registry.npmjs.org/', access: 'public' },
 }
 await writeFile(join(npmDir, 'package.json'), `${JSON.stringify(packageJson, null, 2)}\n`)
@@ -60,11 +62,28 @@ await cp(npmDir, modulesDir, { recursive: true })
 for (const [directory, runtimeImport] of [[npmDir, `${sdkName}/autotrack`], [modulesDir, `@/uni_modules/${sdkName}/autotrack.js`]] as const) {
   await writeFile(join(directory, 'vite.js'), `import { gioUniappAutoTrack as create } from './vite-runtime.js'\nexport function gioUniappAutoTrack(options) {\n  return create(typeof options === 'string' ? options : { ...options, runtimeImport: options?.runtimeImport ?? ${JSON.stringify(runtimeImport)} })\n}\n`)
 }
+// uni_modules 渠道使用独立清单：平台矩阵按 DCloud 约定声明（√=支持、x=不支持），
+// 补插件市场必填的 dcloudext 与 HBuilderX 版本约束，避免被导入器误判为不支持。
 await writeFile(join(modulesDir, 'package.json'), `${JSON.stringify({
-  ...packageJson, id: sdkName, displayName: 'GrowingIO uni-app SDK', keywords: ['GrowingIO', '统计', 'uni-app'],
+  ...packageJson,
+  id: sdkName,
+  displayName: 'GrowingIO uni-app 埋点 SDK（鸿蒙）',
+  description: 'GrowingIO 传统 uni-app Vue 3 数据采集 SDK，本期仅发布鸿蒙端',
+  engines: { node: '>=20.19.0', HBuilderX: '>=5.24' },
+  dcloudext: {
+    type: 'js',
+    sale: { regular: { price: '0.00' }, sourcecode: { price: '0.00' } },
+    contact: { qq: '' },
+    declaration: {
+      ads: 'none',
+      data: 'collects basic app lifecycle events, custom events, and user identity fields',
+      permissions: 'network, local storage',
+    },
+  },
+  // 本期仅发布鸿蒙端：仅 app.harmony 标 √，其余平台（App 双端、Web、八端小程序）一律 x，避免未验收端被误判为已支持。
   uni_modules: { dependencies: [], encrypt: [], platforms: { client: { 'uni-app': {
-    vue: { vue2: 'x', vue3: '-' }, app: { vue: '-', nvue: 'x', android: '-', ios: '-', harmony: '-' },
-    web: { chrome: 'x', safari: 'x' }, mp: Object.fromEntries(MINI_PROGRAM_TARGETS.map(target => [target.slice(3), '-'])),
+    vue: { vue2: 'x', vue3: '√' }, app: { vue: 'x', nvue: 'x', android: 'x', ios: 'x', harmony: '√' },
+    web: { chrome: 'x', safari: 'x' }, mp: Object.fromEntries(MINI_PROGRAM_TARGETS.map(target => [target.slice(3), 'x'])),
   } } } },
 }, null, 2)}\n`)
 
