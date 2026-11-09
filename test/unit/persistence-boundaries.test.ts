@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { StoragePort, StorageRead } from '../../src/types/index.js'
 import { IdentityPersistence } from '../../src/core/storage/index.js'
-import { serializeIdentityRecord } from '../../src/core/userStore.js'
 import { MetaPersistence } from '../../src/core/storage/index.js'
 import { SessionPersistence } from '../../src/core/storage/index.js'
 import { QueuePersistence } from '../../src/core/storage/index.js'
@@ -50,13 +49,11 @@ describe('核心存储失败与恢复边界', () => {
     expect(store.write).not.toHaveBeenCalled()
   })
 
-  it.each(['missing', 'legacy-device'] as const)('身份生成或迁移（%s）遇到写入异常仍保留本次进程可用身份', async (mode) => {
-    const store = backend(mode === 'missing' ? { kind: 'missing' } : {
-      kind: 'value', value: serializeIdentityRecord({ deviceId: 'device-old-preview', userId: 'user', userKey: null }, 'source'),
-    })
+  it('身份生成遇到写入异常仍保留本次进程可用身份', async () => {
+    const store = backend({ kind: 'missing' })
     store.write.mockRejectedValue(new Error('storage unavailable'))
     expect(await new IdentityPersistence(store.port, 'identity', 'source', () => 'new-device').hydrate()).toMatchObject({
-      source: 'generated', identity: { deviceId: 'new-device', userId: mode === 'missing' ? null : 'user' },
+      source: 'generated', identity: { deviceId: 'new-device', userId: null },
     })
     expect(store.write).toHaveBeenCalledOnce()
     expect(store.remove).not.toHaveBeenCalled()

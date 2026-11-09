@@ -45,12 +45,6 @@ describe('identity record and mutation semantics', () => {
     })
   })
 
-  it('reads a valid plain legacy envelope for one-way migration', () => {
-    expect(readIdentityRecord(JSON.stringify({ version: 1, expiresAt: null, value: anonymous }), 'source')).toStrictEqual({
-      kind: 'legacy', identity: anonymous,
-    })
-  })
-
   it.each([
     'not-json',
     JSON.stringify({ version: 2, expiresAt: null, value: anonymous }),

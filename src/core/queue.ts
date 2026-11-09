@@ -101,24 +101,6 @@ function cloneEvent(serialized: string): ProtocolEvent | null {
   }
 }
 
-/** 仅移除旧版缓存中已废弃的字段，其余缓存内容仍须严格校验。 */
-function migrateQueueEntry(entry: QueueEntry): QueueEntry {
-  if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return entry
-  const event = entry.event
-  if (typeof event !== 'object' || event === null || Array.isArray(event)) return entry
-  // 旧版行为事件携带的页面时间字段。
-  if (['CUSTOM', 'VIEW_CLICK', 'VIEW_CHANGE'].includes(event.eventType) && 'pageShowTimestamp' in event) {
-    const { pageShowTimestamp: _removed, ...fields } = event
-    return { ...entry, event: fields }
-  }
-  // 旧版 App VISIT 携带的入口页面；小程序 VISIT 仍须保留 path。
-  if (event.eventType === 'VISIT' && ['iOS', 'Android', 'HarmonyOS'].includes(event.platform as string) && ('path' in event || 'query' in event)) {
-    const { path: _path, query: _query, ...fields } = event
-    return { ...entry, event: fields }
-  }
-  return entry
-}
-
 /** 队列状态与宿主无关，快照编码及有序宿主写入由存储模块负责。 */
 export class EventQueue {
   private readonly entries: QueueEntry[] = []
@@ -306,7 +288,7 @@ export class EventQueue {
   }
 
   /**
-   * 迁移旧版字段后按条恢复：无效或重复标识的条目单独丢弃，超出容量时保留最新事件。
+   * 严格校验后按条恢复：无效或重复标识的条目单独丢弃，超出容量时保留最新事件。
    * 只有存在输入但没有任何条目可恢复时返回 false，并保留现有队列。
    * strict 用于运行期整体改写（如 identify）：任一条目无法保留即返回 false，现有队列不变。
    */
@@ -316,9 +298,8 @@ export class EventQueue {
     const seen = new Set<string>()
     const normalized: QueueEntry[] = []
     for (const raw of entries) {
-      let entry: QueueEntry
-      try { entry = migrateQueueEntry(raw) } catch { continue }
-      if (!this.validEntry(entry) || seen.has(entry.requestId)) continue
+      if (!this.validEntry(raw) || seen.has(raw.requestId)) continue
+      const entry = raw as QueueEntry
       seen.add(entry.requestId)
       normalized.push({ requestId: entry.requestId, event: cloneEvent(JSON.stringify(entry.event))!, retryCount: entry.retryCount })
     }

@@ -239,7 +239,7 @@ export class LocalTrackerRuntime {
       : { ...entry, event: { ...entry.event, deviceId } })
     // 改写设备身份必须整体成功，任一事件超出预算都保持原队列。
     if (!state.queue.restore(entries, true)) return false
-    this.updateIdentity({ ...state.identity.value, deviceId, deviceIdAssigned: true })
+    this.updateIdentity({ ...state.identity.value, deviceId })
     this.awaitingIdentify = false
     this.persistAfterEvent()
     return true
@@ -674,7 +674,7 @@ export class LocalTrackerRuntime {
     const state = this.state
     if (state === null) return false
     const previous = state.identity.value
-    if (previous.deviceId === identity.deviceId && previous.userId === identity.userId && previous.userKey === identity.userKey && previous.lastUserId === identity.lastUserId && previous.deviceIdAssigned === identity.deviceIdAssigned) return true
+    if (previous.deviceId === identity.deviceId && previous.userId === identity.userId && previous.userKey === identity.userKey && previous.lastUserId === identity.lastUserId) return true
     state.identity.value = identity
     void state.identityPersistence.persist(identity)
     return true

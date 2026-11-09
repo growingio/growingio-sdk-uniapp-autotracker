@@ -26,6 +26,6 @@ export function readLegacyMiniProgramIdentity(port: LegacyIdentityPort, source: 
     if (deviceId === null) return null
     const userId = value(port, `${source.storagePrefix ?? ''}${prefix}userId_`, now) || null
     const userKey = idMapping && userId !== null ? value(port, `${source.storagePrefix ?? ''}${prefix}userKey_`, now) || null : null
-    return { deviceId, userId, userKey, deviceIdAssigned: true, ...(userId === null ? {} : { lastUserId: userId }) }
+    return { deviceId, userId, userKey, ...(userId === null ? {} : { lastUserId: userId }) }
   } catch { return null }
 }

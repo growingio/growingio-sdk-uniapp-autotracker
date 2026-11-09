@@ -257,20 +257,6 @@ describe('QueuePersistence', () => {
     expect(removed).toEqual([`queue:${key}`])
   })
 
-  it('migrates cached App VISIT events that still carry the entry path and query', async () => {
-    const visit = APP_EVENT_FIXTURES.VISIT
-    const port: StoragePort = {
-      persistentQueue: true,
-      read: async () => ({ kind: 'value', value: JSON.stringify({ version: 1, revision: 1,
-        entries: [{ requestId: 'q1', retryCount: 0, event: { ...visit, path: 'pages/launch/index', query: 'from=launch' } }] }) }),
-      write: async () => ({ kind: 'ok' }),
-      remove: async () => ({ kind: 'ok' }),
-    }
-    const queue = new EventQueue()
-    expect(await new QueuePersistence(port, 'gio:v1:source:queue:v1').hydrate(queue)).toBe('restored')
-    expect(queue.snapshot().map(entry => entry.event)).toEqual([visit])
-  })
-
   it('does not advance revision when storage rejects a write', async () => {
     const port: StoragePort = {
       persistentQueue: true,
@@ -285,23 +271,6 @@ describe('QueuePersistence', () => {
     expect(persistence.currentRevision()).toBe(0)
   })
 
-  it('恢复旧版 CUSTOM / VIEW 队列时移除废弃字段并保留事件与重试状态', async () => {
-    const events = [APP_EVENT_FIXTURES.PAGE, APP_EVENT_FIXTURES.CUSTOM, APP_EVENT_FIXTURES.VIEW_CLICK, APP_EVENT_FIXTURES.VIEW_CHANGE]
-    const entries = events.map((event, index) => ({
-      requestId: `q${index + 1}`,
-      retryCount: 2,
-      event: event.eventType === 'PAGE' ? event : { ...event, pageShowTimestamp: 1_700_000_000_000 },
-    }))
-    const backend = storage(JSON.stringify({ version: 1, revision: 7, entries }))
-    const queue = new EventQueue()
-    const persistence = new QueuePersistence(backend.port, 'queue')
-    expect(await persistence.hydrate(queue)).toBe('restored')
-    expect(persistence.currentRevision()).toBe(7)
-    expect(queue.snapshot()).toEqual(entries.map((entry, index) => ({ ...entry, event: events[index] })))
-    expect(queue.nextBatch().map(entry => entry.event)).toEqual(events)
-    expect(await persistence.persist(queue)).toEqual({ kind: 'ok' })
-    expect(backend.values()[0]).not.toContain('pageShowTimestamp')
-  })
   it('原样恢复已经清理过空公共字段的上报事件', async () => {
     const backend = storage()
     const queue = new EventQueue()

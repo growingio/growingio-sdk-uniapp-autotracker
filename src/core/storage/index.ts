@@ -75,11 +75,6 @@ function generatedIdentity(factory: DeviceIdFactory): Identity {
   return { deviceId, userId: null, userKey: null }
 }
 
-/** 早期 App 预览版本生成的设备标识不是 UUID，迁移时需替换。 */
-function isLegacyAppGeneratedDeviceId(deviceId: string): boolean {
-  return /^device-[a-z0-9]+-[a-z0-9]+$/i.test(deviceId)
-}
-
 /** 恢复一份身份记录，损坏清理仅限本 SDK 当前命名空间的键。 */
 export class IdentityPersistence {
   private readonly writer = new LatestStorageWriter(value => this.storage.write('state', this.key, value))
@@ -92,7 +87,7 @@ export class IdentityPersistence {
     private readonly legacyIdentity?: () => Identity | null,
   ) {}
 
-  /** 恢复并迁移有效身份；缺失或损坏时生成新身份，损坏清理仅限当前键。 */
+  /** 恢复有效身份；缺失或损坏时生成新身份，损坏清理仅限当前键。 */
   public async hydrate(): Promise<IdentityHydration> {
     const read = await this.storage.read('state', this.key)
     if (read.kind === 'missing') {
@@ -116,10 +111,7 @@ export class IdentityPersistence {
       await this.storage.remove('state', this.key)
       return this.generateAndPersist('corrupt')
     }
-    if (decoded.kind === 'legacy') {
-      return this.persistDecodedIdentity(decoded.identity, 'legacy')
-    }
-    return this.persistDecodedIdentity(decoded.identity, 'restored')
+    return { identity: decoded.identity, source: 'restored' }
   }
 
   /** 按当前身份信封编码后写入对应存储键。 */
@@ -136,22 +128,6 @@ export class IdentityPersistence {
       // 写入失败不阻塞初始化，下次启动按实际存储结果重新恢复。
     }
     return { identity, source }
-  }
-
-  /** 迁移旧明文或预览版设备标识；有效当前身份不做无意义重写。 */
-  private async persistDecodedIdentity(identity: Identity, source: 'legacy' | 'restored'): Promise<IdentityHydration> {
-    if (identity.deviceIdAssigned === true || !isLegacyAppGeneratedDeviceId(identity.deviceId)) {
-      if (source === 'legacy') await this.persist(identity)
-      return { identity, source }
-    }
-
-    const migrated: Identity = { ...identity, deviceId: generatedIdentity(this.deviceIdFactory).deviceId }
-    try {
-      await this.persist(migrated)
-    } catch {
-      // 当前进程仍使用新 UUID，下次启动按实际存储结果重新恢复。
-    }
-    return { identity: migrated, source: 'generated' }
   }
 }
 

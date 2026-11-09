@@ -9,12 +9,10 @@ export type Identity = Readonly<{
   userKey: string | null
   /** 退出登录后仍保留的内部比较身份，不能作为事件 userId 上报。 */
   lastUserId?: string | null
-  /** 显式分配或迁入的设备身份不适用早期 App 预览 ID 的替换规则。 */
-  deviceIdAssigned?: true
 }>
 
 export type IdentityRecordRead =
-  | Readonly<{ kind: 'current' | 'legacy'; identity: Identity }>
+  | Readonly<{ kind: 'current'; identity: Identity }>
   | Readonly<{ kind: 'corrupt' }>
 
 export type IdentityUpdate = Readonly<{
@@ -59,12 +57,11 @@ function validIdentity(value: unknown): value is Identity {
     && (value.userId === null || isWithinLimit(value.userId))
     && (value.userKey === null || isWithinLimit(value.userKey))
     && (value.lastUserId === undefined || value.lastUserId === null || typeof value.lastUserId === 'string' && isWithinLimit(value.lastUserId))
-    && (value.deviceIdAssigned === undefined || value.deviceIdAssigned === true)
 }
 
 /** 比较出站身份与内部最近登录身份，避免无变化的状态写入。 */
 function sameIdentity(left: Identity, right: Identity): boolean {
-  return left.deviceId === right.deviceId && left.userId === right.userId && left.userKey === right.userKey && left.lastUserId === right.lastUserId && left.deviceIdAssigned === right.deviceIdAssigned
+  return left.deviceId === right.deviceId && left.userId === right.userId && left.userKey === right.userKey && left.lastUserId === right.lastUserId
 }
 
 /** 写入带版本的 JSON 信封，分别保护每个已填充的身份字段。 */
@@ -81,12 +78,11 @@ export function serializeIdentityRecord(identity: Identity, dataSourceId: string
       userId: protect(identity.userId),
       userKey: protect(identity.userKey),
       ...(identity.lastUserId === undefined ? {} : { lastUserId: protect(identity.lastUserId) }),
-      ...(identity.deviceIdAssigned === undefined ? {} : { deviceIdAssigned: identity.deviceIdAssigned }),
     },
   })
 }
 
-/** 兼容旧明文信封，后续成功写入时迁移到当前格式。 */
+/** 校验并解码当前加密信封，损坏或未知密文返回 corrupt。 */
 export function readIdentityRecord(serialized: string, dataSourceId: string): IdentityRecordRead {
   let record: unknown
   try {
@@ -96,9 +92,6 @@ export function readIdentityRecord(serialized: string, dataSourceId: string): Id
   }
   if (!isRecord(record) || record.version !== 1 || record.expiresAt !== null || !isRecord(record.value)) return { kind: 'corrupt' }
 
-  if (record.cipher === undefined) {
-    return validIdentity(record.value) ? { kind: 'legacy', identity: record.value } : { kind: 'corrupt' }
-  }
   if (record.cipher !== GIO_IDENTITY_CIPHER) return { kind: 'corrupt' }
 
   // 存储的 null 表示匿名；已填充字段解码失败则表示记录损坏。
@@ -112,7 +105,6 @@ export function readIdentityRecord(serialized: string, dataSourceId: string): Id
     userId: decrypt(record.value.userId),
     userKey: decrypt(record.value.userKey),
     ...(hasLastUserId ? { lastUserId } : {}),
-    ...(record.value.deviceIdAssigned === undefined ? {} : { deviceIdAssigned: record.value.deviceIdAssigned }),
   }
   return validIdentity(identity) ? { kind: 'current', identity } : { kind: 'corrupt' }
 }

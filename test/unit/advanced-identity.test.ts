@@ -101,7 +101,7 @@ describe('forceLogin and embedded identity', () => {
     const { tracker } = runtimeFixture(); tracker.init(config); await tracker.whenReady()
     expect(tracker.identify('new')).toBe(false)
   })
-  it('preserves an assigned ID matching the historical App preview format across a cold start', async () => {
+  it('preserves an explicitly assigned device ID across a cold start', async () => {
     const storage = new RuntimeStorage()
     const first = runtimeFixture({ storage }).tracker
     first.init({ ...config, forceLogin: true }); await first.whenReady()
@@ -112,7 +112,7 @@ describe('forceLogin and embedded identity', () => {
     expect(second.queuedEvents()[0]).toMatchObject({ deviceId: 'device-assigned-value' })
     expect(second.setUserId('user')).toBe(true)
     await flush()
-    expect(readIdentityRecord(storage.values.get(storageKeys('source').identity)!, 'source')).toMatchObject({ identity: { deviceIdAssigned: true } })
+    expect(readIdentityRecord(storage.values.get(storageKeys('source').identity)!, 'source')).toMatchObject({ identity: { deviceId: 'device-assigned-value', userId: 'user' } })
   })
   it('assigns App identity after the backlog exceeds 200 events and 2MiB', async () => {
     const { tracker, storage } = runtimeFixture(); tracker.init({ ...config, forceLogin: true }); tracker.onAppShow(show); await tracker.whenReady()
@@ -175,7 +175,7 @@ describe('explicit standalone mini-program identity migration', () => {
   it('reads plugin and sub-instance keys, respecting expiration and idMapping', () => {
     const values: Record<string, unknown> = { _growing_plugin_uid_: { value: 'device', expiredAt: 101 }, sub_growing_plugin_userId_: 'user', sub_growing_plugin_userKey_: 'key' }
     const read = (key: string) => values[key]
-    expect(readLegacyMiniProgramIdentity({ read }, { ...source, plugin: true, storagePrefix: 'sub' }, false, 100)).toEqual({ deviceId: 'device', userId: 'user', userKey: null, lastUserId: 'user', deviceIdAssigned: true })
+    expect(readLegacyMiniProgramIdentity({ read }, { ...source, plugin: true, storagePrefix: 'sub' }, false, 100)).toEqual({ deviceId: 'device', userId: 'user', userKey: null, lastUserId: 'user' })
     expect(readLegacyMiniProgramIdentity({ read }, { ...source, plugin: true }, true, 101)).toBeNull()
     values._growing_plugin_uid_ = { value: 'device', expiredAt: 'future' }
     expect(readLegacyMiniProgramIdentity({ read }, { ...source, plugin: true }, true, 100)).toBeNull()
@@ -189,12 +189,12 @@ describe('explicit standalone mini-program identity migration', () => {
     expect(tracker.queuedEvents()[0]).toMatchObject({ deviceId: 'old-device', userId: 'old-user' })
     expect(new URLSearchParams(tracker.getGioInfo()!).get('gionewdevice')).toBe('false')
   })
-  it('retains assigned markers in codecs, skips unavailable migration and accepts numeric expiration strings', async () => {
+  it('skips unavailable migration and accepts numeric expiration strings', async () => {
     const storage = new RuntimeStorage()
     const persistence = new IdentityPersistence(storage, 'new', 'source', () => 'generated', () => { throw Error('unavailable') })
     expect(await persistence.hydrate()).toMatchObject({ source: 'generated', identity: { deviceId: 'generated' } })
     const migrated = readLegacyMiniProgramIdentity({ read: key => key === '_growing_uid_' ? { value: 'device-assigned-value', expiredAt: '101' } : null }, source, false, 100)
-    expect(migrated).toMatchObject({ deviceId: 'device-assigned-value', deviceIdAssigned: true })
+    expect(migrated).toMatchObject({ deviceId: 'device-assigned-value' })
     await persistence.persist(migrated!)
     expect(await persistence.hydrate()).toMatchObject({ source: 'restored', identity: { deviceId: 'device-assigned-value' } })
   })
