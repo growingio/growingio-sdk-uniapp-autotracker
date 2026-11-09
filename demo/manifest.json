@@ -21,13 +21,13 @@
             "bundleName" : "com.growingio.analytics",
             "signingConfigs" : {
                 "default" : {
-                    "certpath" : "/Users/anoiv/Library/Application Support/HBuilder X/extensions/launcher/agc-certs/1788506185817.cer",
-                    "keyAlias" : "debugKey",
-                    "keyPassword" : "0000001BDED0A5C5B02458726054A3A81DBBBF1A4C751C6CF3D377EFB73068817AEA1CF576750BD713AEE0",
-                    "profile" : "/Users/anoiv/Library/Application Support/HBuilder X/extensions/launcher/agc-certs/1788506185817.p7b",
+                    "certpath" : "",
+                    "keyAlias" : "",
+                    "keyPassword" : "",
+                    "profile" : "",
                     "signAlg" : "SHA256withECDSA",
-                    "storeFile" : "/Users/anoiv/Library/Application Support/HBuilder X/extensions/launcher/agc-certs/1788504809419.p12",
-                    "storePassword" : "0000001BDED0A5C5B02458726054A3A81DBBBF1A4C751C6CF3D377EFB73068817AEA1CF576750BD713AEE0"
+                    "storeFile" : "",
+                    "storePassword" : ""
                 }
             }
         }
