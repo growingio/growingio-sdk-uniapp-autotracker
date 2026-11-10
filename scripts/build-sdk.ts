@@ -49,7 +49,7 @@ for (const entry of ['README.md', 'LICENSE']) await cp(join(root, entry), join(n
 
 const packageJson = {
   name: sdkName, version: metadata.version, description: metadata.description, type: 'module', private: false,
-  license: 'GPL-3.0-only', repository: { type: 'git', url: 'https://github.com/growingio/gio-uniapp-autotracker.git' },
+  license: 'Apache-2.0', repository: { type: 'git', url: 'https://github.com/growingio/gio-uniapp-autotracker.git' },
   keywords: metadata.keywords ?? [], engines: { node: '>=20.19.0' }, main: './index.js', types: './index.d.ts',
   exports: Object.fromEntries(['.', './vite', './autotrack'].map((entry) => {
     const name = entry === '.' ? 'index' : entry.slice(2)
