@@ -169,7 +169,32 @@ describe.each(['android', 'ios', 'harmonyos'])('%s App 自动补发', platform =
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  it.each([503, 429, 408])('服务端持续返回 %s 时不丢弃事件，重启后服务恢复仍能补发', async (status) => {
+  it.each(['首次前台前', '首次前台后'])('关闭采集冷启动，%s同意后才补发落盘队列', async (phase) => {
+    const f = app(platform, 'normal')
+    const config = { accountId: 'account', dataSourceId: 'source' }
+    const entry = { path: 'pages/home', query: '' }
+    expect(f.tracker.init(config)).toBe(true)
+    expect(await f.tracker.whenReady()).toBe(true)
+    f.tracker.onAppShow(entry)
+    expect(f.tracker.track('cached_event')).toBe(true)
+    await vi.advanceTimersByTimeAsync(APP_QUEUE_PERSIST_DELAY_MS)
+    const cached = f.tracker.queuedEvents()
+    expect(cached.map(event => event.eventName ?? event.eventType)).toEqual(['VISIT', 'cached_event'])
+
+    const restarted = app(platform, 'normal', 'wifi', f.storage)
+    expect(restarted.tracker.init({ ...config, dataCollect: false })).toBe(true)
+    expect(await restarted.tracker.whenReady()).toBe(true)
+    if (phase === '首次前台后') restarted.tracker.onAppShow(entry)
+    expect(restarted.received).toEqual([])
+    expect(restarted.tracker.queuedEvents()).toEqual(cached)
+    expect(restarted.tracker.setOptions({ dataCollect: true })).toBe(true)
+    await vi.advanceTimersByTimeAsync(APP_QUEUE_PERSIST_DELAY_MS)
+    expect(restarted.received.slice(0, cached.length)).toEqual(cached)
+    expect(restarted.tracker.queuedEvents()).toEqual([])
+    expect(JSON.parse(restarted.storage.get('gio:v1:source:queue:v1')!).entries).toEqual([])
+  })
+
+  it.each([503, 429, 408, 401, 403, 404])('服务端持续返回 %s 时不丢弃事件，重启后服务恢复仍能补发', async (status) => {
     const f = app(platform, 'normal', 'wifi')
     f.setStatus(status)
     f.tracker.init({ accountId: 'account', dataSourceId: 'source' })
@@ -194,7 +219,7 @@ describe.each(['android', 'ios', 'harmonyos'])('%s App 自动补发', platform =
     expect(restarted.tracker.queuedEvents()).toEqual([])
   })
 
-  it('批次被 400 拒绝时拆批定位坏事件，单条累计被拒 3 次后丢弃，同批正常事件照常送达', async () => {
+  it.each([400, 422])('批次被 %s 拒绝时拆批定位坏事件，单条累计被拒 3 次后丢弃，同批正常事件照常送达', async (statusCode) => {
     const f = app(platform, 'normal')
     const poisonRequests = vi.fn()
     f.tracker.init({ accountId: 'account', dataSourceId: 'source' })
@@ -203,7 +228,7 @@ describe.each(['android', 'ios', 'harmonyos'])('%s App 自动补发', platform =
     for (const name of ['before', 'poison', 'after']) f.tracker.track(name)
     f.host.request = vi.fn<AppRuntimeHost['request']>(options => {
       const events = JSON.parse(options.data) as ProtocolEvent[]
-      if (events.some(event => event.eventName === 'poison')) { poisonRequests(); options.success({ statusCode: 400 }); return }
+      if (events.some(event => event.eventName === 'poison')) { poisonRequests(); options.success({ statusCode }); return }
       f.received.push(...events)
       options.success({ statusCode: 204 })
     })

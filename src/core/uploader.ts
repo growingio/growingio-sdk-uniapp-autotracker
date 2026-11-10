@@ -47,15 +47,15 @@ export function isRetryableCollectorFailure(result: TransportResult): boolean {
   return result.kind === 'network' || result.kind === 'timeout' || (result.kind === 'http' && result.status >= 500)
 }
 
-/** App 与原生 Android 对齐：仅 413（批次过大，重发必然失败）删除批次；其余服务端响应、网络、超时和中止均保留重试。宿主缺少请求能力时无法发送，按原策略丢弃。 */
+/** App 先处理内容拒绝。其他失败中，除 413 外的 HTTP 错误以及网络失败、超时和中止均保留事件并退避重试。 */
 export function isRetainedAppFailure(result: TransportResult): boolean {
   if (result.kind === 'http') return result.status !== 413
   return result.kind === 'network' || result.kind === 'timeout' || result.kind === 'aborted'
 }
 
-/** App 中可判定为“这批内容被拒”的客户端错误：拆批定位后丢弃；408 / 429 属于暂时性拒绝，继续退避保留。 */
+/** 仅将采集端的 400 / 422 作为内容拒绝处理。其他客户端错误可能来自权限、路由或限流。 */
 export function isClientRejection(result: TransportResult): boolean {
-  return result.kind === 'http' && result.status >= 400 && result.status < 500 && result.status !== 408 && result.status !== 413 && result.status !== 429
+  return result.kind === 'http' && (result.status === 400 || result.status === 422)
 }
 
 /** 单条事件被客户端错误拒绝达到该次数后丢弃，避免一条坏事件长期占用发送槽位并拖住同批正常事件。 */
@@ -120,7 +120,7 @@ const RETRY_DELAYS_MS = [800, 1_600] as const
 /** App 保留可恢复失败时的退避上限，避免服务端故障期间高频请求。 */
 export const MAX_RETRY_BACKOFF_MS = 60_000
 
-/** bounded：有限重试后丢弃（小程序内存队列）；retain：除 413 外的失败均保留并退避，直至成功或过期（App 持久队列）。 */
+/** bounded 用于小程序内存队列，重试次数有限。retain 用于 App 持久队列，对可恢复失败保留事件并退避。 */
 export type RetryPolicy = 'bounded' | 'retain'
 
 export interface UploaderRuntime extends TimerPort {
@@ -337,7 +337,7 @@ export class Uploader {
   }
 
   /**
-   * 客户端错误说明批次内容被拒：多条时对半拆分后在退避结束时分别重发，定位出具体事件；
+   * 批次内容被拒时对半拆分，在退避结束后分别重发以定位具体事件。
    * 单条事件累计被拒 MAX_CLIENT_REJECTIONS 次后丢弃，其余正常事件不再被拖住。
    */
   private handleClientRejection(batch: readonly QueueEntry[], attempt: number, result: TransportResult): void {

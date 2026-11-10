@@ -6,9 +6,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadConfigFromFile } from 'vite'
 import type { UniAppAutoTrackVitePlugin } from '../src/compiler/vite.js'
-import { archivesDir, hashes, metadata, modulesDir, npmDir, root, sdkName } from './release-layout.js'
+import { archivesDir, hashes, metadata, modulesDir, npmDir, npmName, root, uniModuleId } from './release-layout.js'
 
-const release = JSON.parse(await readFile(join(archivesDir, 'release.json'), 'utf8')) as { npmFile: string; npmIntegrity: string; uniFile: string; uniSha256: string; version: string }
+const release = JSON.parse(await readFile(join(archivesDir, 'release.json'), 'utf8')) as { name: string; npmFile: string; npmIntegrity: string; uniFile: string; uniSha256: string; version: string }
+assert.equal(release.name, npmName)
 assert.equal(release.version, metadata.version)
 assert.equal(`sha512-${createHash('sha512').update(await readFile(join(archivesDir, release.npmFile))).digest('base64')}`, release.npmIntegrity)
 assert.equal(createHash('sha256').update(await readFile(join(archivesDir, release.uniFile))).digest('hex'), release.uniSha256)
@@ -24,12 +25,12 @@ try {
     } else {
       execFileSync('tar', ['-xzf', join(archivesDir, release.uniFile), '-C', project])
     }
-    const installed = channel === 'npm' ? join(project, 'node_modules', sdkName) : join(project, 'uni_modules', sdkName)
+    const installed = channel === 'npm' ? join(project, 'node_modules', npmName) : join(project, 'uni_modules', uniModuleId)
     assert.deepEqual(await hashes(installed), await hashes(channel === 'npm' ? npmDir : modulesDir), `${channel} 实际安装文件与验证过的构建产物不一致`)
-    const entry = channel === 'npm' ? sdkName : `./uni_modules/${sdkName}/index.js`
-    const vite = channel === 'npm' ? `${sdkName}/vite` : `./uni_modules/${sdkName}/vite.js`
-    const autotrack = channel === 'npm' ? `${sdkName}/autotrack` : `./uni_modules/${sdkName}/autotrack.js`
-    const runtimeImport = channel === 'npm' ? `${sdkName}/autotrack` : `@/uni_modules/${sdkName}/autotrack.js`
+    const entry = channel === 'npm' ? npmName : `./uni_modules/${uniModuleId}/index.js`
+    const vite = channel === 'npm' ? `${npmName}/vite` : `./uni_modules/${uniModuleId}/vite.js`
+    const autotrack = channel === 'npm' ? `${npmName}/autotrack` : `./uni_modules/${uniModuleId}/autotrack.js`
+    const runtimeImport = channel === 'npm' ? `${npmName}/autotrack` : `@/uni_modules/${uniModuleId}/autotrack.js`
     // 真正解包到仓库外，不能借用仓库 node_modules 或直接导入 TS 源码。
     await writeFile(join(project, 'consumer.mjs'), `
 import assert from 'node:assert/strict';

@@ -3,7 +3,7 @@ import { constants, existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { build } from 'esbuild'
-import { dist, hashes, metadata, modulesDir, npmDir, root, runtimeEntries, sdkName, sourceHash } from './release-layout.js'
+import { dist, hashes, metadata, modulesDir, npmDir, npmName, root, runtimeEntries, sourceHash, uniModuleId } from './release-layout.js'
 import { DEFAULT_SERVER_URL } from '../src/constants/config.js'
 import { MINI_PROGRAM_TARGETS } from '../src/constants/miniprogram.js'
 
@@ -48,8 +48,8 @@ for (const entry of ['README.md', 'LICENSE']) await cp(join(root, entry), join(n
 // 避免暴露未验收项、内部决策与逐端能力边界。README 作为包级说明随包保留。
 
 const packageJson = {
-  name: sdkName, version: metadata.version, description: metadata.description, type: 'module', private: false,
-  license: 'Apache-2.0', repository: { type: 'git', url: 'https://github.com/growingio/gio-uniapp-autotracker.git' },
+  name: npmName, version: metadata.version, description: metadata.description, type: 'module', private: false,
+  license: 'Apache-2.0', repository: metadata.repository,
   keywords: metadata.keywords ?? [], engines: { node: '>=20.19.0' }, main: './index.js', types: './index.d.ts',
   exports: Object.fromEntries(['.', './vite', './autotrack'].map((entry) => {
     const name = entry === '.' ? 'index' : entry.slice(2)
@@ -60,14 +60,15 @@ const packageJson = {
 }
 await writeFile(join(npmDir, 'package.json'), `${JSON.stringify(packageJson, null, 2)}\n`)
 await cp(npmDir, modulesDir, { recursive: true })
-for (const [directory, runtimeImport] of [[npmDir, `${sdkName}/autotrack`], [modulesDir, `@/uni_modules/${sdkName}/autotrack.js`]] as const) {
+for (const [directory, runtimeImport] of [[npmDir, `${npmName}/autotrack`], [modulesDir, `@/uni_modules/${uniModuleId}/autotrack.js`]] as const) {
   await writeFile(join(directory, 'vite.js'), `import { gioUniappAutoTrack as create } from './vite-runtime.js'\nexport function gioUniappAutoTrack(options) {\n  return create(typeof options === 'string' ? options : { ...options, runtimeImport: options?.runtimeImport ?? ${JSON.stringify(runtimeImport)} })\n}\n`)
 }
 // uni_modules 渠道使用独立清单：平台矩阵按 DCloud 约定声明（√=支持、x=不支持），
 // 补插件市场必填的 dcloudext 与 HBuilderX 版本约束，避免被导入器误判为不支持。
 await writeFile(join(modulesDir, 'package.json'), `${JSON.stringify({
   ...packageJson,
-  id: sdkName,
+  name: uniModuleId,
+  id: uniModuleId,
   displayName: 'GrowingIO uni-app 埋点 SDK（鸿蒙）',
   description: 'GrowingIO 传统 uni-app Vue 3 数据采集 SDK，本期仅发布鸿蒙端',
   keywords: ['GrowingIO', 'uni-app', '鸿蒙', '统计', '埋点'],
@@ -97,7 +98,7 @@ await writeFile(join(modulesDir, 'package.json'), `${JSON.stringify({
 
 // 清单记录同一次构建的实际文件，用于检查遗漏、旧文件和两渠道的公共代码一致性。
 await writeFile(join(dist, 'build-state.json'), JSON.stringify({ sourceHash: await sourceHash(), npm: await hashes(npmDir), uni: await hashes(modulesDir) }, null, 2))
-const demoModule = join(root, 'demo/uni_modules', sdkName)
+const demoModule = join(root, 'demo/uni_modules', uniModuleId)
 await rm(demoModule, { recursive: true, force: true })
 await cp(modulesDir, demoModule, { recursive: true })
 try {

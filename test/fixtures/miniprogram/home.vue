@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import gdp from 'gio-uniapp-autotracker'
+import gdp from 'gio-uniapp-sdk'
 const value = ref('')
 const rows = ref([{ id: 1, title: '商品 A' }])
 const save = (event: unknown) => { gdp('track', 'fixture_click'); return event }

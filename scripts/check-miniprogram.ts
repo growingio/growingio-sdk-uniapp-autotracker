@@ -4,7 +4,7 @@ import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'n
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { modulesDir, npmDir, root, sdkName, sourceHash } from './release-layout.js'
+import { modulesDir, npmDir, npmName, root, sourceHash, uniModuleId } from './release-layout.js'
 import { isMiniProgramTarget, MINI_PROGRAM_PROFILES, MINI_PROGRAM_TARGETS } from '../src/constants/miniprogram.js'
 import type { MiniProgramTarget } from '../src/types/index.js'
 
@@ -56,23 +56,23 @@ require(${JSON.stringify(compilerRequire.resolve('@dcloudio/vite-plugin-uni/dist
     const project = join(temporary, channel)
     await mkdir(join(project, 'node_modules'), { recursive: true })
     for (const name of await readdir(join(compilerRoot, 'node_modules'))) {
-      if (!name.startsWith('.') && name !== sdkName) await symlink(join(compilerRoot, 'node_modules', name), join(project, 'node_modules', name), 'dir')
+      if (!name.startsWith('.') && name !== npmName) await symlink(join(compilerRoot, 'node_modules', name), join(project, 'node_modules', name), 'dir')
     }
-    if (channel === 'npm') await cp(npmDir, join(project, 'node_modules', sdkName), { recursive: true })
-    else await cp(modulesDir, join(project, 'uni_modules', sdkName), { recursive: true })
-    const entry = channel === 'npm' ? sdkName : `@/uni_modules/${sdkName}/index.js`
-    const nodeEntry = channel === 'npm' ? sdkName : `./uni_modules/${sdkName}/index.js`
-    const viteEntry = channel === 'npm' ? `${sdkName}/vite` : `./uni_modules/${sdkName}/vite.js`
+    if (channel === 'npm') await cp(npmDir, join(project, 'node_modules', npmName), { recursive: true })
+    else await cp(modulesDir, join(project, 'uni_modules', uniModuleId), { recursive: true })
+    const entry = channel === 'npm' ? npmName : `@/uni_modules/${uniModuleId}/index.js`
+    const nodeEntry = channel === 'npm' ? npmName : `./uni_modules/${uniModuleId}/index.js`
+    const viteEntry = channel === 'npm' ? `${npmName}/vite` : `./uni_modules/${uniModuleId}/vite.js`
     await writeFile(join(project, 'package.json'), JSON.stringify({ private: true, dependencies: Object.fromEntries(targets.map(target => [`@dcloudio/uni-${target}`, compilerVersion])) }))
     await cp(join(root, 'test/fixtures/miniprogram/App.vue'), join(project, 'App.vue'))
     for (const [name, page] of [['home', 'home'], ['detail', 'detail']] as const) {
       await mkdir(join(project, 'pages', name), { recursive: true })
       const source = await readFile(join(root, 'test/fixtures/miniprogram', `${page}.vue`), 'utf8')
-      await writeFile(join(project, 'pages', name, 'index.vue'), source.replaceAll("'gio-uniapp-autotracker'", JSON.stringify(entry)))
+      await writeFile(join(project, 'pages', name, 'index.vue'), source.replaceAll(`'${npmName}'`, JSON.stringify(entry)))
     }
     await mkdir(join(project, 'subpackage'), { recursive: true })
     const subpage = await readFile(join(root, 'test/fixtures/miniprogram/detail.vue'), 'utf8')
-    await writeFile(join(project, 'subpackage/detail.vue'), subpage.replaceAll("'gio-uniapp-autotracker'", JSON.stringify(entry)))
+    await writeFile(join(project, 'subpackage/detail.vue'), subpage.replaceAll(`'${npmName}'`, JSON.stringify(entry)))
     await writeFile(join(project, 'pages.json'), JSON.stringify({
       pages: [{ path: 'pages/home/index', style: { navigationBarTitleText: '首页' } }, { path: 'pages/detail/index' }],
       subPackages: [{ root: 'subpackage', pages: [{ path: 'detail' }] }],
@@ -80,7 +80,7 @@ require(${JSON.stringify(compilerRequire.resolve('@dcloudio/vite-plugin-uni/dist
     }))
     await writeFile(join(project, 'manifest.json'), JSON.stringify({ name: 'SDK compile fixture', appid: '__UNI__SDK_FIXTURE', versionName: '0.1.0', versionCode: '100', vueVersion: '3', ...Object.fromEntries(targets.map(target => [target, { appid: target === 'mp-weixin' ? 'touristappid' : 'fixture' }])) }))
     const main = await readFile(join(root, 'demo/main.ts'), 'utf8')
-    await writeFile(join(project, 'main.ts'), main.replace("'@/uni_modules/gio-uniapp-autotracker/index.js'", JSON.stringify(entry)))
+    await writeFile(join(project, 'main.ts'), main.replace(`'@/uni_modules/${uniModuleId}/index.js'`, JSON.stringify(entry)))
     for (const file of ['sdk-state.ts', 'miniprogram-config.ts']) await cp(join(root, 'demo', file), join(project, file))
     for (const target of targets) {
       for (const mode of ['production', 'development']) {

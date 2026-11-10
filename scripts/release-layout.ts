@@ -5,13 +5,15 @@ import { createHash } from 'node:crypto'
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 export const dist = join(root, 'dist')
-export const sdkName = 'gio-uniapp-autotracker'
+export const uniModuleId = 'gio-uniapp-autotracker'
 export const npmDir = join(dist, 'npm')
-export const modulesDir = join(dist, 'uni_modules', sdkName)
+export const modulesDir = join(dist, 'uni_modules', uniModuleId)
 export const archivesDir = join(dist, 'release')
 export const metadata = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as {
   name: string; version: string; description: string; keywords?: string[]
+  repository: { type: string; url: string }
 }
+export const npmName = metadata.name
 export const runtimeEntries = ['index.js', 'index.d.ts', 'autotrack.js', 'autotrack.d.ts', 'src']
 
 /** 递归列举目录中的普通文件并排序，拒绝符号链接等非普通交付项。 */

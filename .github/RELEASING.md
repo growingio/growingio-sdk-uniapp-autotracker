@@ -1,6 +1,6 @@
 # SDK 发布
 
-本流程交付 npm 包和 GitHub Release 的 `uni_modules` 附件。DCloud 插件市场上架需另行准备框架版本声明和版本说明。
+本流程交付 npm 包 `gio-uniapp-sdk` 和 GitHub Release 的 `uni_modules` 附件，模块 ID 为 `gio-uniapp-autotracker`。DCloud 插件市场上架需另行准备框架版本声明和版本说明。
 
 ## 发布前检查
 
@@ -24,7 +24,7 @@
 
 ## 后续版本与失败重跑
 
-准备首次由工作流向 npm 发布新版本时，在包设置中添加 Trusted Publisher。组织为 `growingio`，仓库为 `gio-uniapp-autotracker`，工作流文件为 `release.yml`，Environment 留空，并允许直接发布。添加后需在两天内完成首次成功的可信发布。[npm Trusted Publishing 配置](https://docs.npmjs.com/trusted-publishers/#trusted-publisher-configuration-expiry)
+准备首次由工作流向 npm 发布新版本时，在 `gio-uniapp-sdk` 的包设置中添加 Trusted Publisher。组织为 `growingio`，仓库为 `growingio-sdk-uniapp-autotracker`，工作流文件为 `release.yml`，Environment 留空，并允许直接发布。添加后需在两天内完成首次成功的可信发布。[npm Trusted Publishing 配置](https://docs.npmjs.com/trusted-publishers/#trusted-publisher-configuration-expiry)
 
 版本来自根目录的 `package.json`，标签格式为 `v<版本>`。正式版进入 `latest`，预发布版进入 `next`。标签工作流按组串行运行，先保存验证通过的产物，再尝试 npm 发布。新版本完成 npm 内容和渠道核对后，才创建 GitHub Release 并上传附件。
 

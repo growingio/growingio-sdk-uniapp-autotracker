@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { npmRegistry, publishNpmRelease } from './npm-publisher.js'
-import { archivesDir, metadata, sdkName } from './release-layout.js'
+import { archivesDir, metadata, npmName } from './release-layout.js'
 import { releasePolicy } from './release-policy.js'
 import './check-release.js'
 
@@ -13,13 +13,13 @@ const gitTag = process.env.GITHUB_REF_NAME
 if (process.env.GITHUB_ACTIONS !== 'true' || process.env.GITHUB_REF_TYPE !== 'tag' || !gitTag) throw new Error('publish_requires_github_tag_workflow')
 const policy = releasePolicy(metadata.version, gitTag)
 const release = JSON.parse(await readFile(join(archivesDir, 'release.json'), 'utf8')) as { name: string; version: string; tag: string; prerelease: boolean; npmFile: string; npmIntegrity: string }
-assert.equal(release.name, sdkName)
+assert.equal(release.name, npmName)
 assert.equal(release.version, policy.version)
 assert.equal(release.tag, policy.tag)
 assert.equal(release.prerelease, policy.prerelease)
 const archive = join(archivesDir, release.npmFile)
 assert.equal(`sha512-${createHash('sha512').update(await readFile(archive)).digest('base64')}`, release.npmIntegrity)
-const result = await publishNpmRelease(sdkName, policy, release.npmIntegrity, {
+const result = await publishNpmRelease(npmName, policy, release.npmIntegrity, {
   /** 使用标准网络接口查询发布包仓库元信息，供幂等发布判断。 */
   fetch: (url) => fetch(url, { signal: AbortSignal.timeout(15_000) }),
   /** 在有限轮询之间等待，避免过密查询包仓库。 */

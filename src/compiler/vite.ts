@@ -21,6 +21,7 @@ type Replacement = Readonly<{ start: number; end: number; value: string }>
 const inputEvents = ['blur', 'confirm', 'change']
 const textRenderingDirectives = new Set(['for', 'if', 'else-if', 'else', 'show', 'text', 'html'])
 const marker = '#__GIO_AUTOTRACK_V2__'
+const npmRuntimeImport = 'gio-uniapp-sdk/autotrack'
 /** 将静态文本编码为安全的 JavaScript 字符串字面量。 */
 function literal(value: string): string { return JSON.stringify(value) }
 /** 转义模板属性中的特殊字符，避免生成的监听器破坏 HTML 语法。 */
@@ -272,7 +273,7 @@ export function transformAutoTrackTemplate(template: string, dispatcher = 'gioAu
 }
 
 /** 处理完整 Vue SFC，选择无名称冲突的运行时导入并保持重复处理幂等。 */
-export function transformAutoTrackSfc(source: string, runtimeImport = 'gio-uniapp-autotracker/autotrack', options: AutoTrackTransformOptions = {}): VueSfcTransform {
+export function transformAutoTrackSfc(source: string, runtimeImport = npmRuntimeImport, options: AutoTrackTransformOptions = {}): VueSfcTransform {
   const parsed = parseSfc(source)
   if (parsed.errors.length > 0) return { code: source, changed: false, warnings: parsed.errors.map((error) => ({ code: 'sfc_parse_error', offset: typeof error === 'object' && 'loc' in error ? error.loc?.start.offset ?? 0 : 0 })) }
   const { template, script, scriptSetup } = parsed.descriptor
@@ -349,7 +350,7 @@ export type UniAppAutoTrackVitePlugin = Readonly<{
 export type UniAppAutoTrackViteOptions = Readonly<{ enabled?: boolean; runtimeImport?: string }>
 /** 创建在 uni 编译器前执行的 Vite 插件，支持关闭插桩和指定探针导入路径。 */
 export function gioUniappAutoTrack(options?: string | UniAppAutoTrackViteOptions): UniAppAutoTrackVitePlugin {
-  const runtimeImport = typeof options === 'string' ? options : options?.runtimeImport ?? 'gio-uniapp-autotracker/autotrack'
+  const runtimeImport = typeof options === 'string' ? options : options?.runtimeImport ?? npmRuntimeImport
   return {
     name: 'gio-uniapp-autotrack',
     enforce: 'pre',

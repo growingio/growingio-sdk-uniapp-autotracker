@@ -85,6 +85,7 @@ export class LocalTrackerRuntime {
   private hydration: Promise<void> | null = null
   private userKeyIgnoredWarned = false
   private readonly autoTrackDispatcher = new AutoTrackDispatcher()
+  private awaitingInitialConsent = false
   private awaitingIdentify = false
   private identifyPending = false
   private firstDeviceSession: string | null = null
@@ -118,6 +119,7 @@ export class LocalTrackerRuntime {
       return false
     }
     this.bootstrapFailed = false
+    this.awaitingInitialConsent = !result.config.dataCollect
     this.awaitingIdentify = result.config.forceLogin === true
     this.hydration = this.hydrate(result.config).catch(() => {
       this.bootstrapFailed = true
@@ -435,10 +437,10 @@ export class LocalTrackerRuntime {
         scheduleNetworkRecovery()
       },
       config.debug ? (events) => this.debugEvents(events) : undefined,
-      () => !this.awaitingIdentify && this.dependencies.network?.isConnected() !== false,
+      () => !this.awaitingInitialConsent && !this.awaitingIdentify && this.dependencies.network?.isConnected() !== false,
       config.miniprogram?.uploadIntervalMs ?? 0,
       () => { if (config.miniprogram === undefined) refreshNetwork(true) },
-      // App 队列持久化且有 7 天有效期，除 413 外的发送失败均保留到成功；小程序内存队列维持有限重试。
+      // App 持久队列对可恢复失败退避重试，小程序内存队列维持有限重试。
       config.miniprogram === undefined ? 'retain' : 'bounded',
     )
     const appWithFlush = new AppLifecycle({
@@ -607,7 +609,13 @@ export class LocalTrackerRuntime {
       case 'clear-location': return this.clearLocation()
       case 'user-attributes': emitted = state.dispatcher.setUserAttributes(payload.properties); break
       case 'collection-resume':
-        if (this.appShown && this.collecting()) this.resumeCollection()
+        if (!this.collecting()) return true
+        if (this.appShown) this.resumeCollection()
+        // 停采启动时暂缓历史队列，首次确认同意后即使尚未进前台也可补发。
+        if (this.awaitingInitialConsent) {
+          this.awaitingInitialConsent = false
+          state.uploader?.schedule()
+        }
         return true
       case 'track': emitted = state.dispatcher.track({ eventName: payload.eventName, properties: payload.properties }); break
       case 'autotrack': emitted = state.dispatcher.autoTrack(payload as NormalizedAutoTrackCall); break

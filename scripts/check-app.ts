@@ -4,7 +4,7 @@ import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'n
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
-import { modulesDir, npmDir, root, sdkName, sourceHash } from './release-layout.js'
+import { modulesDir, npmDir, npmName, root, sourceHash, uniModuleId } from './release-layout.js'
 
 assert.ok(process.env.GIO_UNI_COMPILER_ROOT, '请通过 GIO_UNI_COMPILER_ROOT 指定具备 App 编译组件的 uniapp-cli-vite 目录')
 const compilerRoot = resolve(process.env.GIO_UNI_COMPILER_ROOT)
@@ -37,12 +37,12 @@ try {
     const project = join(temporary, channel)
     await mkdir(join(project, 'node_modules'), { recursive: true })
     for (const name of await readdir(join(compilerRoot, 'node_modules'))) {
-      if (!name.startsWith('.') && name !== sdkName) await symlink(join(compilerRoot, 'node_modules', name), join(project, 'node_modules', name), 'dir')
+      if (!name.startsWith('.') && name !== npmName) await symlink(join(compilerRoot, 'node_modules', name), join(project, 'node_modules', name), 'dir')
     }
-    if (channel === 'npm') await cp(npmDir, join(project, 'node_modules', sdkName), { recursive: true })
-    else await cp(modulesDir, join(project, 'uni_modules', sdkName), { recursive: true })
-    const entry = channel === 'npm' ? sdkName : `@/uni_modules/${sdkName}/index.js`
-    const vite = channel === 'npm' ? `${sdkName}/vite` : `./uni_modules/${sdkName}/vite.js`
+    if (channel === 'npm') await cp(npmDir, join(project, 'node_modules', npmName), { recursive: true })
+    else await cp(modulesDir, join(project, 'uni_modules', uniModuleId), { recursive: true })
+    const entry = channel === 'npm' ? npmName : `@/uni_modules/${uniModuleId}/index.js`
+    const vite = channel === 'npm' ? `${npmName}/vite` : `./uni_modules/${uniModuleId}/vite.js`
     await writeFile(join(project, 'package.json'), JSON.stringify({ private: true, type: 'module', dependencies: { '@dcloudio/uni-app-plus': compilerVersion,
       ...(harmonyAvailable ? { '@dcloudio/uni-app-harmony': compilerVersion } : {}) } }))
     await writeFile(join(project, 'manifest.json'), JSON.stringify({ name: 'SDK App compile fixture', appid: '__UNI__SDK_FIXTURE', versionName: '0.1.0', versionCode: '100', vueVersion: '3' }))

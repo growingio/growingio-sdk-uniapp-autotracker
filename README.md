@@ -1,4 +1,4 @@
-# gio-uniapp-autotracker
+# gio-uniapp-sdk
 
 GrowingIO 传统 uni-app Vue 3 数据采集 SDK。一行初始化即可自动采集页面浏览、App 生命周期与用户交互，同时支持手动埋点上报自定义事件、用户身份与属性。
 
@@ -13,7 +13,7 @@ GrowingIO 传统 uni-app Vue 3 数据采集 SDK。一行初始化即可自动采
 - **无埋点插桩**：Vite 构建期自动为模板插桩，业务代码无需改动，原有事件 handler 完整保留。
 - **隐私保护**：内置敏感字段拦截，密码、安全密码等输入内容永不读取、永不上报。
 - **类型安全**：完整 TypeScript 类型定义，未知命令、参数错误在编译期即可发现。
-- **离线缓存**：App 端事件落盘缓存，断网不丢数据，恢复联网后自动补发。
+- **离线缓存**：App 端在存储容量允许时将事件落盘，最多保留 7 天，恢复联网后自动补发。
 
 ## 安装
 
@@ -22,7 +22,7 @@ GrowingIO 传统 uni-app Vue 3 数据采集 SDK。一行初始化即可自动采
 ### npm
 
 ```sh
-npm install gio-uniapp-autotracker
+npm install gio-uniapp-sdk
 ```
 
 ### uni_modules
@@ -36,7 +36,7 @@ npm install gio-uniapp-autotracker
 在应用入口创建 App 后，注册插件并初始化 SDK：
 
 ```ts
-import gdp from 'gio-uniapp-autotracker'
+import gdp from 'gio-uniapp-sdk'
 
 export function createApp() {
   const app = createSSRApp(App)
@@ -72,6 +72,8 @@ export function createApp() {
 | `debug` | `boolean` | 否 | 是否在控制台输出调试信息 |
 
 非必填配置缺省、类型错误或超出范围时，SDK 会回退到默认值，不会阻断初始化。
+
+需要等待用户同意时，初始化传入 `dataCollect: false`。已有的离线事件会暂存在本地，在调用 `gdp('setOptions', { dataCollect: true })` 后才恢复上传。
 
 ## 手动埋点
 
@@ -134,7 +136,7 @@ import uni from '@dcloudio/vite-plugin-uni'
 const uniPlugin = (uni as unknown as { default?: typeof uni }).default ?? uni
 
 export default defineConfig(async () => {
-  const { gioUniappAutoTrack } = await import('gio-uniapp-autotracker/vite')
+  const { gioUniappAutoTrack } = await import('gio-uniapp-sdk/vite')
   return {
     plugins: [gioUniappAutoTrack(), uniPlugin()],
   }
@@ -171,7 +173,7 @@ import gdp, {
   type GioGdpInitOptions,
   type GioPlugin,
   type GioPluginRuntime,
-} from 'gio-uniapp-autotracker'
+} from 'gio-uniapp-sdk'
 
 const options = {
   uniVue: app,
