@@ -1,6 +1,6 @@
 name: Release SDK
 
-# 推送 v* 标签后先验证并归档交付包，再发布 npm 和 GitHub Release。
+# 推送 v* 标签后先确认提交已合并到 master，再验证并发布交付包。
 # 首发和 Trusted Publisher 配置见 .github/RELEASING.md。
 on:
   push:
@@ -22,6 +22,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag commit is in master
+        shell: bash
+        run: |
+          if ! git merge-base --is-ancestor HEAD refs/remotes/origin/master; then
+            echo "::error::Release tag ${GITHUB_REF_NAME} must point to a commit in master. Merge the release PR and tag the commit from master."
+            exit 1
+          fi
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
