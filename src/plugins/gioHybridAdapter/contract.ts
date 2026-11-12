@@ -85,7 +85,7 @@ export function validHybridOptions(value: unknown): value is HybridOptions {
 export function normalizeUniMPConfig(value: unknown): UniMPConfig | null {
   const input = record(value)
   if (input === null || input.runtime !== 'unimp'
-    || ['serverUrl', 'sessionExpires', 'appChannel', 'appVersion', 'keepAlive', 'uploadInterval', 'forceLogin', 'legacyMiniProgramIdentity'].some(key => input[key] !== undefined)) return null
+    || ['serverUrl', 'sessionExpires', 'appChannel', 'appVersion', 'keepAlive', 'uploadInterval', 'forceLogin'].some(key => input[key] !== undefined)) return null
   const normalized = normalizeInitOptions({ accountId: input.accountId, dataSourceId: input.dataSourceId, dataCollect: input.dataCollect, idMapping: input.idMapping, debug: input.debug })
   const appId = typeof input.appId === 'string' ? input.appId.trim() : ''
   if (!normalized.ok || appId === '' || [...appId].length > 256) return null

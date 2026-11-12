@@ -9,6 +9,8 @@ import type { NativePluginHost } from './src/platform/native-identifiers.js'
 import { TrackerRuntime } from './src/core/growingIO.js'
 import { installUniAppLifecycle, type UniAppVueApp } from './src/adapters/uniapp.js'
 import { guid } from './src/utils/tools.js'
+import { createWebTracker } from './src/platform/web.js'
+import { installWebLifecycle, webEntrySnapshot } from './src/adapters/web.js'
 
 declare const uni: unknown
 declare const __GIO_UNI_PLATFORM__: string
@@ -20,7 +22,7 @@ let pendingGdpPlugins: readonly GdpPlugin[] = []
 type GdpPlugin = GioBuiltinPlugin | GioPlugin
 
 /** App SDK 只创建单例；重复请求返回首次运行时，避免重复安装生命周期、队列、存储命名空间和上传器。 */
-function createGioTracker(host: AppRuntimeHost | MiniProgramHost, options: AppRuntimeOptions, target: RuntimeTarget): TrackerRuntime {
+function createGioTracker(host: AppRuntimeHost | MiniProgramHost, options: AppRuntimeOptions, target: Exclude<RuntimeTarget, 'web'>): TrackerRuntime {
   if (singleton === null) singleton = target === 'app' ? createAppTracker(host as AppRuntimeHost, options) : createMiniProgramTracker(host, target, options)
   return singleton
 }
@@ -85,12 +87,19 @@ function record(value: unknown): Readonly<Record<string, unknown>> | null {
     : null
 }
 
-/** 检查全局 uni 是否具备 App SDK 所需的宿主方法；缺失时拒绝初始化。 */
-function runtimeHost(): Readonly<{ host: AppRuntimeHost | MiniProgramHost; target: RuntimeTarget }> | null {
+type ResolvedHost = Readonly<{ host: AppRuntimeHost | MiniProgramHost; target: Exclude<RuntimeTarget, 'web'> }>
+  | Readonly<{ host: Readonly<Record<string, unknown>> | null; target: 'web'; browser: Window }>
+
+/** 优先识别构建平台和 uni 宿主，仅在浏览器入口中使用 DOM。 */
+function runtimeHost(): ResolvedHost | null {
   const candidate = record(typeof uni === 'undefined' ? (globalThis as Readonly<Record<string, unknown>>).uni : uni)
+  const buildTarget = typeof __GIO_UNI_PLATFORM__ === 'undefined' ? undefined : __GIO_UNI_PLATFORM__
+  const target = resolveRuntimeTarget(candidate ?? {}, buildTarget)
+  if (target === 'web') {
+    return typeof window !== 'undefined' && window.document !== undefined ? { host: candidate, target: 'web', browser: window } : null
+  }
   const required = ['getStorageSync', 'setStorageSync', 'removeStorageSync', 'getNetworkType', 'request']
   if (candidate === null || !required.every(name => typeof candidate[name] === 'function')) return null
-  const target = resolveRuntimeTarget(candidate, typeof __GIO_UNI_PLATFORM__ === 'undefined' ? undefined : __GIO_UNI_PLATFORM__)
   if (target === null || (target === 'app' && !['getDeviceInfo', 'getSystemInfoSync', 'getAppBaseInfo'].every(name => typeof candidate[name] === 'function'))) return null
   return { host: candidate as unknown as AppRuntimeHost | MiniProgramHost, target }
 }
@@ -180,16 +189,24 @@ export const gdp = ((command: unknown, ...args: readonly unknown[]): boolean | s
     const { host, target } = runtime
     if (target !== 'app' && pendingGdpPlugins.some(plugin => isBuiltinPlugin(plugin) && plugin.name === 'gioNativeIdentifiers')) return false
     const config = normalizeInitOptions({ ...init, accountId: args[0], dataSourceId: args[1] }, target === 'app' ? undefined : target)
-    if (!config.ok || (config.config.miniprogram !== undefined && !matchesMiniProgramAppId(host, config.config.miniprogram.appId))) return false
-    const tracker = createGioTracker(host, {
+    if (!config.ok || (runtime.target !== 'web' && config.config.miniprogram !== undefined
+      && !matchesMiniProgramAppId(runtime.host, config.config.miniprogram.appId))) return false
+    const runtimeOptions = {
       sdkVersion: SDK_VERSION,
       deviceIdFactory: guid,
       sessionIdFactory: guid,
-    }, target)
+    }
+    let readPageTitle: (() => string | null) | undefined
+    const tracker = runtime.target === 'web' ? createWebTracker(runtime.browser, runtimeOptions, () => readPageTitle?.() ?? null) : createGioTracker(runtime.host, runtimeOptions, runtime.target)
     const registered = new Set(tracker.registeredPluginNames())
     const builtinPlugins = pendingGdpPlugins.filter(isBuiltinPlugin).filter((plugin) => !registered.has(plugin.name))
     if (!tracker.registerPlugins(...builtinPlugins) || !tracker.init({ ...init, accountId: args[0], dataSourceId: args[1] })) return false
-    installUniAppLifecycle(uniVue, tracker, { host, miniprogram: target === 'app' ? undefined : target })
+    if (runtime.target === 'web') {
+      const { browser } = runtime
+      const hashtag = config.config.web?.hashtag
+      if (runtime.host === null) installWebLifecycle(browser, tracker, hashtag)
+      else readPageTitle = installUniAppLifecycle(uniVue, tracker, { host, web: { entry: () => webEntrySnapshot(browser, hashtag), title: () => browser.document.title } })
+    } else installUniAppLifecycle(uniVue, tracker, { host, miniprogram: runtime.target === 'app' ? undefined : runtime.target })
     gdpTracker = tracker
     installCustomerPlugins(tracker)
     return true

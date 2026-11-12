@@ -169,6 +169,7 @@ export class Uploader {
     /** 请求发现网络错误时，允许运行时刷新可能过期的连接状态。 */
     private readonly onNetworkFailure: () => void = () => undefined,
     private readonly retryPolicy: RetryPolicy = 'bounded',
+    private readonly onSuccess?: (events: readonly ProtocolEvent[]) => void,
   ) {}
 
   /** App 事件入队后立即具备发送资格，仅传输槽位与重试可能使派发延后。 */
@@ -295,6 +296,7 @@ export class Uploader {
       this.active -= 1
       if (result.kind === 'network' || result.kind === 'timeout') this.onNetworkFailure()
       if (result.kind === 'success') {
+        try { this.onSuccess?.(batch.map(entry => entry.event)) } catch { /* 续期失败不改变已经完成的上传结果。 */ }
         this.consecutiveFailures = 0
         this.queue.remove(requestIds)
         this.releaseReserved(requestIds)

@@ -15,11 +15,37 @@ beforeEach(() => {
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
 describe.each(miniTargets)('%s complete runtime', target => {
-  it('initializes with defaults for invalid optional values and leaves identity migration disabled', async () => {
+  it('shares plain device and login fields with the independent SDK across restarts', async () => {
+    const f = miniHost(target)
+    f.values.set('_growing_uid_', 'independent-device')
+    f.values.set('_growing_userId_', 'independent-user')
+    f.values.set('_growing_userKey_', 'independent-key')
+    f.values.set('_growing_gioId_', 'independent-user')
+    expect(f.init({ idMapping: true })).toBe(true)
+    expect(await f.tracker.whenReady()).toBe(true)
+    f.show()
+    expect(f.tracker.queuedEvents()[0]).toMatchObject({ deviceId: 'independent-device', userId: 'independent-user', userKey: 'independent-key' })
+    expect(f.tracker.setUserId('uni-user', 'uni-key')).toBe(true)
+    expect(f.values.get('_growing_userId_')).toBe('uni-user')
+    expect(f.values.get('_growing_userKey_')).toBe('uni-key')
+    expect(f.tracker.clearUserId()).toBe(true)
+    expect(f.values.get('_growing_userId_')).toBe('')
+    expect(f.values.get('_growing_userKey_')).toBe('')
+    expect(f.values.get('_growing_gioId_')).toBe('uni-user')
+    f.values.set('_growing_userId_', 'rollback-user')
+    f.values.set('_growing_gioId_', 'rollback-user')
+    const next = f.create()
+    next.init({ accountId: 'account', dataSourceId: 'source', appId: f.appId, idMapping: true })
+    expect(await next.whenReady()).toBe(true)
+    next.onAppShow({ path: 'pages/home', query: '', scene: '1001' })
+    expect(next.queuedEvents()[0]).toMatchObject({ deviceId: 'independent-device', userId: 'rollback-user' })
+  })
+
+  it('initializes with defaults for invalid optional values', async () => {
     const f = miniHost(target)
     expect(f.init({
       keepAlive: 1441, sessionExpires: 361, uploadInterval: 3000.5, dataCollect: 'false',
-      forceLogin: 'true', legacyMiniProgramIdentity: { appId: 'other-app' },
+      forceLogin: 'true',
     })).toBe(true)
     expect(await f.tracker.whenReady()).toBe(true)
     f.show()
@@ -34,7 +60,8 @@ describe.each(miniTargets)('%s complete runtime', target => {
     const events = [...f.sent, ...f.tracker.queuedEvents()]
     expect(events.filter(event => event.eventType === 'VISIT')).toHaveLength(1)
     expect(events.at(-1)).toMatchObject({ eventType: 'CUSTOM', sessionId: f.sent[0]!.sessionId })
-    expect(f.host.getStorageSync.mock.calls.every(([key]) => key.startsWith('gio:mp:v1:'))).toBe(true)
+    expect(f.host.getStorageSync.mock.calls.map(([key]) => key)).toEqual(expect.arrayContaining(['_growing_uid_', '_growing_userId_', '_growing_userKey_', '_growing_gioId_']))
+    expect(f.host.getStorageSync.mock.calls.some(([key]) => key.endsWith(':identity'))).toBe(false)
   })
 
   it('honors zero mini SDK intervals with immediate upload and a new visit after background time passes', async () => {
@@ -72,10 +99,9 @@ describe.each(miniTargets)('%s complete runtime', target => {
     expect(events.every(event => !('appState' in event) && !('appName' in event) && !('orientation' in event))).toBe(true)
     for (let index = 0; index < 10; index++) await Promise.resolve()
     const keys = [...f.values.keys()]
-    expect(keys).toHaveLength(2)
-    expect(keys.every(key => key.startsWith(`gio:mp:v1:${target}:`) && (key.endsWith(':identity') || key.endsWith(':meta')))).toBe(true)
+    expect(keys.sort()).toEqual(['_growing_gioId_', '_growing_uid_', '_growing_userId_', '_growing_userKey_', `gio:mp:v1:${target}:${f.appId}:account:source:meta`])
     expect(f.host.getStorageSync.mock.calls.every(([key]) => !key.endsWith(':session') && !key.includes(':queue'))).toBe(true)
-    expect([...f.values.values()].join(' ')).not.toContain('user-a')
+    expect(f.values.get('_growing_userId_')).toBe('user-a')
     const next = f.create()
     expect(next.init({ accountId: 'account', dataSourceId: 'source', appId: f.appId })).toBe(true)
     await next.whenReady()

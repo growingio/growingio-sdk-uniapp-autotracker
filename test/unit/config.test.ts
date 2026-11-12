@@ -183,7 +183,7 @@ describe('normalizeInitOptions', () => {
     { appChannel: 1 }, { appChannel: '\ud800' },
     { appVersion: null }, { appVersion: '' }, { appVersion: '   ' }, { appVersion: 42 }, { appVersion: {} }, { appVersion: '\udc00' },
     { dataCollect: 'false' }, { idMapping: 1 }, { debug: null }, { forceLogin: 'true' },
-    { legacyMiniProgramIdentity: {} }, { runtime: 'unknown' },
+    { runtime: 'unknown' },
   ])('defaults invalid optional input %o without failing initialization', options => {
     expect(normalizeInitOptions({ ...required, ...options })).toStrictEqual(normalizeInitOptions(required))
   })

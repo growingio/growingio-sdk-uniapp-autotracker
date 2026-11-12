@@ -57,7 +57,9 @@ command('registerPlugins', [{ name: 'gioHybridAdapter', options: { transport: 'n
 command('registerPlugins', [{ name: 'gioNativeIdentifiers', options: { fields: ['oaid', 'androidId'] } }])
 command('init', 'account-id', 'data-source-id', { uniVue: app, runtime: 'unimp', appId: '__UNI__guest', idMapping: true })
 command('init', 'account-id', 'data-source-id', { uniVue: app, appId: 'wx123', forceLogin: true,
-  legacyMiniProgramIdentity: { appId: 'wx123', accountId: 'account-id', dataSourceId: 'data-source-id' } })
+  miniprogramStorage: { storagePrefix: 'g1', plugin: true } })
+command('init', 'account-id', 'data-source-id', { uniVue: app, appId: 'wx123', storageType: 'cookie',
+  cookieDomain: 'example.com', hashtag: true, embeddedAdapter: { strict: true, ignoreFields: ['domain'] } })
 // @ts-expect-error identify 不接受对象。
 command('identify', { id: 'device' })
 // @ts-expect-error getGioInfo 返回可空查询串，不能当作布尔命令。

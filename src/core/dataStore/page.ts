@@ -65,6 +65,11 @@ export class PageStore {
     if (page !== undefined) this.pages.set(instanceId, { ...page, title })
   }
 
+  /** H5 的 document.title 变化时只刷新当前页，保留路由和显示时间。 */
+  public setCurrentTitle(title: string): void {
+    if (this.currentInstanceId !== null) this.setTitle(this.currentInstanceId, title)
+  }
+
   /** 按实例读取独立快照，供特定运行模式校验元信息而不暴露内部记录。 */
   public snapshot(instanceId: string): PageSnapshot | null {
     const page = this.pages.get(instanceId)

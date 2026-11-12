@@ -26,7 +26,17 @@ export type MiniProgramSystemContext = Readonly<Omit<AppSystemContext, 'platform
   deviceType: string
   operatingSystem: string
 }>
-export type SystemContext = AppSystemContext | MiniProgramSystemContext
+export type WebSystemContext = Readonly<{
+  platform: 'web'
+  domain: string
+  networkState: NetworkState
+  screenWidth: number
+  screenHeight: number
+  appVersion: string
+  language: string
+  sdkVersion: string
+}>
+export type SystemContext = AppSystemContext | MiniProgramSystemContext | WebSystemContext
 
 export interface SystemContextPort {
   /** 加载已归一化的 App 系统上下文，不向核心返回原始宿主对象。 */

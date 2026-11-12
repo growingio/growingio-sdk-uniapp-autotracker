@@ -3,12 +3,13 @@ import { BootstrapBuffer, hydrateTrackerState, TrackerEventGate, type TrackerInt
 import type { GioInitOptions, ResolvedGioConfig } from '../constants/config.js'
 import { APP_QUEUE_PERSIST_DELAY_MS, IdentityPersistence, type DeviceIdFactory, MetaPersistence, QueuePersistence, SessionPersistence, storageKeys } from './storage/index.js'
 import { assignedDeviceId, updateIdentity, type Identity, LocationState, SessionManager, type SessionIdFactory } from './userStore.js'
-import { readLegacyMiniProgramIdentity, type LegacyIdentityPort } from './storage/legacyIdentity.js'
+import type { SharedIdentityPersistence } from './storage/sharedIdentity.js'
+import type { WebEmbeddedContext } from '../plugins/gioEmbeddedAdapter/index.js'
 import { embeddedGioInfo } from '../plugins/gioHybridAdapter/info.js'
 import { NativeIdentifierState, supportedNativeIdentifierFields, type NativeIdentifiersPort } from '../plugins/gioNativeIdentifiers/index.js'
 import { PageStore, type PageLoadInput, type PageOrientation, PageLifecycle } from './dataStore/page.js'
 import type { ClockPort, LoggerPort, MiniProgramTarget, NetworkPort, NetworkState, StoragePort, SystemContextPort, TimezonePort, TransportPort } from '../types/index.js'
-import { buildAppEvent, buildMiniProgramEvent, isValidCustomEventName, normalizeAttributes, type ProtocolEvent } from './dataStore/protocol.js'
+import { buildAppEvent, buildMiniProgramEvent, buildWebEvent, isValidCustomEventName, normalizeAttributes, type ProtocolEvent } from './dataStore/protocol.js'
 import { APP_QUEUE_LIMITS, APP_QUEUE_RETENTION_MS, EventQueue } from './queue.js'
 import { AppLifecycle, type AppEntrySnapshot } from './dataStore/app.js'
 import { Uploader, type UploaderRuntime } from './uploader.js'
@@ -20,8 +21,16 @@ declare const __GIO_AUTOTRACK_VERIFICATION__: boolean
 
 const APP_NETWORK_RECOVERY_INTERVAL_MS = 2_000
 
+export type WebRuntimeState = Readonly<{
+  identity: SharedIdentityPersistence
+  embedded: WebEmbeddedContext | null
+  synchronizeEmbeddedSession(): boolean
+  renewEmbeddedSession(): void
+  currentTitle(): string
+}>
+
 export type LocalTrackerRuntimeDependencies = Readonly<{
-  target?: MiniProgramTarget
+  target?: MiniProgramTarget | 'web'
   storage: StoragePort
   systemContext: SystemContextPort | ((config: ResolvedGioConfig) => SystemContextPort)
   clock: ClockPort
@@ -35,13 +44,15 @@ export type LocalTrackerRuntimeDependencies = Readonly<{
   autoTrackProfile?: AutoTrackCapabilityProfile
   network?: NetworkPort
   upload?: Readonly<{ transport: TransportPort; runtime: UploaderRuntime }>
-  legacyIdentity?: LegacyIdentityPort
+  sharedIdentity?: (config: ResolvedGioConfig) => SharedIdentityPersistence
+  web?: (config: ResolvedGioConfig) => WebRuntimeState
   nativeIdentifiers?: NativeIdentifiersPort
 }>
 
 type RuntimeState = Readonly<{
   identity: { value: Identity }
-  identityPersistence: IdentityPersistence
+  identityPersistence: IdentityPersistence | null
+  sharedIdentity: SharedIdentityPersistence | null
   sessionPersistence: SessionPersistence | null
   metaPersistence: MetaPersistence
   queuePersistence: QueuePersistence | null
@@ -64,6 +75,7 @@ type RuntimeState = Readonly<{
   domain: string
   newDevice: boolean
   nativeIdentifiers: NativeIdentifierState | null
+  synchronizePageTitle(pageShown?: boolean): void
 }>
 
 /** 将内部意图或探针识别为对象记录，拒绝空值与数组。 */
@@ -89,6 +101,8 @@ export class LocalTrackerRuntime {
   private awaitingIdentify = false
   private identifyPending = false
   private firstDeviceSession: string | null = null
+  private identityWriteBlocked = false
+  private embedded: WebEmbeddedContext | null = null
   private readonly restoredRequests = new Set<string>()
 
   /** 保存宿主依赖并创建门控组件；真正的状态恢复由 init 触发。 */
@@ -119,6 +133,7 @@ export class LocalTrackerRuntime {
       return false
     }
     this.bootstrapFailed = false
+    this.identityWriteBlocked = false
     this.awaitingInitialConsent = !result.config.dataCollect
     this.awaitingIdentify = result.config.forceLogin === true
     this.hydration = this.hydrate(result.config).catch(() => {
@@ -184,7 +199,7 @@ export class LocalTrackerRuntime {
 
   /** 在读取业务属性前检查采集开关，随后归一化并提交独立 JSON 快照。 */
   private submitAttributes(kind: 'track' | 'user-attributes', properties: unknown, eventName?: unknown): boolean {
-    if (this.lifecycle.config()?.dataCollect !== true) return false
+    if (this.lifecycle.config()?.dataCollect !== true || this.identityWriteBlocked) return false
     if (kind === 'track' && !isValidCustomEventName(eventName)) return false
     try {
       // 在 JSON 快照之前统一属性语义；关闭采集时不能读取业务属性。
@@ -196,22 +211,28 @@ export class LocalTrackerRuntime {
   /** 校验并更新身份，按调用顺序延迟早期命令；换登录用户时更新会话，允许采集时生成 VISIT。 */
   public setUserId(userId: unknown, userKey?: unknown): boolean {
     const config = this.lifecycle.config()
-    if (config === null || !updateIdentity({ deviceId: 'pending', userId: null, userKey: null }, userId, userKey, config.idMapping).ok) return false
+    if (config === null || this.embedded !== null || !updateIdentity({ deviceId: 'pending', userId: null, userKey: null }, userId, userKey, config.idMapping).ok) return false
     const deferred = this.deferStateCommand('user-id', { userId, userKey })
     if (deferred !== null) return deferred
     const state = this.state
     if (state === null || config === null) return false
-    const previous = state.identity.value
+    const previous = this.currentIdentity(state)
+    if (previous === null) return false
+    const previousSessionIdentity = state.sharedIdentity === null ? previous : state.identity.value
     const update = updateIdentity(previous, userId, userKey, config.idMapping)
     if (!update.ok) return false
     if (update.userKeyIgnored && !this.userKeyIgnoredWarned) {
       this.userKeyIgnoredWarned = true
       this.log('warn', '[GrowingIO]: userKey ignored because idMapping is disabled')
     }
-    if (!this.updateIdentity(update.identity)) return false
+    if (!this.updateIdentity(update.identity, previous, {
+      userId: update.identity.userId, userKey: update.identity.userKey,
+      ...(update.identity.userId !== null ? { lastUserId: update.identity.lastUserId }
+        : this.identityWriteBlocked ? { lastUserId: previousSessionIdentity.lastUserId ?? null } : {}),
+    })) return false
     // 首次显示之前只保存身份，不能为早期 A→B 创建无入口的 VISIT 或使用历史会话。
     if (!this.appShown) return true
-    const transition = state.sessions.onUserIdChange(previous.userId ?? previous.lastUserId, update.identity.userId)
+    const transition = state.sessions.onUserIdChange(previousSessionIdentity.userId ?? previousSessionIdentity.lastUserId, state.identity.value.userId)
     if (transition.snapshot !== null) void state.sessionPersistence?.persist(transition.snapshot)
     if (transition.startedNew) {
       state.app.onUserChanged()
@@ -237,11 +258,17 @@ export class LocalTrackerRuntime {
     if (deferred !== null) { this.identifyPending = deferred; return deferred }
     const state = this.state
     if (state === null) return false
-    const entries = state.queue.snapshot().map(entry => this.restoredRequests.has(entry.requestId) ? entry
+    const previous = this.currentIdentity(state)
+    if (previous === null) return false
+    const queued = state.queue.snapshot()
+    const entries = queued.map(entry => this.restoredRequests.has(entry.requestId) ? entry
       : { ...entry, event: { ...entry.event, deviceId } })
     // 改写设备身份必须整体成功，任一事件超出预算都保持原队列。
     if (!state.queue.restore(entries, true)) return false
-    this.updateIdentity({ ...state.identity.value, deviceId })
+    if (!this.updateIdentity({ ...previous, deviceId }, previous, { deviceId })) {
+      state.queue.restore(queued, true)
+      return false
+    }
     this.awaitingIdentify = false
     this.persistAfterEvent()
     return true
@@ -251,8 +278,8 @@ export class LocalTrackerRuntime {
   public getGioInfo(): string | null {
     const config = this.lifecycle.config()
     const state = this.state
-    if (!this.ready() || config === null || state === null) return null
-    if (config.dataCollect && this.awaitingIdentify) return null
+    if (!this.ready() || config === null || config.web !== undefined || state === null) return null
+    if (config.dataCollect && (this.awaitingIdentify || this.identityWriteBlocked)) return null
     const session = state.sessions.current()?.sessionId ?? null
     return embeddedGioInfo({ collecting: config.dataCollect, appId: config.miniprogram?.appId ?? state.domain,
       accountId: config.accountId, dataSourceId: config.dataSourceId, platform: state.platform,
@@ -262,6 +289,7 @@ export class LocalTrackerRuntime {
 
   /** 切换采集同意状态；恢复时必须接纳会话重建意图，否则保持关闭。 */
   public setDataCollect(value: unknown): boolean {
+    if (this.embedded?.collecting !== undefined) return value === this.embedded.collecting
     const transition = this.lifecycle.setDataCollect(value)
     if (!transition.ok) return false
     if (transition.changed) {
@@ -341,27 +369,51 @@ export class LocalTrackerRuntime {
 
   /** 恢复各类持久状态并装配会话、页面、事件和上传组件，全部就绪后回放暂存调用。 */
   private async hydrate(config: NonNullable<ReturnType<TrackerLifecycle['config']>>): Promise<void> {
+    const isApp = config.miniprogram === undefined && config.web === undefined
+    const web = this.dependencies.web?.(config)
+    const embedded = web?.embedded ?? null
+    this.embedded = embedded
+    if (embedded !== null) {
+      this.awaitingIdentify = false
+      if (embedded.collecting !== undefined) {
+        this.lifecycle.setDataCollect(embedded.collecting)
+        this.awaitingInitialConsent = !embedded.collecting
+      }
+    }
     const keys = storageKeys(config.dataSourceId, config.miniprogram === undefined ? undefined : { ...config.miniprogram, accountId: config.accountId })
-    const queue = new EventQueue(config.miniprogram === undefined ? APP_QUEUE_LIMITS : undefined,
-      config.miniprogram === undefined ? buildAppEvent : buildMiniProgramEvent,
-      config.miniprogram === undefined ? { maxAgeMs: APP_QUEUE_RETENTION_MS, now: () => this.dependencies.clock.now() } : undefined)
-    const migration = config.legacyMiniProgramIdentity
-    const identityPersistence = new IdentityPersistence(this.dependencies.storage, keys.identity, config.dataSourceId, this.dependencies.deviceIdFactory,
-      migration === undefined || this.dependencies.legacyIdentity === undefined ? undefined
-        : () => readLegacyMiniProgramIdentity(this.dependencies.legacyIdentity!, migration, config.idMapping, this.dependencies.clock.now()))
-    const sessionPersistence = config.miniprogram === undefined ? new SessionPersistence(this.dependencies.storage, keys.session) : null
-    const metaPersistence = new MetaPersistence(this.dependencies.storage, keys.meta)
+    const queue = new EventQueue(isApp ? APP_QUEUE_LIMITS : undefined,
+      isApp ? buildAppEvent : web !== undefined ? buildWebEvent : buildMiniProgramEvent,
+      isApp ? { maxAgeMs: APP_QUEUE_RETENTION_MS, now: () => this.dependencies.clock.now() } : undefined)
+    const sharedIdentity = web?.identity ?? this.dependencies.sharedIdentity?.(config) ?? null
+    if (!isApp && sharedIdentity === null) throw new Error('shared_identity_port_unavailable')
+    const identityPersistence = isApp ? new IdentityPersistence(this.dependencies.storage, keys.identity, config.dataSourceId, this.dependencies.deviceIdFactory) : null
+    const sessionPersistence = isApp ? new SessionPersistence(this.dependencies.storage, keys.session) : null
+    const metaKey = web === undefined ? keys.meta : `gio:web:v1:${encodeURIComponent(config.accountId)}:${encodeURIComponent(config.dataSourceId)}:meta`
+    const metaPersistence = new MetaPersistence(this.dependencies.storage, metaKey)
     const timers = this.dependencies.upload?.runtime
     // App 队列整队落盘：合并 1 秒内的写入并移出业务调用栈；进入后台时立即写入。
-    const queuePersistence = this.dependencies.storage.persistentQueue ? new QueuePersistence(this.dependencies.storage, keys.queue,
-      config.miniprogram === undefined && timers !== undefined ? {
+    const queuePersistence = isApp && this.dependencies.storage.persistentQueue ? new QueuePersistence(this.dependencies.storage, keys.queue,
+      timers !== undefined ? {
         setTimeout: (callback, delayMs) => timers.setTimeout(callback, delayMs),
         clearTimeout: handle => timers.clearTimeout(handle),
         delayMs: APP_QUEUE_PERSIST_DELAY_MS,
       } : undefined) : null
     const hydrated = await hydrateTrackerState({
       /** 恢复当前数据源的设备与登录身份。 */
-      hydrateIdentity: () => identityPersistence.hydrate(),
+      hydrateIdentity: async () => {
+        if (sharedIdentity === null) return identityPersistence!.hydrate()
+        const syncHost = embedded !== null && !embedded.strict && !embedded.routingOnly
+        const override = syncHost ? {
+          deviceId: embedded.deviceId, userId: embedded.userId, userKey: embedded.userKey,
+          lastUserId: embedded.userId || undefined,
+        } : undefined
+        try {
+          return sharedIdentity.hydrate(this.dependencies.deviceIdFactory, override, embedded !== null && !syncHost)
+        } catch (error) {
+          this.log('error', `[GrowingIO]: ${error instanceof Error ? error.message : 'shared_identity_unavailable'}`)
+          throw error
+        }
+      },
       /** 恢复历史会话记录，等待真实生命周期确定是否续用。 */
       hydrateSession: () => sessionPersistence?.hydrate() ?? Promise.resolve({ snapshot: null, source: 'missing' }),
       /** 独立恢复全局序号，避免身份或会话损坏导致编号重置。 */
@@ -377,9 +429,10 @@ export class LocalTrackerRuntime {
       this.log('error', '[GrowingIO]：SDK初始化失败，可修正宿主环境后再次调用 init!')
       return
     }
+    if (web !== undefined && !web.synchronizeEmbeddedSession()) throw new Error('web_embedded_session_write_failed')
     if (config.miniprogram !== undefined && hydrated.state.systemContext.appVersion === '') this.log('warn', '[GrowingIO]: mini-program appVersion unavailable')
     // 包名读取失败时事件省略 domain；鸿蒙 uni 未提供 bundleName 时无 JS 兜底，需明确提示接入方。
-    if (config.miniprogram === undefined && hydrated.state.systemContext.domain === '') {
+    if (isApp && hydrated.state.systemContext.domain === '') {
       this.log('warn', `[GrowingIO]: app domain unavailable on ${hydrated.state.systemContext.platform}, events will omit domain`)
     }
 
@@ -397,23 +450,38 @@ export class LocalTrackerRuntime {
     for (const entry of queue.snapshot()) this.restoredRequests.add(entry.requestId)
     const location = new LocationState()
     const identity = { value: hydrated.state.identity.identity }
-    if (!config.idMapping && identity.value.userKey !== null) {
+    if (isApp && !config.idMapping && identity.value.userKey !== null) {
       identity.value = { ...identity.value, userKey: null }
-      await identityPersistence.persist(identity.value)
+      await identityPersistence?.persist(identity.value)
     }
     let networkState: NetworkState = hydrated.state.systemContext.networkState
     const pages = new PageStore()
+    let documentTitle = web?.currentTitle()
+    const synchronizePageTitle = (pageShown = false): void => {
+      if (web === undefined) return
+      const latest = web.currentTitle()
+      const current = pages.current()
+      if (!pageShown && latest !== documentTitle && current !== null) pages.setCurrentTitle(latest)
+      documentTitle = latest
+    }
     const nativePlugin = this.lifecycle.registeredPlugins().find(plugin => plugin.name === 'gioNativeIdentifiers')
     const appPlatform = hydrated.state.systemContext.platform as import('../types/index.js').AppPlatform
-    const nativeIdentifiers = nativePlugin?.name === 'gioNativeIdentifiers' && config.miniprogram === undefined
+    const nativeIdentifiers = nativePlugin?.name === 'gioNativeIdentifiers' && isApp
       ? new NativeIdentifierState(this.dependencies.nativeIdentifiers, nativePlugin.options.fields, appPlatform) : null
     if (nativeIdentifiers !== null && nativePlugin?.name === 'gioNativeIdentifiers' && supportedNativeIdentifierFields(nativePlugin.options.fields, appPlatform).length === 0) {
       // 已注册插件但当前平台读取不到任何声明字段（如鸿蒙，或 Android 只声明了 idfa），不能静默无效。
       this.log('warn', `[GrowingIO]: gioNativeIdentifiers has no readable fields on ${appPlatform}`)
     }
+    const eventIdentity = (): Identity => isApp ? identity.value : {
+      ...identity.value,
+      deviceId: embedded?.deviceId ?? identity.value.deviceId,
+      userId: embedded?.userId === undefined ? identity.value.userId : embedded.userId,
+      userKey: embedded?.userKey === undefined ? config.idMapping ? identity.value.userKey : null : embedded.userKey,
+    }
     const composer = new EventComposer(
-      config, hydrated.state.systemContext, () => identity.value, sessions, sequence, queue,
+      config, hydrated.state.systemContext, eventIdentity, sessions, sequence, queue,
       this.dependencies.clock, this.dependencies.timezone, location, () => networkState, () => pages.current(), () => nativeIdentifiers?.current() ?? {},
+      embedded,
     )
     const page = new PageLifecycle({
       pages,
@@ -437,14 +505,28 @@ export class LocalTrackerRuntime {
         scheduleNetworkRecovery()
       },
       config.debug ? (events) => this.debugEvents(events) : undefined,
-      () => !this.awaitingInitialConsent && !this.awaitingIdentify && this.dependencies.network?.isConnected() !== false,
+      () => !this.awaitingInitialConsent && !this.awaitingIdentify && !this.identityWriteBlocked
+        && (web === undefined || this.lifecycle.config()?.dataCollect === true) && this.dependencies.network?.isConnected() !== false,
       config.miniprogram?.uploadIntervalMs ?? 0,
-      () => { if (config.miniprogram === undefined) refreshNetwork(true) },
+      () => { if (isApp) refreshNetwork(true) },
       // App 持久队列对可恢复失败退避重试，小程序内存队列维持有限重试。
-      config.miniprogram === undefined ? 'retain' : 'bounded',
+      isApp ? 'retain' : 'bounded',
+      web === undefined ? undefined : events => {
+        if (embedded !== null) {
+          web.renewEmbeddedSession()
+          return
+        }
+        const current = eventIdentity()
+        if (events.some(event => event.eventType === 'VISIT' && event.sessionId === sessions.current()?.sessionId
+          && event.deviceId === current.deviceId && (event.userId ?? null) === current.userId && (event.userKey ?? null) === current.userKey)) {
+          sharedIdentity?.renew(identity.value)
+        }
+      },
     )
     const appWithFlush = new AppLifecycle({
       miniprogram: config.miniprogram?.target,
+      web: web !== undefined,
+      embedded: embedded !== null,
       sessions,
       composer,
       clock: this.dependencies.clock,
@@ -464,7 +546,7 @@ export class LocalTrackerRuntime {
     const scheduler = this.dependencies.upload?.runtime
     /** 用一个可取消的定时器弥补宿主未送达的联网通知，不在后台或空队列时轮询。 */
     const scheduleNetworkRecovery = (): void => {
-      const needed = config.miniprogram === undefined && this.foreground && !this.awaitingIdentify
+      const needed = isApp && this.foreground && !this.awaitingIdentify
         && queue.size() > 0 && this.dependencies.network?.isConnected() === false
       if (!needed) {
         if (recoveryPending) scheduler?.clearTimeout(recoveryTimer)
@@ -519,12 +601,13 @@ export class LocalTrackerRuntime {
     const stopNetwork = this.dependencies.network === undefined ? null : this.dependencies.network.subscribe(updateNetwork)
     refreshNetwork()
     this.state = {
-      identity, identityPersistence, sessionPersistence, metaPersistence, queuePersistence, queue, sequence, sessions, location,
+      identity, identityPersistence, sharedIdentity, sessionPersistence, metaPersistence, queuePersistence, queue, sequence, sessions, location,
       app: appWithFlush, page, dispatcher, pages, uploader, stopNetwork, refreshNetwork, scheduleNetworkRecovery,
       platform: hydrated.state.systemContext.platform, domain: hydrated.state.systemContext.domain,
       newDevice: hydrated.state.identity.source === 'generated' || hydrated.state.identity.source === 'corrupt',
       nativeIdentifiers,
-      autoTrackProfile: this.dependencies.autoTrackProfile ?? (config.miniprogram === undefined
+      synchronizePageTitle,
+      autoTrackProfile: this.dependencies.autoTrackProfile ?? (web !== undefined ? null : config.miniprogram === undefined
         ? appCapabilityProfile(hydrated.state.systemContext.platform, typeof __GIO_AUTOTRACK_VERIFICATION__ !== 'undefined' && __GIO_AUTOTRACK_VERIFICATION__ === true)
         : miniProgramCapabilityProfile(config.miniprogram.target, typeof __GIO_AUTOTRACK_VERIFICATION__ !== 'undefined' && __GIO_AUTOTRACK_VERIFICATION__ === true)),
     }
@@ -535,7 +618,7 @@ export class LocalTrackerRuntime {
 
   /** 结合当前同意开关与意图快照判断此刻是否允许生成行为事件。 */
   private collecting(): boolean {
-    return this.lifecycle.config()?.dataCollect === true && this.intentCollection !== false
+    return this.lifecycle.config()?.dataCollect === true && this.intentCollection !== false && !this.identityWriteBlocked
   }
 
   /** 根据初始化配置取得系统上下文端口，兼容直接注入和工厂两种形式。 */
@@ -582,6 +665,7 @@ export class LocalTrackerRuntime {
     const payload = record(intent.payload)
     if (payload === null) return false
     const mini = this.lifecycle.config()?.miniprogram !== undefined
+    if (['track', 'user-attributes', 'autotrack'].includes(intent.kind)) state.synchronizePageTitle()
     // App 与小程序的页面都可能先于 App.onShow 到达，须等待前台会话确定后再生成 PAGE。
     if (intent.kind === 'page-show' && !this.foreground) {
       if (typeof payload.instanceId !== 'string' || (typeof payload.title !== 'string' && payload.title !== null)) return false
@@ -593,7 +677,8 @@ export class LocalTrackerRuntime {
       // 恢复出的历史会话不能承接本次启动的业务事件，等待首次真实 App.onShow。
       if (!this.appShown) return this.pendingSessionCommands.push(intent)
     }
-    if (mini && this.foreground && this.collecting() && ['track', 'user-attributes', 'autotrack', 'page-show'].includes(intent.kind)) {
+    const web = this.lifecycle.config()?.web !== undefined
+    if ((mini || web && this.embedded === null) && this.foreground && this.collecting() && ['track', 'user-attributes', 'autotrack', 'page-show'].includes(intent.kind)) {
       if (state.app.onActivity(this.dependencies.clock.now())) {
         if (intent.kind !== 'page-show') state.page.replayCurrentPage()
         this.autoTrackDispatcher.reset()
@@ -651,8 +736,12 @@ export class LocalTrackerRuntime {
           this.pendingPageShow = { ...this.pendingPageShow, payload: { ...this.pendingPageShow.payload, title: payload.title } }
         }
         return true
-      case 'page-show': emitted = typeof payload.instanceId === 'string' && (typeof payload.title === 'string' || payload.title === null)
-        ? state.page.onShow(payload.instanceId, payload.title).pageQueued : false; lifecycleHandled = typeof payload.instanceId === 'string' && (typeof payload.title === 'string' || payload.title === null); break
+      case 'page-show':
+        emitted = typeof payload.instanceId === 'string' && (typeof payload.title === 'string' || payload.title === null)
+          ? state.page.onShow(payload.instanceId, payload.title).pageQueued : false
+        lifecycleHandled = typeof payload.instanceId === 'string' && (typeof payload.title === 'string' || payload.title === null)
+        state.synchronizePageTitle(true)
+        break
       case 'page-hide':
         if (typeof payload.instanceId === 'string') {
           if (this.pendingPageShow?.payload.instanceId === payload.instanceId) this.pendingPageShow = null
@@ -677,14 +766,41 @@ export class LocalTrackerRuntime {
     return emitted
   }
 
-  /** 仅在身份实际变化时替换内存状态并尽力持久化。 */
-  private updateIdentity(identity: Identity): boolean {
+  private currentIdentity(state: RuntimeState): Identity | null {
+    try { return state.sharedIdentity?.current() ?? state.identity.value }
+    catch { this.blockIdentityWrites(); return null }
+  }
+
+  private blockIdentityWrites(): void {
+    this.identityWriteBlocked = true
+    this.log('error', '[GrowingIO]: shared identity storage unavailable or changed; identity update rejected')
+  }
+
+  /** 共享身份以宿主写入成功为准，App 保留现有的异步持久化。 */
+  private updateIdentity(identity: Identity, expected: Identity, updates: Partial<Identity>): boolean {
     const state = this.state
     if (state === null) return false
+    if (state.sharedIdentity !== null) {
+      if (!state.sharedIdentity.canPersist(updates)) {
+        this.log('warn', '[GrowingIO]: identity cannot round-trip through Web storage')
+        return false
+      }
+      const identityFields = ['deviceId', 'userId', 'userKey', 'lastUserId'] as const
+      if (this.identityWriteBlocked && identityFields.some(field => expected[field] !== state.identity.value[field] && updates[field] === undefined)) return false
+      try {
+        if (state.sharedIdentity.persist(expected, updates)) {
+          state.identity.value = state.sharedIdentity.current()
+          this.identityWriteBlocked = false
+          return true
+        }
+      } catch { /* 共享记录读取或校验失败时保持旧的内存身份。 */ }
+      this.blockIdentityWrites()
+      return false
+    }
     const previous = state.identity.value
     if (previous.deviceId === identity.deviceId && previous.userId === identity.userId && previous.userKey === identity.userKey && previous.lastUserId === identity.lastUserId) return true
     state.identity.value = identity
-    void state.identityPersistence.persist(identity)
+    void state.identityPersistence?.persist(identity)
     return true
   }
 

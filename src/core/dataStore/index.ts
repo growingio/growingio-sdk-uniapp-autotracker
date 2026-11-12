@@ -1,4 +1,4 @@
-import { type AppEventType, buildAppEvent, buildMiniProgramEvent, type ProtocolEvent, normalizeAttributes } from './protocol.js'
+import { type AppEventType, buildAppEvent, buildMiniProgramEvent, buildWebEvent, type ProtocolEvent, normalizeAttributes } from './protocol.js'
 import type { ResolvedGioConfig } from '../../constants/config.js'
 import { type Identity, LocationState, SessionManager } from '../userStore.js'
 import type { AppSystemContext, SystemContext, ClockPort, NetworkState, TimezonePort } from '../../types/index.js'
@@ -6,6 +6,7 @@ import type { AppEntrySnapshot } from './app.js'
 import { EventQueue } from '../queue.js'
 import type { PageSnapshot } from './page.js'
 import type { NormalizedAutoTrackCall } from '../../plugins/gioEventAutoTracking/contract.js'
+import type { WebEmbeddedContext } from '../../plugins/gioEmbeddedAdapter/index.js'
 
 const SEQUENCED_EVENT_TYPES = new Set<AppEventType>([
   'VISIT',
@@ -91,6 +92,7 @@ export class EventComposer {
     private readonly network: (() => NetworkState) | undefined = undefined,
     private readonly currentPage?: () => PageSnapshot | null,
     private readonly nativeIdentifiers?: () => Readonly<Record<string, string | undefined>>,
+    private readonly embedded?: WebEmbeddedContext | null,
   ) {}
 
   /** 小程序入口由生命周期冻结，不将原始宿主对象放入事件。 */
@@ -116,7 +118,7 @@ export class EventComposer {
     const page = this.currentPage?.()
     const base = {
       ...this.system,
-      ...(this.config.miniprogram === undefined ? {} : {
+      ...(this.config.miniprogram === undefined && this.config.web === undefined ? {} : {
         path: page?.route ?? this.entry?.path ?? '', query: page?.query ?? this.entry?.query ?? '',
         title: input.eventType === 'VISIT' && input.fields?.path !== page?.route ? null : page?.title,
       }),
@@ -125,18 +127,19 @@ export class EventComposer {
       deviceId: identity.deviceId,
       userId: identity.userId,
       userKey: identity.userKey,
-      sessionId: session.sessionId,
-      dataSourceId: this.config.dataSourceId,
+      sessionId: this.embedded?.sessionId ?? session.sessionId,
+      dataSourceId: this.embedded?.dataSourceId ?? this.config.dataSourceId,
       timestamp,
       appState: input.appState ?? this.appState,
       appChannel: this.config.miniprogram === undefined ? this.config.appChannel : `scn:${this.entry?.scene ?? 'NA'}`,
       networkState: this.networkState(),
-      timezoneOffset: timezoneOffset(this.timezone),
+      timezoneOffset: this.config.web === undefined ? timezoneOffset(this.timezone) : Number(timezoneOffset(this.timezone)),
       ...(this.location.current() ?? {}),
+      ...this.embedded?.dimensions,
     }
 
     // buildAppEvent 是纯函数，占位序号校验不会改变运行时状态。
-    const buildEvent = this.config.miniprogram === undefined ? buildAppEvent : buildMiniProgramEvent
+    const buildEvent = this.config.web !== undefined ? buildWebEvent : this.config.miniprogram === undefined ? buildAppEvent : buildMiniProgramEvent
     const preview = buildEvent(input.eventType, { ...base, eventSequenceId: 1 })
     if (!preview.ok) return preview
 

@@ -1,12 +1,9 @@
 import { normalizeCollectorHost } from '../utils/tools.js'
 import metadata from '../../package.json' with { type: 'json' }
 import type { MiniProgramTarget } from '../types/index.js'
+import type { WebEmbeddedOptions } from '../plugins/gioEmbeddedAdapter/index.js'
 
-/** 旧独立小程序 SDK 的主实例或子实例身份来源；调用方明确确认其归属。 */
-export type LegacyMiniProgramIdentity = Readonly<{
-  appId: string
-  accountId: string
-  dataSourceId: string
+export type MiniProgramStorageOptions = Readonly<{
   /** 独立 SDK 子实例的 trackingId 前缀，主实例留空。 */
   storagePrefix?: string
   plugin?: boolean
@@ -17,7 +14,7 @@ export type GioInitOptions = Readonly<{
   accountId: string
   dataSourceId: string
   serverUrl?: string | null
-  /** 小程序的真实平台 appId；App 不消费此字段。 */
+  /** 小程序真实 appId，也用于 H5 打通时匹配宿主。 */
   appId?: string | null
   /** 小程序后台保活分钟数，范围 0–1440，默认 5。App 不消费。 */
   keepAlive?: number
@@ -33,8 +30,12 @@ export type GioInitOptions = Readonly<{
   debug?: boolean
   /** 显式开启后，本次运行期的事件等待 identify 分配设备身份后再上传。 */
   forceLogin?: boolean
-  /** 仅小程序支持；只在新身份命名空间缺失时单向读取旧身份。 */
-  legacyMiniProgramIdentity?: LegacyMiniProgramIdentity
+  miniprogramStorage?: MiniProgramStorageOptions
+  storageType?: 'cookie' | 'localstorage'
+  cookieDomain?: string
+  webStorageSubInstance?: boolean
+  hashtag?: boolean
+  embeddedAdapter?: WebEmbeddedOptions
 }>
 
 export type SessionPolicy = Readonly<{ timeoutMs: number; activityTimeoutMs?: number }>
@@ -50,9 +51,16 @@ export type ResolvedGioConfig = Readonly<{
   dataCollect: boolean
   idMapping: boolean
   debug: boolean
-  miniprogram?: Readonly<{ target: MiniProgramTarget; appId: string; uploadIntervalMs: number }>
+  miniprogram?: Readonly<{ target: MiniProgramTarget; appId: string; uploadIntervalMs: number; storage: MiniProgramStorageOptions }>
+  web?: Readonly<{
+    appId?: string
+    storageType: 'cookie' | 'localstorage'
+    cookieDomain?: string
+    subInstance: boolean
+    hashtag: boolean
+    embeddedAdapter?: WebEmbeddedOptions
+  }>
   forceLogin?: true
-  legacyMiniProgramIdentity?: LegacyMiniProgramIdentity
 }>
 
 export type ConfigErrorCode =
@@ -60,6 +68,7 @@ export type ConfigErrorCode =
   | 'invalid_account_id'
   | 'invalid_data_source_id'
   | 'invalid_app_id'
+  | 'invalid_storage_scope'
 
 export type ConfigResult =
   | Readonly<{ ok: true; config: ResolvedGioConfig }>
@@ -67,6 +76,7 @@ export type ConfigResult =
 
 export const DEFAULT_SERVER_URL = 'https://napi.growingio.com'
 const APP_DEFAULT_SESSION_TIMEOUT_MS = 30_000
+const WEB_DEFAULT_SESSION_TIMEOUT_MS = 30 * 60_000
 const MINI_PROGRAM_DEFAULT_KEEP_ALIVE_MS = 5 * 60_000
 const MINI_PROGRAM_MAX_KEEP_ALIVE_MINUTES = 60 * 24
 const MINI_PROGRAM_DEFAULT_UPLOAD_INTERVAL_MS = 1000
@@ -131,7 +141,7 @@ function normalizeSessionTimeout(value: unknown, maxMinutes: number, allowZero =
 }
 
 /** 统一校验必填项并归一化可选项；可选值非法时回退默认，不阻断初始化。 */
-export function normalizeInitOptions(input: unknown, target?: MiniProgramTarget): ConfigResult {
+export function normalizeInitOptions(input: unknown, target?: MiniProgramTarget | 'web'): ConfigResult {
   if (!isRecord(input)) return { ok: false, code: 'invalid_options' }
   // 显式托管模式由独立入口处理；其他非法 runtime 值使用默认的本地采集模式。
   if (input.runtime === 'unimp') return { ok: false, code: 'invalid_options' }
@@ -148,12 +158,35 @@ export function normalizeInitOptions(input: unknown, target?: MiniProgramTarget)
   let sessionPolicy: SessionPolicy = {
     timeoutMs: target === undefined
       ? normalizeSessionTimeout(input.sessionExpires, MAX_SESSION_EXPIRES_MINUTES) ?? APP_DEFAULT_SESSION_TIMEOUT_MS
+      : target === 'web' ? normalizeSessionTimeout(input.sessionExpires, MAX_SESSION_EXPIRES_MINUTES) ?? WEB_DEFAULT_SESSION_TIMEOUT_MS
       : normalizeSessionTimeout(input.keepAlive, MINI_PROGRAM_MAX_KEEP_ALIVE_MINUTES, true) ?? MINI_PROGRAM_DEFAULT_KEEP_ALIVE_MS,
   }
   let miniprogram: ResolvedGioConfig['miniprogram']
-  if (target !== undefined) {
+  let web: ResolvedGioConfig['web']
+  if (target === 'web') {
+    sessionPolicy = { ...sessionPolicy, activityTimeoutMs: sessionPolicy.timeoutMs }
+    const embedded = isRecord(input.embeddedAdapter) ? input.embeddedAdapter : undefined
+    web = {
+      appId: nonEmptyString(input.appId) ?? undefined,
+      storageType: input.storageType === 'localstorage' ? 'localstorage' : 'cookie',
+      cookieDomain: nonEmptyString(input.cookieDomain) ?? undefined,
+      subInstance: input.webStorageSubInstance === true,
+      hashtag: input.hashtag === true,
+      embeddedAdapter: embedded === undefined ? undefined : {
+        strict: embedded.strict === true,
+        rewriteQuery: embedded.rewriteQuery !== false,
+        ignoreFields: Array.isArray(embedded.ignoreFields) ? embedded.ignoreFields.filter((key): key is string => typeof key === 'string') : [],
+      },
+    }
+  } else if (target !== undefined) {
     const appId = nonEmptyString(input.appId)
     if (appId === null || appId.startsWith('__UNI__')) return { ok: false, code: 'invalid_app_id' }
+    const storage = input.miniprogramStorage ?? {}
+    if (!isRecord(storage) || Object.keys(storage).some(key => key !== 'storagePrefix' && key !== 'plugin')
+      || (storage.storagePrefix !== undefined && (typeof storage.storagePrefix !== 'string'
+      || !/^[A-Za-z0-9_-]{0,128}$/.test(storage.storagePrefix))) || (storage.plugin !== undefined && typeof storage.plugin !== 'boolean')) {
+      return { ok: false, code: 'invalid_storage_scope' }
+    }
     const activityTimeoutMs = normalizeSessionTimeout(input.sessionExpires, MAX_SESSION_EXPIRES_MINUTES)
     if (activityTimeoutMs !== null) {
       sessionPolicy = { ...sessionPolicy, activityTimeoutMs }
@@ -162,21 +195,11 @@ export function normalizeInitOptions(input: unknown, target?: MiniProgramTarget)
     const interval = typeof rawInterval === 'number' ? Math.round(rawInterval) : NaN
     const uploadIntervalMs = Number.isFinite(interval) && interval >= 0 && interval <= MINI_PROGRAM_MAX_UPLOAD_INTERVAL_MS
       ? interval : MINI_PROGRAM_DEFAULT_UPLOAD_INTERVAL_MS
-    miniprogram = { target, appId, uploadIntervalMs }
+    miniprogram = { target, appId, uploadIntervalMs, storage: { storagePrefix: storage.storagePrefix, plugin: storage.plugin } }
   }
   const dataCollect = normalizeBoolean(input.dataCollect, true)
   const idMapping = normalizeBoolean(input.idMapping, false)
   const debug = normalizeBoolean(input.debug, false)
-  let migration: LegacyMiniProgramIdentity | undefined
-  const source = input.legacyMiniProgramIdentity
-  if (miniprogram !== undefined && isRecord(source)
-    && Object.keys(source).every(key => ['appId', 'accountId', 'dataSourceId', 'storagePrefix', 'plugin'].includes(key))
-    && source.appId === miniprogram.appId && source.accountId === accountId && source.dataSourceId === dataSourceId
-    && (source.storagePrefix === undefined || (typeof source.storagePrefix === 'string' && source.storagePrefix.length <= 128 && /^[A-Za-z0-9_-]*$/.test(source.storagePrefix)))
-    && (source.plugin === undefined || typeof source.plugin === 'boolean')) {
-    migration = { appId: source.appId, accountId: source.accountId, dataSourceId: source.dataSourceId,
-      ...(source.storagePrefix === undefined ? {} : { storagePrefix: source.storagePrefix }), ...(source.plugin === undefined ? {} : { plugin: source.plugin }) }
-  }
 
   return {
     ok: true,
@@ -191,8 +214,8 @@ export function normalizeInitOptions(input: unknown, target?: MiniProgramTarget)
       idMapping,
       debug,
       ...(miniprogram === undefined ? {} : { miniprogram }),
+      ...(web === undefined ? {} : { web }),
       ...(input.forceLogin === true ? { forceLogin: true as const } : {}),
-      ...(migration === undefined ? {} : { legacyMiniProgramIdentity: migration }),
     },
   }
 }

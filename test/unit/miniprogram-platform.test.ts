@@ -123,7 +123,12 @@ describe.each(miniTargets)('%s platform and protocol', target => {
 
 describe('runtime target and storage isolation', () => {
   it('rejects unknown and conflicting targets without guessing from OS', () => {
-    for (const uniPlatform of ['mp-lark', 'mp-dingtalk', 'mp-360', 'mp-harmony', 'mp-taobao', 'h5', 'web', 'toString']) expect(resolveRuntimeTarget({ getSystemInfoSync: () => ({ uniPlatform, platform: 'android' }) }, undefined, {})).toBeNull()
+    for (const uniPlatform of ['mp-lark', 'mp-dingtalk', 'mp-360', 'mp-harmony', 'mp-taobao', 'toString']) expect(resolveRuntimeTarget({ getSystemInfoSync: () => ({ uniPlatform, platform: 'android' }) }, undefined, {})).toBeNull()
+    for (const uniPlatform of ['h5', 'web']) expect(resolveRuntimeTarget({ getSystemInfoSync: () => ({ uniPlatform, platform: 'android' }) }, undefined, {})).toBe('web')
+    const browser = { window: { document: {}, addEventListener() {} } }
+    expect(resolveRuntimeTarget({}, undefined, browser)).toBe('web')
+    expect(resolveRuntimeTarget({}, 'app-harmony', browser)).toBe('app')
+    expect(resolveRuntimeTarget({ getSystemInfoSync: () => ({ uniPlatform: 'mp-lark' }) }, undefined, browser)).toBeNull()
     expect(resolveRuntimeTarget({}, undefined, {})).toBeNull()
     expect(resolveRuntimeTarget({ getSystemInfoSync: () => ({ uniPlatform: 'mp-weixin' }), getAppBaseInfo: () => ({ uniPlatform: 'mp-alipay' }) }, undefined, {})).toBeNull()
     for (const name of ['wx', 'my']) expect(resolveRuntimeTarget({}, undefined, { [name]: { request() {} } })).toBe(name === 'wx' ? 'mp-weixin' : 'mp-alipay')

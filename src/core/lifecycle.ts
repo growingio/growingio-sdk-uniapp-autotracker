@@ -76,7 +76,7 @@ export class TrackerLifecycle {
   private configValue: ResolvedGioConfig | null = null
   private readonly plugins = new BuiltinPluginRegistry()
 
-  public constructor(private readonly target?: import('../types/index.js').MiniProgramTarget) {}
+  public constructor(private readonly target?: import('../types/index.js').MiniProgramTarget | 'web') {}
 
   /** 通过注册表校验初始化前的内置插件声明。 */
   public registerPlugins(...plugins: GioBuiltinPlugin[]): boolean {

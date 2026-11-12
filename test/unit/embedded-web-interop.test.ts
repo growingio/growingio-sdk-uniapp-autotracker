@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FrozenWebEmbeddedReceiver, type WebReceiverConfig } from '../fixtures/embedded-web-receiver.js'
+import { miniHost } from '../support/miniprogram-host.js'
 import { appSystem, runtimeFixture } from '../support/runtime-fixture.js'
 import { AppSystemContextPort } from '../../src/platform/system.js'
 
@@ -14,15 +15,23 @@ const cachedIdentity = { gioprojectid: projectId, giodatasourceid: dataSourceId,
 const webConfig = (appId = 'example.app'): WebReceiverConfig => ({ projectId, appId, dataSourceId: 'web-source', dataCollect: true, platform: 'Web' })
 const receive = (query: string, config = webConfig(), cached?: Record<string, unknown>) => new FrozenWebEmbeddedReceiver({ search: `?${query}`, hash: '' }, config, cached)
 
-async function sdk(platform: 'Android' | 'iOS' | 'MinP') {
-  const fixture = platform === 'MinP'
-    ? runtimeFixture({ target: 'mp-weixin', systemContext: { load: async () => ({ ...appSystem, platform: 'MinP', domain: 'wx-test', deviceType: 'Weixin-Phone', operatingSystem: 'Weixin-Phone' }) } })
-    : runtimeFixture({ systemContext: { load: async () => ({ ...appSystem, platform }) } })
-  fixture.tracker.init({ accountId: projectId, dataSourceId, idMapping: true, ...(platform === 'MinP' ? { appId: 'wx-test' } : {}) })
+async function appSdk(platform: 'Android' | 'iOS') {
+  const fixture = runtimeFixture({ systemContext: { load: async () => ({ ...appSystem, platform }) } })
+  fixture.tracker.init({ accountId: projectId, dataSourceId, idMapping: true })
   fixture.tracker.onAppShow({ path: 'pages/home', query: '' })
   await fixture.tracker.whenReady()
   fixture.tracker.setUserId('host-user', 'host-key')
-  return { ...fixture, appId: platform === 'MinP' ? 'wx-test' : 'example.app' }
+  return { ...fixture, appId: 'example.app' }
+}
+
+async function sdk(platform: 'Android' | 'iOS' | 'MinP') {
+  if (platform !== 'MinP') return appSdk(platform)
+  const fixture = miniHost('mp-weixin')
+  expect(fixture.init({ idMapping: true, uploadInterval: 0 })).toBe(true)
+  expect(await fixture.tracker.whenReady()).toBe(true)
+  fixture.show()
+  expect(fixture.tracker.setUserId('host-user', 'host-key')).toBe(true)
+  return fixture
 }
 
 describe('getGioInfo compatibility with the frozen Web embedded receiver', () => {
@@ -63,7 +72,7 @@ describe('getGioInfo compatibility with the frozen Web embedded receiver', () =>
   })
 
   it.each([{ projectId: 'other-project' }, { appId: 'other-app' }])('does not claim an unrelated Web instance %j', async change => {
-    const { tracker } = await sdk('Android')
+    const { tracker } = await appSdk('Android')
     tracker.setDataCollect(false)
     const receiver = receive(tracker.getGioInfo()!, { ...webConfig(), ...change }, cachedIdentity)
     expect(receiver.initialize()).toBe(false)
@@ -74,7 +83,7 @@ describe('getGioInfo compatibility with the frozen Web embedded receiver', () =>
   })
 
   it('inherits the configured host data source after project and app match', async () => {
-    const { tracker } = await sdk('Android')
+    const { tracker } = await appSdk('Android')
     tracker.setDataCollect(false)
     const receiver = receive(tracker.getGioInfo()!, { ...webConfig(), dataSourceId: 'different-web-source' })
     expect(receiver.initialize()).toBe(true)
@@ -83,7 +92,7 @@ describe('getGioInfo compatibility with the frozen Web embedded receiver', () =>
   })
 
   it('restores collection with the current identity instead of a previously cached session', async () => {
-    const { tracker, setNow } = await sdk('Android')
+    const { tracker, setNow } = await appSdk('Android')
     tracker.setDataCollect(false)
     const stopped = Object.fromEntries(new URLSearchParams(tracker.getGioInfo()!))
     tracker.setUserId('new-user/😀&=%2F', 'new-key')

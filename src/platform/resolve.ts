@@ -1,7 +1,7 @@
 import type { MiniProgramTarget } from '../types/index.js'
 import { isMiniProgramTarget, MINI_PROGRAM_PROFILES, MINI_PROGRAM_TARGETS } from '../constants/miniprogram.js'
 
-export type RuntimeTarget = 'app' | MiniProgramTarget
+export type RuntimeTarget = 'app' | 'web' | MiniProgramTarget
 type Host = Readonly<Record<string, unknown>>
 
 export function hostRecord(value: unknown): Host {
@@ -16,6 +16,7 @@ export function readHostRecord(host: Host, name: string): Host {
 
 function targetOf(value: string): RuntimeTarget | null {
   if (value === 'app' || value === 'app-plus' || value === 'app-harmony') return 'app'
+  if (value === 'web' || value === 'h5') return 'web'
   return isMiniProgramTarget(value) ? value : null
 }
 
@@ -32,7 +33,11 @@ export function resolveRuntimeTarget(host: Host, buildTarget?: unknown, globals:
   if (candidates.length > 1) return null
   if (candidates.length === 1) return candidates[0]!
   const required = ['getDeviceInfo', 'getAppBaseInfo', 'getSystemInfoSync']
-  if (!required.every(name => typeof host[name] === 'function')) return null
-  const os = readHostRecord(host, 'getDeviceInfo').platform ?? system.platform
-  return typeof os === 'string' && ['android', 'ios', 'harmony', 'harmonyos'].includes(os.trim().toLowerCase()) ? 'app' : null
+  if (required.every(name => typeof host[name] === 'function')) {
+    const os = readHostRecord(host, 'getDeviceInfo').platform ?? system.platform
+    if (typeof os === 'string' && ['android', 'ios', 'harmony', 'harmonyos'].includes(os.trim().toLowerCase())) return 'app'
+  }
+  // uni-app H5 may tree-shake all three system APIs when the application only uses manual tracking.
+  const browser = hostRecord(globals.window)
+  return browser.document != null && typeof browser.addEventListener === 'function' ? 'web' : null
 }

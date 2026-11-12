@@ -9,6 +9,7 @@ import { AppNetworkPort, type AppNetworkApi } from './network.js'
 import { AppSystemContextPort, type AppSystemApi } from './system.js'
 import type { MiniProgramTarget, SystemContextPort } from '../types/index.js'
 import { AppNativeIdentifiersPort, type NativePluginHost } from './native-identifiers.js'
+import { SharedIdentityPersistence } from '../core/storage/sharedIdentity.js'
 
 export type AppRuntimeHost = AppStorageApi & AppRequestApi & AppSystemApi & AppNetworkApi
 export type UniRuntimeHost = AppStorageApi & AppRequestApi & AppNetworkApi & Partial<AppSystemApi>
@@ -50,7 +51,30 @@ export function createUniTracker(host: UniRuntimeHost, options: AppRuntimeOption
     target,
     storage,
     ...(target === undefined ? { nativeIdentifiers: new AppNativeIdentifiersPort(host as NativePluginHost) } : {}),
-    ...(target === undefined ? {} : { legacyIdentity: { read: (key: string) => host.getStorageSync(key) } }),
+    ...(target === undefined ? {} : {
+      sharedIdentity: (config: ResolvedGioConfig) => {
+        const { plugin, storagePrefix = '' } = config.miniprogram!.storage
+        const prefix = plugin ? '_growing_plugin_' : '_growing_'
+        return new SharedIdentityPersistence({
+          read: key => {
+            try {
+              const value = host.getStorageSync(key)
+              if (value === undefined || value === null) return { kind: 'missing' }
+              return typeof value === 'string' ? { kind: 'value', value } : { kind: 'corrupt' }
+            } catch { return { kind: 'unavailable' } }
+          },
+          write: (key, value) => {
+            try { host.setStorageSync(key, value); return { kind: 'ok' } } catch { return { kind: 'failed' } }
+          },
+          remove: key => {
+            try { host.removeStorageSync(key); return { kind: 'ok' } } catch { return { kind: 'failed' } }
+          },
+        }, {
+          deviceId: `${prefix}uid_`, userId: `${storagePrefix}${prefix}userId_`,
+          userKey: `${storagePrefix}${prefix}userKey_`, lastUserId: `${storagePrefix}${prefix}gioId_`,
+        })
+      },
+    }),
     /** 按当前配置创建系统读取端口，显式应用版本由初始化参数提供。 */
     systemContext: (config: ResolvedGioConfig) => ({
       /** 读取基础系统信息并后台刷新网络，避免慢网络回调阻塞首批事件。 */

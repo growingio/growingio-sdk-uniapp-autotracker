@@ -86,7 +86,10 @@ function unimpTitle(value: unknown): string | null {
 }
 
 /** 安装一个全局 Vue mixin，以 WeakMap 保存宿主页面与桥接器的对应关系；核心仅接收路由、query 和标题快照。 */
-export function installUniAppLifecycle(app: UniAppVueApp, target: LifecycleTarget, options: Readonly<{ host?: unknown; miniprogram?: MiniProgramTarget; unimp?: boolean }> = {}): void {
+export function installUniAppLifecycle(app: UniAppVueApp, target: LifecycleTarget, options: Readonly<{
+  host?: unknown; miniprogram?: MiniProgramTarget; unimp?: boolean
+  web?: Readonly<{ entry: () => AppEntrySnapshot; title: () => string }>
+}> = {}): () => string | null {
   const host = record(options.host ?? (globalThis as Record<string, unknown>).uni)
   const miniprogram = options.miniprogram
   const unimp = options.unimp === true
@@ -101,6 +104,7 @@ export function installUniAppLifecycle(app: UniAppVueApp, target: LifecycleTarge
   }
   const entry = (value: unknown, launching: boolean): AppEntrySnapshot => {
     if (unimp) return unimpEntrySnapshot(value)
+    if (options.web !== undefined) return options.web.entry()
     if (options.miniprogram === undefined) return appEntrySnapshot(value)
     const supplied = record(value)
     const fallback = host === null ? {} : readHostRecord(host, launching ? 'getLaunchOptionsSync' : 'getEnterOptionsSync')
@@ -143,14 +147,14 @@ export function installUniAppLifecycle(app: UniAppVueApp, target: LifecycleTarge
         target.onAppLaunch(snapshot)
       }
     }),
-    onShow: isolatedLifecycleHook(function(this: VueInstance, options: unknown) {
+    onShow: isolatedLifecycleHook(function(this: VueInstance, showOptions: unknown) {
       const bridge = pageBridge(this)
       if (bridge !== null) {
         currentPage = this
-        const title = typeof this.gioPageTitle === 'string' ? this.gioPageTitle : titles.get(this) ?? pageTitle(this, miniprogram === undefined)
+        const title = typeof this.gioPageTitle === 'string' ? this.gioPageTitle : titles.get(this) ?? pageTitle(this, miniprogram === undefined) ?? options.web?.title() ?? null
         bridge.onShow(unimp ? unimpTitle(title) : title)
       }
-      else if (isApp(this)) { target.onAppShow(entry(options, false)); firstShow = false }
+      else if (isApp(this)) { target.onAppShow(entry(showOptions, false)); firstShow = false }
     }),
     onHide: isolatedLifecycleHook(function(this: VueInstance) {
       try {
@@ -162,7 +166,11 @@ export function installUniAppLifecycle(app: UniAppVueApp, target: LifecycleTarge
     onLoad: isolatedLifecycleHook(function(this: VueInstance, query: unknown) {
       const bridge = pageBridge(this)
       const route = routeOf(this, miniprogram !== undefined)
-      if (bridge !== null && route !== null) { currentPage = this; bridge.onLoad(route, query) }
+      if (bridge !== null && route !== null) {
+        currentPage = this
+        const webEntry = options.web?.entry()
+        bridge.onLoad(webEntry?.path ?? route, webEntry?.query ?? query)
+      }
     }),
     onUnload: isolatedLifecycleHook(function(this: VueInstance) {
       try { pageBridge(this)?.onUnload() }
@@ -216,6 +224,10 @@ export function installUniAppLifecycle(app: UniAppVueApp, target: LifecycleTarge
       })
     }
   } catch { /* 标题增强不可用时，基础生命周期仍正常安装。 */ }
+  return () => {
+    try { return typeof currentPage?.gioPageTitle === 'string' ? currentPage.gioPageTitle : null }
+    catch { return null }
+  }
 }
 
 export interface AppLifecycleTarget {

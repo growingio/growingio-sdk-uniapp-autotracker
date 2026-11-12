@@ -35,6 +35,8 @@ export type AppLifecycleDependencies = Readonly<{
   /** 后台时触发有时限的尽力刷新，未完成事件仍留队。 */
   forceFlush?: () => void
   miniprogram?: MiniProgramTarget
+  web?: boolean
+  embedded?: boolean
 }>
 
 /** 仅保留有效入口路由与 query，不保存原始宿主参数。 */
@@ -74,7 +76,7 @@ export class AppLifecycle {
       ? this.dependencies.sessions.onProcessLaunch()
       : sceneChanged ? this.dependencies.sessions.renew('scene_changed')
       : this.dependencies.sessions.resume(timestamp)
-    if (this.dependencies.miniprogram !== undefined) {
+    if (this.dependencies.miniprogram !== undefined || this.dependencies.web === true) {
       const activity = this.dependencies.sessions.touch(timestamp)
       if (activity.startedNew) session = activity
     }
@@ -83,7 +85,7 @@ export class AppLifecycle {
     this.foreground = true
     this.coldStartPending = false
     this.persistSession(session.snapshot)
-    const visitQueued = session.startedNew && this.dependencies.canCollect()
+    const visitQueued = session.startedNew && !this.dependencies.embedded && this.dependencies.canCollect()
       ? this.dependencies.composer.compose({ eventType: 'VISIT', fields: this.currentEntry }).ok
       : false
     return { session, visitQueued }
@@ -94,7 +96,7 @@ export class AppLifecycle {
     const session = this.dependencies.sessions.onCollectionResumed()
     if (this.dependencies.miniprogram !== undefined) this.dependencies.sessions.touch(this.dependencies.clock.now())
     this.persistSession(session.snapshot)
-    const visitQueued = this.dependencies.canCollect()
+    const visitQueued = !this.dependencies.embedded && this.dependencies.canCollect()
       ? this.dependencies.composer.compose({ eventType: 'VISIT', fields: this.currentEntry ?? {} }).ok
       : false
     return { session, visitQueued }
@@ -103,7 +105,7 @@ export class AppLifecycle {
   /** 身份路由已替换会话，此处仅在允许采集时补充对应 VISIT。 */
   public onUserChanged(observedAt?: number): boolean {
     if (this.dependencies.miniprogram !== undefined) this.dependencies.sessions.touch(observedAt ?? this.dependencies.clock.now())
-    return this.dependencies.canCollect()
+    return !this.dependencies.embedded && this.dependencies.canCollect()
       ? this.dependencies.composer.compose({ eventType: 'VISIT', fields: this.currentEntry ?? {} }).ok
       : false
   }
@@ -116,7 +118,7 @@ export class AppLifecycle {
     this.dependencies.composer.setAppState('BACKGROUND')
     const session = this.dependencies.sessions.hide(timestamp)
     const page = this.dependencies.currentPage?.() ?? null
-    const appClosedQueued = session !== null && this.dependencies.canCollect()
+    const appClosedQueued = session !== null && !this.dependencies.web && this.dependencies.canCollect()
       ? this.dependencies.composer.compose({
         eventType: 'APP_CLOSED',
         appState: 'BACKGROUND',
@@ -139,6 +141,7 @@ export class AppLifecycle {
 
   /** 首个页面的外部来源；后续页面仍优先使用 PageStore 中的真实上一页。 */
   public pageReferral(): string | null {
+    if (this.dependencies.web) return this.currentEntry?.referralPage ?? null
     if (this.dependencies.miniprogram === undefined) return null
     return this.currentEntry?.referralPage || `scn:${MINI_PROGRAM_PROFILES[this.dependencies.miniprogram].scenePrefix}${this.currentEntry?.scene ?? 'NA'}`
   }

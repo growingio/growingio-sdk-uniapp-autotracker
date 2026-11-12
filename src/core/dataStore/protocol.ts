@@ -184,6 +184,32 @@ export function buildMiniProgramEvent(eventType: string, fields: Readonly<Record
   return buildEvent(eventType, fields, restored, true)
 }
 
+const WEB_COMMON_FIELDS = [
+  ...COMMON_FIELDS.filter(key => key !== 'appState' && key !== 'appName'),
+  'title', 'referralPage', 'operatingSystem', 'browser', 'browserVersion', 'operatingSystemVersion',
+] as const
+
+/** H5 follows Web's wire fields, including host dimensions from an embedded page. */
+export function buildWebEvent(eventType: string, fields: Readonly<Record<string, unknown>>): BuildEventResult {
+  if (!APP_EVENT_TYPES.includes(eventType as AppEventType) || eventType === 'APP_CLOSED') return { ok: false, code: 'invalid_event_type' }
+  const type = eventType as AppEventType
+  if (type === 'CUSTOM' && !isValidCustomEventName(fields.eventName)) return { ok: false, code: 'invalid_custom_event_name' }
+  const allowed = new Set<string>([...WEB_COMMON_FIELDS, ...EVENT_FIELDS[type].filter(key => key !== 'orientation' && key !== 'protocolType')])
+  const event = sanitizeOutboundEvent({ ...Object.fromEntries(Object.entries(fields).filter(([key]) => allowed.has(key))), eventType: type })
+  const required = ['deviceId', 'sessionId', 'dataSourceId', 'platform', 'domain', 'timestamp', ...REQUIRED_EVENT_FIELDS[type].filter(key => key !== 'orientation')]
+  if (required.some(key => !(key in event))) return { ok: false, code: 'missing_required_field' }
+  const validFields = Object.entries(event).every(([key, value]) => {
+    if (key === 'timezoneOffset') return typeof value === 'number' && Number.isFinite(value)
+    if (['platform', 'deviceType', 'networkState'].includes(key)) return typeof value === 'string'
+    if ((key === 'screenWidth' || key === 'screenHeight') && typeof value === 'string') return /^\d+$/.test(value)
+    return validWireField(key, value)
+  })
+  if (!validFields) {
+    return { ok: false, code: 'invalid_field_value' }
+  }
+  return { ok: true, event: event as ProtocolEvent }
+}
+
 function buildEvent(eventType: string, fields: Readonly<Record<string, unknown>>, restored: boolean, mini: boolean): BuildEventResult {
   if (!APP_EVENT_TYPES.includes(eventType as AppEventType)) return { ok: false, code: 'invalid_event_type' }
   const typedEventType = eventType as AppEventType

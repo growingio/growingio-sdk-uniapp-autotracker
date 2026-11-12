@@ -64,7 +64,6 @@ describe('SDK 公共命令与完整核心链路', () => {
         runtime: 'unknown', appId: 'testappid', sessionExpires: 361,
         serverUrl: 'ftp://invalid.example', appChannel: 1, appVersion: {},
         dataCollect: 'false', idMapping: 1, debug: 'true', forceLogin: 'true',
-        legacyMiniProgramIdentity: { appId: 'other-app' },
       },
     ])('非法可选值 %o 回退默认配置并正常采集', async options => {
       const { gdp, host, app, received, start } = await sdk(platform)

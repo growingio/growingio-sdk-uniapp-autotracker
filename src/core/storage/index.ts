@@ -63,7 +63,7 @@ class LatestStorageWriter<Value = string> {
 
 export type IdentityHydration = Readonly<{
   identity: Identity
-  source: 'restored' | 'legacy' | 'generated' | 'corrupt' | 'unavailable'
+  source: 'restored' | 'generated' | 'corrupt' | 'unavailable'
 }>
 
 export type DeviceIdFactory = () => string
@@ -84,21 +84,12 @@ export class IdentityPersistence {
     private readonly key: string,
     private readonly dataSourceId: string,
     private readonly deviceIdFactory: DeviceIdFactory,
-    private readonly legacyIdentity?: () => Identity | null,
   ) {}
 
   /** 恢复有效身份；缺失或损坏时生成新身份，损坏清理仅限当前键。 */
   public async hydrate(): Promise<IdentityHydration> {
     const read = await this.storage.read('state', this.key)
-    if (read.kind === 'missing') {
-      let legacy: Identity | null | undefined
-      try { legacy = this.legacyIdentity?.() } catch { legacy = null }
-      if (legacy != null) {
-        await this.persist(legacy)
-        return { identity: legacy, source: 'legacy' }
-      }
-      return this.generateAndPersist('generated')
-    }
+    if (read.kind === 'missing') return this.generateAndPersist('generated')
     if (read.kind === 'unavailable') return { identity: generatedIdentity(this.deviceIdFactory), source: 'unavailable' }
     if (read.kind === 'corrupt') {
       await this.storage.remove('state', this.key)

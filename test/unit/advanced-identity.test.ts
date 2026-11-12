@@ -1,14 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { runtimeFixture, RuntimeStorage } from '../support/runtime-fixture.js'
-import { IdentityPersistence, storageKeys } from '../../src/core/storage/index.js'
+import { storageKeys } from '../../src/core/storage/index.js'
 import type { ProtocolEvent } from '../../src/core/dataStore/protocol.js'
 import { assignedDeviceId, readIdentityRecord } from '../../src/core/userStore.js'
-import { readLegacyMiniProgramIdentity } from '../../src/core/storage/legacyIdentity.js'
-import { normalizeInitOptions } from '../../src/constants/config.js'
 import { embeddedGioInfo } from '../../src/plugins/gioHybridAdapter/info.js'
 
 const config = { accountId: 'account', dataSourceId: 'source' }
-const source = { ...config, appId: 'wx-test' }
 const show = { path: 'pages/home', query: '' }
 const flush = async () => { for (let n = 0; n < 12; n++) await Promise.resolve() }
 
@@ -146,56 +143,5 @@ describe('forceLogin and embedded identity', () => {
     })
     expect(embeddedGioInfo({ ...input, sessionId: null })).toBeNull()
     expect(embeddedGioInfo({ ...input, appId: '\ud800' })).toBeNull()
-  })
-})
-
-describe('explicit standalone mini-program identity migration', () => {
-  const legacy = new Map<string, unknown>([['_growing_uid_', 'old-device'], ['_growing_userId_', 'old-user'], ['_growing_userKey_', 'old-key']])
-  const port = { read: (key: string) => legacy.get(key) }
-  it('enables migration only for a valid mini-program source and defaults invalid optional values', () => {
-    expect(normalizeInitOptions({ ...source, legacyMiniProgramIdentity: source })).toEqual(normalizeInitOptions(source))
-    expect(normalizeInitOptions({ ...source, legacyMiniProgramIdentity: source }, 'mp-weixin')).toMatchObject({ ok: true, config: { legacyMiniProgramIdentity: source } })
-    for (const change of [{ accountId: 'other' }, { dataSourceId: 'other' }, { appId: 'other' }, { plugin: 1 }, { storagePrefix: '/' }, { storagePrefix: 'x'.repeat(129) }, { unknown: true }]) {
-      expect(normalizeInitOptions({ ...source, legacyMiniProgramIdentity: { ...source, ...change } }, 'mp-weixin')).toEqual(normalizeInitOptions(source, 'mp-weixin'))
-    }
-    expect(normalizeInitOptions({ ...config, forceLogin: null })).toEqual(normalizeInitOptions(config))
-  })
-  it('migrates only once into a missing namespace, preserves current identity and never alters old keys', async () => {
-    const storage = new RuntimeStorage(false)
-    const read = vi.fn(port.read)
-    const identity = new IdentityPersistence(storage, 'new', 'source', () => 'new-device', () => readLegacyMiniProgramIdentity({ read }, source, true, 100))
-    expect(await identity.hydrate()).toMatchObject({ source: 'legacy', identity: { deviceId: 'old-device', userId: 'old-user', userKey: 'old-key' } })
-    expect(read.mock.calls.map(call => call[0])).toEqual(['_growing_uid_', '_growing_userId_', '_growing_userKey_'])
-    expect(storage.writes).toEqual(['new'])
-    read.mockClear()
-    expect(await identity.hydrate()).toMatchObject({ source: 'restored' })
-    expect(read).not.toHaveBeenCalled()
-    expect(legacy.size).toBe(3)
-  })
-  it('reads plugin and sub-instance keys, respecting expiration and idMapping', () => {
-    const values: Record<string, unknown> = { _growing_plugin_uid_: { value: 'device', expiredAt: 101 }, sub_growing_plugin_userId_: 'user', sub_growing_plugin_userKey_: 'key' }
-    const read = (key: string) => values[key]
-    expect(readLegacyMiniProgramIdentity({ read }, { ...source, plugin: true, storagePrefix: 'sub' }, false, 100)).toEqual({ deviceId: 'device', userId: 'user', userKey: null, lastUserId: 'user' })
-    expect(readLegacyMiniProgramIdentity({ read }, { ...source, plugin: true }, true, 101)).toBeNull()
-    values._growing_plugin_uid_ = { value: 'device', expiredAt: 'future' }
-    expect(readLegacyMiniProgramIdentity({ read }, { ...source, plugin: true }, true, 100)).toBeNull()
-    expect(readLegacyMiniProgramIdentity({ read: () => { throw Error('unavailable') } }, source, false, 100)).toBeNull()
-    expect(readLegacyMiniProgramIdentity({ read: () => null }, source, false, 100)).toBeNull()
-  })
-  it('uses the real runtime migration seam and marks a migrated device as existing', async () => {
-    const { tracker } = runtimeFixture({ target: 'mp-weixin', storage: new RuntimeStorage(false), legacyIdentity: port,
-      systemContext: { load: async () => ({ ...((await import('../support/runtime-fixture.js')).appSystem), platform: 'MinP', domain: 'wx-test', deviceType: 'Weixin-Phone', operatingSystem: 'Weixin-Phone' }) } })
-    tracker.init({ ...source, legacyMiniProgramIdentity: source }); tracker.onAppShow(show); await tracker.whenReady()
-    expect(tracker.queuedEvents()[0]).toMatchObject({ deviceId: 'old-device', userId: 'old-user' })
-    expect(new URLSearchParams(tracker.getGioInfo()!).get('gionewdevice')).toBe('false')
-  })
-  it('skips unavailable migration and accepts numeric expiration strings', async () => {
-    const storage = new RuntimeStorage()
-    const persistence = new IdentityPersistence(storage, 'new', 'source', () => 'generated', () => { throw Error('unavailable') })
-    expect(await persistence.hydrate()).toMatchObject({ source: 'generated', identity: { deviceId: 'generated' } })
-    const migrated = readLegacyMiniProgramIdentity({ read: key => key === '_growing_uid_' ? { value: 'device-assigned-value', expiredAt: '101' } : null }, source, false, 100)
-    expect(migrated).toMatchObject({ deviceId: 'device-assigned-value' })
-    await persistence.persist(migrated!)
-    expect(await persistence.hydrate()).toMatchObject({ source: 'restored', identity: { deviceId: 'device-assigned-value' } })
   })
 })
