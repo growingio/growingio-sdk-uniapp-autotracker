@@ -1,4 +1,5 @@
 node_modules/
+.DS_Store
 dist/
 release/
 .pnpm-store/
@@ -6,6 +7,7 @@ coverage/
 test-results/
 # 内部设计、评审和验收资料保留在本地。
 doc/
+docs/
 demo/manifest.json
 demo/harmony-configs/build-profile.json5
 demo/unpackage/
