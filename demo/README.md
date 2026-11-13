@@ -1,8 +1,8 @@
 # GrowingIO uni-app SDK Showcase
 
-这是传统 uni-app Vue 3 App 的可运行 showcase。它与 uni-app x demo 对齐展示已实现的功能：生命周期、`PAGE` 上下文、自定义事件、用户身份/属性、Vite 无埋点业务交互、路由 query 和 `dataCollect` 动态开关。
+这是传统 uni-app Vue 3 App 与八端小程序的可运行 showcase，展示：生命周期、`PAGE` 上下文、自定义事件、用户身份/属性、Vite 无埋点业务交互、路由 query 和 `dataCollect` 动态开关。
 
-微信、支付宝、百度、抖音、QQ、快手、京东和小红书复用同一工程：在 `manifest.json` 对应目标中填写真实 appId，并按需填写 `miniprogram-config.ts` 的平台标识。`main.ts` 优先采用显式平台配置，其次读取可用账号信息；百度、抖音等无账号接口时必须显式填写。账号读取仅在 MP 条件编译中执行。运行前重新构建 SDK，并配置测试采集域名及平台网络白名单。小程序的保活默认为五分钟、事件按秒聚合、session 和事件队列不落盘。本 demo 的内部验证开关只用于验收，不能作为能力已经通过真机的证据。
+微信、支付宝、百度、抖音、QQ、快手、京东和小红书复用同一工程：在 `manifest.json` 对应目标中填写真实 appId，并按需填写 `miniprogram-config.ts` 的平台标识。`main.ts` 优先采用显式平台配置，其次读取可用账号信息；百度、抖音等无账号接口时必须显式填写。账号读取仅在 MP 条件编译中执行。运行前重新构建 SDK，并配置测试采集域名及平台网络白名单。小程序的保活默认为五分钟、事件按秒聚合、session 和事件队列不落盘。小程序构建直接使用默认生产能力，不配置内部验证开关；真机与真实收数验收后补。
 
 默认开启 `dataCollect`，因此首次 `App:onShow` 会创建 `VISIT`，随后在 uploader 真正发起请求前以 Debug JSON 输出。若业务需要等待隐私同意，可在 `sdk-state.ts` 将 `enabled` 设为 `false`（main.ts 与示例页面共用此状态），再通过「采集开关」页开启。SDK 的完整初始化与 App/Page 生命周期接入只在 `main.ts` 里使用小程序同款的 `gdp('registerPlugins')` 与 `gdp('init', ..., { uniVue: app })`；`App.vue` 和各演示页面都不需要 bridge 或 tracker import，业务调用也全部使用 `gdp('xxx')`，不暴露 `$gio` 或内部 tracker。`gioABTest`、微信分享和 `.nvue` 自动采集并非当前传统 App SDK 的能力；首页的“当前能力边界”区会明确说明，绝不伪造成功结果。
 
@@ -52,9 +52,9 @@ MOCK_COLLECTOR_HOST=0.0.0.0 pnpm mock:collector
 pnpm demo:check
 ```
 
-无埋点页按真机验收顺序分为六组，包含有/无 id 的 click 与 tap、严格主目标、动态 id/metadata、无 id 列表、`v-if` / `v-show`、条件 handler、Options API、`<script setup>`、普通 `setup()` 返回别名、input/textarea 完成事件、所有已支持 change 组件、`uni-link` 与 tabBar。页面会显示业务 handler 执行次数和每项预期 xpath，便于同时确认业务没有被重复调用。此 demo 的 vite.config.ts 显式设置 `__GIO_AUTOTRACK_VERIFICATION__: true`，用于开放三端待验收的无埋点链路；它不会把生产能力表标为已验收，正式应用不要复制。密码框保留不含 `textValue` 的 `VIEW_CHANGE`，即使带 track 也不读取密码值；显式 sensitive、currentTarget/target 任一 ignore 和未放行的 autoplay 不生成自动事件。生产开放必须以逐端真机请求和 collector 接收证据为准。
+无埋点页按真机验收顺序分为六组，包含有/无 id 的 click 与 tap、严格主目标、动态 id/metadata、无 id 列表、`v-if` / `v-show`、条件 handler、Options API、`<script setup>`、普通 `setup()` 返回别名、input/textarea 完成事件、所有已支持 change 组件、`uni-link` 与 tabBar。页面会显示业务 handler 执行次数和每项预期 xpath，便于同时确认业务没有被重复调用。小程序普通生产构建默认开放自动交互，vite.config.ts 不注入验证宏；App demo 保留原有 `__GIO_AUTOTRACK_VERIFICATION__: true` 验证配置，不作为 App 新增发布支持。密码框保留不含 `textValue` 的 `VIEW_CHANGE`，即使带 track 也不读取密码值；显式 sensitive、currentTarget/target 任一 ignore 和未放行的 autoplay 不生成自动事件。八端小程序代码和正式包回归先行完成，真机请求与真实服务收数仍需后续逐端验收。
 
-条件返回函数等不安全写法不会插桩，编译器会给出告警。第 2 组的函数引用在 App 构建插桩，小程序构建保持原样并输出 `complex_handler`；计算成员调用固定输出一条 `event_name_fallback`，这是本页唯一预期的 App 构建提示。列表动态元数据从原生 dataset 获取；成员路径形式的动态 picker range 按选中项文案验收，含函数调用的 range 才回退下标。
+条件返回函数等不安全写法不会插桩，编译器会给出告警。第 2 组裸函数和静态成员函数引用在 App 与小程序均插桩，小程序保持渲染时单次读取的原生语义；计算成员调用固定输出一条 `event_name_fallback`，这是本页唯一预期的 App 构建提示。列表动态元数据从原生 dataset 获取；成员路径形式的动态 picker range 按选中项文案验收，含函数调用的 range 才回退下标。
 
 无埋点覆盖补齐后的操作矩阵：
 

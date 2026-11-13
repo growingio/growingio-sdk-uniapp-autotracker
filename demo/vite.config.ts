@@ -6,9 +6,10 @@ const uniPlugin = (uni as unknown as { default?: typeof uni }).default ?? uni
 
 export default defineConfig(async () => {
   const { gioUniappAutoTrack } = await import('./uni_modules/gio-uniapp-autotracker/vite.js')
+  const appVerification = ['app', 'app-plus', 'app-harmony'].includes(process.env.UNI_PLATFORM ?? '')
   return {
-    // 只在此 demo 开放待验收的无埋点能力，正式应用不要复制此验证开关。
-    define: { __GIO_AUTOTRACK_VERIFICATION__: true },
+    // 小程序使用默认生产能力；App demo 保留既有验证配置。
+    define: appVerification ? { __GIO_AUTOTRACK_VERIFICATION__: true } : {},
     plugins: [gioUniappAutoTrack(), uniPlugin()],
   }
 })

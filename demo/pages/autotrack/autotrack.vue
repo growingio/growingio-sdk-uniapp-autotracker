@@ -70,7 +70,7 @@
 
       <text class="case-title">函数引用、计算成员与修饰符</text>
       <button id="reference-action" @tap="onReferenceAction">直接函数引用</button>
-      <text class="expected">预期（App）：reference-action#onReferenceAction。小程序构建保持原引用、不采集，并输出 complex_handler 告警。</text>
+      <text class="expected">预期：reference-action#onReferenceAction。App 与小程序均采集一次，业务回调执行一次。</text>
       <button id="computed-action" @tap="referenceHandlers[referenceKey]($event)">计算成员调用</button>
       <text class="expected">预期：computed-action#tap（无法确定业务函数名，回退原生事件名；构建输出 event_name_fallback）。</text>
       <view id="modifier-parent" class="tap-card" @tap="onModifierParent($event)">

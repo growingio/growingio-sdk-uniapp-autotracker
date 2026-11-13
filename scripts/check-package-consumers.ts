@@ -6,14 +6,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadConfigFromFile } from 'vite'
 import type { UniAppAutoTrackVitePlugin } from '../src/compiler/vite.js'
-import { archivesDir, hashes, metadata, modulesDir, npmDir, npmName, root, uniModuleId } from './release-layout.js'
+import { archivesDir, hashes, metadata, modulesDir, npmDir, npmName, root, sourceHash, uniModuleId } from './release-layout.js'
+import { MINI_PROGRAM_TARGETS } from '../src/constants/miniprogram.js'
 
 const release = JSON.parse(await readFile(join(archivesDir, 'release.json'), 'utf8')) as { name: string; npmFile: string; npmIntegrity: string; uniFile: string; uniSha256: string; version: string }
 assert.equal(release.name, npmName)
 assert.equal(release.version, metadata.version)
 assert.equal(`sha512-${createHash('sha512').update(await readFile(join(archivesDir, release.npmFile))).digest('base64')}`, release.npmIntegrity)
 assert.equal(createHash('sha256').update(await readFile(join(archivesDir, release.uniFile))).digest('hex'), release.uniSha256)
+const buildState = JSON.parse(await readFile(join(root, 'dist/build-state.json'), 'utf8')) as { sourceHash: string }
+assert.equal(await sourceHash(), buildState.sourceHash, '正式包消费者不能使用过期构建')
 const temporary = await mkdtemp(join(tmpdir(), 'gio-sdk-consumers-'))
+const productionAutoTrack: Array<{ channel: string; target: string; verification: string }> = []
 try {
   for (const channel of ['npm', 'uni_modules']) {
     const project = join(temporary, channel)
@@ -27,6 +31,14 @@ try {
     }
     const installed = channel === 'npm' ? join(project, 'node_modules', npmName) : join(project, 'uni_modules', uniModuleId)
     assert.deepEqual(await hashes(installed), await hashes(channel === 'npm' ? npmDir : modulesDir), `${channel} 实际安装文件与验证过的构建产物不一致`)
+    for (const target of MINI_PROGRAM_TARGETS) {
+      for (const verification of ['absent', 'false']) {
+        execFileSync(process.execPath, [join(root, 'test/fixtures/miniprogram/production-consumer.mjs'), installed, root, target, verification], {
+          cwd: project, env: { ...process.env, NODE_ENV: 'production' }, stdio: 'inherit', timeout: 30_000,
+        })
+        productionAutoTrack.push({ channel, target, verification })
+      }
+    }
     const entry = channel === 'npm' ? npmName : `./uni_modules/${uniModuleId}/index.js`
     const vite = channel === 'npm' ? `${npmName}/vite` : `./uni_modules/${uniModuleId}/vite.js`
     const autotrack = channel === 'npm' ? `${npmName}/autotrack` : `./uni_modules/${uniModuleId}/autotrack.js`
@@ -138,4 +150,10 @@ hooks[0].onHide.call({});console.log('advanced_consumer_passed:${channel}');
       console.log(`vite_config_passed:${channel}:${mode}`)
     }
   }
+  assert.equal(await sourceHash(), buildState.sourceHash, '正式包验证期间源码已变化')
+  const reportDir = join(root, 'test-results/miniprogram-production')
+  await mkdir(reportDir, { recursive: true })
+  await writeFile(join(reportDir, `${metadata.version}.json`), JSON.stringify({ sourceHash: buildState.sourceHash, version: metadata.version,
+    productionAutoTrack, runtimeConsumers: productionAutoTrack.length, deviceAcceptance: false, realCollectorAcceptance: false }, null, 2) + '\n')
+  console.log(`miniprogram_production_checked:${productionAutoTrack.length}_runtime_consumers`)
 } finally { await rm(temporary, { recursive: true, force: true }) }

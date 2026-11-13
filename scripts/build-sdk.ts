@@ -69,9 +69,9 @@ await writeFile(join(modulesDir, 'package.json'), `${JSON.stringify({
   ...packageJson,
   name: uniModuleId,
   id: uniModuleId,
-  displayName: 'GrowingIO uni-app 埋点 SDK（鸿蒙）',
-  description: 'GrowingIO 传统 uni-app Vue 3 数据采集 SDK，本期仅发布鸿蒙端',
-  keywords: ['GrowingIO', 'uni-app', '鸿蒙', '统计', '埋点'],
+  displayName: 'GrowingIO uni-app 埋点 SDK',
+  description: metadata.description,
+  keywords: ['GrowingIO', 'uni-app', '小程序', '统计', '埋点'],
   engines: { node: '>=20.19.0', HBuilderX: '>=5.24' },
   dcloudext: {
     type: 'sdk-js',
@@ -89,10 +89,10 @@ await writeFile(join(modulesDir, 'package.json'), `${JSON.stringify({
       permissions: '网络访问、本地存储',
     },
   },
-  // 本期仅发布鸿蒙端：仅 app.harmony 标 √，其余平台（App 双端、Web、八端小程序）一律 x，避免未验收端被误判为已支持。
+  // 八端小程序代码交付默认开放；App/Web 的原发布范围保持。设备与真实收数验收单独记录。
   uni_modules: { dependencies: [], encrypt: [], platforms: { client: { 'uni-app': {
     vue: { vue2: 'x', vue3: '√' }, app: { vue: 'x', nvue: 'x', android: 'x', ios: 'x', harmony: '√' },
-    web: { chrome: 'x', safari: 'x' }, mp: Object.fromEntries(MINI_PROGRAM_TARGETS.map(target => [target.slice(3), 'x'])),
+    web: { chrome: 'x', safari: 'x' }, mp: Object.fromEntries(MINI_PROGRAM_TARGETS.map(target => [target.slice(3), '√'])),
   } } } },
 }, null, 2)}\n`)
 

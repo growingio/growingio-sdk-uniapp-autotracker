@@ -2,7 +2,7 @@
   "name": "gio-uniapp-sdk",
   "version": "1.0.0",
   "private": true,
-  "description": "GrowingIO 传统 uni-app Vue 3 数据采集 SDK，本期仅发布鸿蒙端",
+  "description": "GrowingIO 传统 uni-app Vue 3 数据采集 SDK，支持八端小程序与鸿蒙 App",
   "repository": {
     "type": "git",
     "url": "https://github.com/growingio/growingio-sdk-uniapp-autotracker.git"

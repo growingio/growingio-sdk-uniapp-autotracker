@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { transformAutoTrackSfc } from '../src/compiler/vite.js'
+import { loadConfigFromFile } from 'vite'
+import { MINI_PROGRAM_TARGETS } from '../src/constants/miniprogram.js'
 
 const root = resolve(import.meta.dirname, '..')
 const manifestTemplate = JSON.parse(readFileSync(resolve(root, 'demo/manifest.example.json'), 'utf8'))
@@ -89,8 +91,25 @@ for (const route of ['custom-event', 'user', 'lifecycle', 'autotrack', 'route', 
   if (!pageConfig.pages?.some((page) => page.path === `pages/${route}/${route}`)) throw new Error(`pages.json is missing ${route}`)
 }
 
-const viteConfig = readFileSync(resolve(root, 'demo/vite.config.ts'), 'utf8')
-if (!viteConfig.includes('__GIO_AUTOTRACK_VERIFICATION__: true')) throw new Error('demo must explicitly enable the autotrack verification build')
+const configEnvironment = ['UNI_PLATFORM', 'UNI_INPUT_DIR', 'UNI_CLI_CONTEXT', 'UNI_OUTPUT_DIR'] as const
+const previousEnvironment = Object.fromEntries(configEnvironment.map(key => [key, process.env[key]]))
+process.env.UNI_INPUT_DIR = resolve(root, 'demo')
+process.env.UNI_CLI_CONTEXT = resolve(root, 'demo')
+process.env.UNI_OUTPUT_DIR = resolve(root, 'demo/unpackage/config-check')
+try {
+  for (const platform of [...MINI_PROGRAM_TARGETS, 'app', 'app-plus', 'app-harmony']) {
+    process.env.UNI_PLATFORM = platform
+    const loaded = await loadConfigFromFile({ command: 'build', mode: 'production' }, resolve(root, 'demo/vite.config.ts'), resolve(root, 'demo'), 'silent')
+    assert.ok(loaded, `demo Vite config failed to load: ${platform}`)
+    if (platform.startsWith('mp-')) assert.equal(loaded.config.define?.__GIO_AUTOTRACK_VERIFICATION__, undefined, '小程序 demo 必须直接验证生产默认配置')
+    else assert.equal(loaded.config.define?.__GIO_AUTOTRACK_VERIFICATION__, true, 'App demo 保持原验证配置')
+  }
+} finally {
+  for (const key of configEnvironment) {
+    if (previousEnvironment[key] === undefined) delete process.env[key]
+    else process.env[key] = previousEnvironment[key]
+  }
+}
 
 const autoTrackPage = readFileSync(resolve(root, 'demo/pages/autotrack/autotrack.vue'), 'utf8')
 const transformed = transformAutoTrackSfc(autoTrackPage, '@/uni_modules/gio-uniapp-autotracker/autotrack.js', { references: true })

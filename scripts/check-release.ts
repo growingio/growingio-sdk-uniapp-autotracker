@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { build } from 'esbuild'
-import { dist, files, hashes, metadata, modulesDir, npmDir, npmName, sourceHash, uniModuleId } from './release-layout.js'
+import { dist, files, hashes, metadata, modulesDir, npmDir, npmName, root, sourceHash, uniModuleId } from './release-layout.js'
+import { MINI_PROGRAM_TARGETS } from '../src/constants/miniprogram.js'
 
 const state = JSON.parse(await readFile(join(dist, 'build-state.json'), 'utf8')) as { sourceHash: string; npm: Record<string, string>; uni: Record<string, string> }
 assert.equal(state.sourceHash, await sourceHash(), '源码或发布配置已变化，请重新构建')
@@ -22,6 +23,8 @@ for (const [directory, expected, channel] of [[npmDir, state.npm, 'npm'], [modul
   assert.deepEqual(pkg.repository, metadata.repository)
   assert.equal(pkg.private, false)
   assert.equal(pkg.type, 'module')
+  assert.equal(pkg.description, metadata.description)
+  assert.equal(await readFile(join(directory, 'README.md'), 'utf8'), await readFile(join(root, 'README.md'), 'utf8'), '交付包接入说明必须与当前源码一致')
   assert.equal(pkg.dependencies, undefined, '编译器依赖必须随 Vite 工具打包')
   assert.equal(pkg.devDependencies, undefined)
   if (channel === 'uni_modules') {
@@ -29,6 +32,10 @@ for (const [directory, expected, channel] of [[npmDir, state.npm, 'npm'], [modul
     assert.equal(pkg.dcloudext?.type, 'sdk-js', 'uni_modules 应使用通用 JS SDK 分类')
     assert.ok(Array.isArray(pkg.keywords) && pkg.keywords.length >= 1 && pkg.keywords.length <= 5, '插件市场要求 1 到 5 个关键词')
     assert.ok(pkg.dcloudext?.declaration?.data && pkg.dcloudext?.declaration?.permissions, '插件市场要求声明采集数据与权限')
+    const platforms = pkg.uni_modules?.platforms?.client?.['uni-app']
+    assert.deepEqual(platforms?.mp, Object.fromEntries(MINI_PROGRAM_TARGETS.map(target => [target.slice(3), '√'])), '八端小程序平台声明缺失或不一致')
+    assert.deepEqual(platforms?.app, { vue: 'x', nvue: 'x', android: 'x', ios: 'x', harmony: '√' })
+    assert.deepEqual(platforms?.web, { chrome: 'x', safari: 'x' })
   }
   for (const entry of ['.', './vite', './autotrack']) {
     assert.ok(entries.includes(pkg.exports[entry].types.slice(2)))
