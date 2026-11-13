@@ -127,6 +127,8 @@ export type ReferenceRewrite = Readonly<{
   args: string
   /** 暂存首次读取结果的局部变量名，须与模板可见绑定不冲突。 */
   handler: string
+  /** App 缓存引用在事件时读取；小程序引用在渲染时读取并交给原生 invoker。 */
+  mode?: 'cached' | 'render'
 }>
 
 /** 在安全监听器中插入隔离异常的探针，保留业务参数、this、返回值与条件执行。无法保证语义时返回 null。 */
@@ -142,6 +144,15 @@ export function rewriteHandler(source: string, nativeName: string, _dispatcher: 
     const original = source.slice(root.start ?? 0, root.end ?? source.length)
     const path = memberPath(root)
     const { args, handler } = reference
+    if (reference.mode === 'render') {
+      // 小程序 _o(ref) 在渲染时只取值一次。末尾成员访问让编译器继续把表达式作为引用处理，
+      // 而不是改成事件时执行的内联表达式。空值、数组及其他非函数仍交由原生 invoker 处理。
+      if (path === null) return null
+      return {
+        code: `((${handler})=>({listener:typeof ${handler}==='function'?function(...${args}){${probe(path, `${args}[0]`)};return ${handler}(...${args})}:${handler}}))(${original}).listener`,
+        fallback: false,
+      }
+    }
     return {
       code: `(...${args})=>{let ${handler}=${original};if(!${handler})return ${handler};${probe(path ?? nativeName, `${args}[0]`)};return ${original}(...${args})}`,
       fallback: path === null,

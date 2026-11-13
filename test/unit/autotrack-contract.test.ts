@@ -159,6 +159,60 @@ describe('schema v2 normalization', () => {
     const columns = { ...change, elementType: 'picker-view', pickerRange: () => [['A', 'B'], ['X', 'Y']] }
     expect(normalizeAutoTrackCall(columns, { detail: { value: [1, 0] } })?.textValue).toBe('B||X')
   })
+  it('keeps old v2 picker probes on selector and maps multiSelector object labels without exporting the mode', () => {
+    const selector = { ...change, elementType: 'picker', pickerRange: ['zero', 'one'] }
+    expect(normalizeAutoTrackCall(selector, { detail: { value: 1 } })).toStrictEqual({ kind: 'change', xpath: '#submitOrder', textValue: 'one' })
+    for (const pickerRange of [[[{ name: 'A' }, { name: 'B' }], [{ name: 'X' }]], () => [[{ name: 'A' }, { name: 'B' }], [{ name: 'X' }]]]) {
+      expect(normalizeAutoTrackCall({ ...selector, pickerMode: 'multiSelector', pickerRange, pickerRangeKey: () => 'name' }, { detail: { value: ['1', '0'] } }))
+        .toStrictEqual({ kind: 'change', xpath: '#submitOrder', textValue: 'B||X' })
+    }
+  })
+  it.each([
+    ['date', '2026-11-13', '2026-11-13'], ['time', '14:35', '14:35'], ['region', ['浙江省', '杭州市', '西湖区'], '浙江省||杭州市||西湖区'],
+    ['date', 20261113, null], ['time', ['14', '35'], null], ['region', '浙江省', null], ['region', ['浙江省', 1], null],
+    ['multiSelector', ['01', 0], null], ['multiSelector', [1, 0], '1||0'],
+  ])('uses the native %s value shape and rejects incompatible values: %j', (pickerMode, value, expected) => {
+    expect(normalizeAutoTrackCall({ ...change, elementType: 'picker', pickerMode }, { detail: { value } })?.textValue).toBe(expected)
+  })
+  it.each(['date', 'time', 'region'])('does not evaluate irrelevant range or key metadata for %s mode', (pickerMode) => {
+    const read = vi.fn(() => { throw new Error('irrelevant private range') })
+    const value = pickerMode === 'region' ? ['浙江省', '杭州市', '西湖区'] : '2026-11-13'
+    const result = normalizeAutoTrackCall({ ...change, elementType: 'picker', pickerMode, get pickerRange() { return read() }, get pickerRangeKey() { return read() } }, { detail: { value } })
+    expect(result?.textValue).toBe(pickerMode === 'region' ? '浙江省||杭州市||西湖区' : '2026-11-13')
+    expect(read).not.toHaveBeenCalled()
+  })
+  it('does not touch picker metadata accessors or detail before consent or privacy checks pass', () => {
+    for (const guard of [{ trackValue: false }, { ignored: true }, { sensitive: true }]) {
+      const read = vi.fn(() => { throw new Error('private getter') })
+      const result = normalizeAutoTrackCall({ ...change, elementType: 'picker', ...guard,
+        get pickerMode() { return read() }, get pickerRange() { return read() }, get pickerRangeKey() { return read() },
+      }, { get detail() { return read() } })
+      expect(result).toEqual(guard.trackValue === false ? { kind: 'change', xpath: '#submitOrder', textValue: null } : null)
+      expect(read).not.toHaveBeenCalled()
+    }
+  })
+  it.each([null, 'unknown', () => undefined, () => ({}), () => { throw new Error('unavailable mode') }])('keeps an unknown picker mode without inspecting its raw value or range', (pickerMode) => {
+    const read = vi.fn(() => { throw new Error('private data') })
+    expect(normalizeAutoTrackCall({ ...change, elementType: 'picker', pickerMode, get pickerRange() { return read() }, get pickerRangeKey() { return read() } }, { get detail() { return read() } }))
+      .toEqual({ kind: 'change', xpath: '#submitOrder', textValue: null })
+    expect(read).not.toHaveBeenCalled()
+  })
+  it('rejects picker mode metadata on non-picker elements and invalid selector keys', () => {
+    expect(normalizeAutoTrackCall({ ...change, pickerMode: 'selector' }, { detail: { value: 1 } })).toBeNull()
+    expect(normalizeAutoTrackCall({ ...change, elementType: 'picker-view', pickerMode: 'multiSelector' }, { detail: { value: [0] } })).toBeNull()
+    for (const pickerRangeKey of ['', false, 0, {}]) expect(normalizeAutoTrackCall({ ...change, elementType: 'picker', pickerRangeKey }, { detail: { value: 0 } })).toBeNull()
+    for (const pickerRangeKey of [() => '', () => 0]) {
+      expect(normalizeAutoTrackCall({ ...change, elementType: 'picker', pickerRange: [{ name: 'zero' }], pickerRangeKey }, { detail: { value: 0 } })?.textValue).toBe('0')
+    }
+  })
+  it('bounds multiSelector columns and distinguishes invalid static ranges from unavailable lazy ranges', () => {
+    const probe = { ...change, elementType: 'picker', pickerMode: 'multiSelector' }
+    for (const pickerRange of [['A', 'B'], Array(21).fill(['A']), [Array(MAX_RANGE_ITEMS + 1).fill('A')]]) {
+      expect(normalizeAutoTrackCall({ ...probe, pickerRange }, { detail: { value: [0] } })).toBeNull()
+      expect(normalizeAutoTrackCall({ ...probe, pickerRange: () => pickerRange }, { detail: { value: [0] } })?.textValue).toBe('0')
+    }
+    expect(normalizeAutoTrackCall({ ...probe, pickerRange: [['A', 'B'], ['X']] }, { detail: { value: [1, 8] } })?.textValue).toBe('1||8')
+  })
   it('bounds large checkbox labels before concatenating them into display text', () => {
     const value = Array(1000).fill('x'.repeat(1_000_000))
     expect(normalizeAutoTrackCall({ ...change, elementType: 'checkbox-group' }, { detail: { value } }))

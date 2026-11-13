@@ -1,7 +1,9 @@
 import { AUTO_TRACK_SCHEMA_VERSION, CHANGE_ELEMENTS, TEMPLATE_ELEMENTS, type NormalizedAutoTrackCall, type AutoTrackCall } from './contract.js'
 
-const templateFields = new Set(['schemaVersion', 'source', 'kind', 'eventName', 'elementType', 'pickerRange', 'pickerRangeKey', 'textValue', 'index', 'hyperlink', 'ignored', 'trackValue', 'sensitive', 'redactValue'])
+const templateFields = new Set(['schemaVersion', 'source', 'kind', 'eventName', 'elementType', 'pickerMode', 'pickerRange', 'pickerRangeKey', 'textValue', 'index', 'hyperlink', 'ignored', 'trackValue', 'sensitive', 'redactValue'])
 const tabFields = new Set(['schemaVersion', 'source', 'kind', 'xpath', 'index', 'textValue', 'hyperlink'])
+const pickerModes = ['selector', 'multiSelector', 'date', 'time', 'region'] as const
+type PickerMode = typeof pickerModes[number]
 export const MAX_RANGE_ITEMS = 1000
 export const MAX_PICKER_COLUMNS = 20
 
@@ -148,13 +150,29 @@ function dynamicRangeKey(value: unknown): unknown {
     return typeof key === 'string' && key.trim() !== '' ? key : undefined
   } catch { return undefined }
 }
+/** 旧 v2 探针默认 selector；动态模式只在授权后读取，未知或读取失败时不读取值与范围。 */
+function pickerMode(value: unknown): PickerMode | null {
+  if (value === undefined) return 'selector'
+  let mode = value
+  if (typeof value === 'function') {
+    try { mode = value() } catch { return null }
+  }
+  return (pickerModes as readonly unknown[]).includes(mode) ? mode as PickerMode : null
+}
 /** 校验并以约定分隔符拼接多选值，再应用文案长度限制。 */
 function scalarArray(value: unknown): string | null {
   const values = arrayValues(value, MAX_RANGE_ITEMS)
   return values !== null && values.every(scalar) ? displayText(values.map(String)) : null
 }
 /** 优先将合法 picker 下标映射为文案，缺少可靠范围时保留下标。 */
-function pickerValue(value: unknown, range: unknown, key: unknown): string | null {
+function pickerValue(value: unknown, range: unknown, key: unknown, mode: PickerMode | null): string | null {
+  if (mode === 'multiSelector') return pickerViewValue(value, range, key)
+  if (mode === 'date' || mode === 'time') return typeof value === 'string' ? text(value) : null
+  if (mode === 'region') {
+    const regions = arrayValues(value, MAX_PICKER_COLUMNS)
+    return regions !== null && regions.every((region): region is string => typeof region === 'string') ? displayText(regions) : null
+  }
+  if (mode !== 'selector') return null
   const at = index(value, 0)
   return at === null ? null : pickerLabel(range, at, key) ?? String(at)
 }
@@ -174,14 +192,14 @@ function inputValue(detail: Readonly<Record<string, unknown>> | null, target: Re
   return text(detail?.value ?? target?.value ?? record(target?.attr)?.value)
 }
 /** 按组件种类解释已获授权的完成值，拒绝不匹配的宿主数据形态。 */
-function changeValue(element: unknown, detail: Readonly<Record<string, unknown>> | null, target: Readonly<Record<string, unknown>> | null, range: unknown, key: unknown): string | null {
+function changeValue(element: unknown, detail: Readonly<Record<string, unknown>> | null, target: Readonly<Record<string, unknown>> | null, range: unknown, key: unknown, mode: PickerMode | null): string | null {
   switch (element) {
     case 'input': case 'textarea': return inputValue(detail, target)
     case 'switch': return typeof detail?.value === 'boolean' ? String(detail.value) : null
     case 'slider': return typeof detail?.value === 'number' && Number.isFinite(detail.value) ? text(detail.value) : null
     case 'radio-group': return text(detail?.value)
     case 'checkbox-group': return scalarArray(detail?.value)
-    case 'picker': return pickerValue(detail?.value, range, key)
+    case 'picker': return pickerValue(detail?.value, range, key, mode)
     case 'picker-view': return pickerViewValue(detail?.value, range, key)
     case 'swiper': { const at = index(detail?.current, 0); return at === null ? null : String(at) }
     default: return null
@@ -223,9 +241,8 @@ export function normalizeAutoTrackCall(value: unknown, nativeEvent?: unknown): N
       if (redacted && key === 'textValue') continue
       if (!optionalScalar(probe[key])) return null
     }
-    if (probe.pickerRangeKey !== undefined && typeof probe.pickerRangeKey !== 'function' && (typeof probe.pickerRangeKey !== 'string' || probe.pickerRangeKey.trim() === '')) return null
-    if ((probe.pickerRange !== undefined || probe.pickerRangeKey !== undefined) && !['picker', 'picker-view'].includes(String(probe.elementType))) return null
-    if (probe.pickerRange !== undefined && typeof probe.pickerRange !== 'function' && !validRange(probe.pickerRange, probe.elementType === 'picker-view')) return null
+    if ('pickerMode' in probe && probe.elementType !== 'picker') return null
+    if (('pickerRange' in probe || 'pickerRangeKey' in probe) && !['picker', 'picker-view'].includes(String(probe.elementType))) return null
     const rawId = primary?.id
     const id = typeof rawId === 'string' || typeof rawId === 'number' ? String(rawId) : ''
     const xpath = `${id}#${probe.eventName}`
@@ -238,8 +255,25 @@ export function normalizeAutoTrackCall(value: unknown, nativeEvent?: unknown): N
       return { kind: 'click', xpath, textValue: text(title), index: index(rawIndex, 1), hyperlink: scalarText(link) }
     }
     const tracked = !redacted && enabledMarker(metadata(dataset, 'growing-track', probe.trackValue))
-    const result = tracked ? changeValue(probe.elementType, detail ?? record(event?.detail), target,
-      dynamicRange(probe.pickerRange, probe.elementType === 'picker-view'), dynamicRangeKey(probe.pickerRangeKey)) : null
+    let result: string | null = null
+    if (tracked) {
+      const mode = probe.elementType === 'picker' ? pickerMode(probe.pickerMode) : null
+      // 未知模式不能沿用 selector 的下标语义，也不能为诊断读取原始值或动态范围。
+      if (probe.elementType !== 'picker' || mode !== null) {
+        let range: unknown
+        let key: unknown
+        if (probe.elementType === 'picker-view' || (probe.elementType === 'picker' && (mode === 'selector' || mode === 'multiSelector'))) {
+          const columns = probe.elementType === 'picker-view' || mode === 'multiSelector'
+          const rawRange = probe.pickerRange
+          const rawKey = probe.pickerRangeKey
+          if (rawKey !== undefined && typeof rawKey !== 'function' && (typeof rawKey !== 'string' || rawKey.trim() === '')) return null
+          if (rawRange !== undefined && typeof rawRange !== 'function' && !validRange(rawRange, columns)) return null
+          range = dynamicRange(rawRange, columns)
+          key = dynamicRangeKey(rawKey)
+        }
+        result = changeValue(probe.elementType, detail ?? record(event?.detail), target, range, key, mode)
+      }
+    }
     return { kind: 'change', xpath, textValue: result ?? (probe.elementType === 'swiper' ? text(title) : null) }
   } catch {
     return null

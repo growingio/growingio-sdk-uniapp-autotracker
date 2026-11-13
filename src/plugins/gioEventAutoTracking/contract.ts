@@ -14,6 +14,8 @@ export type TemplateAutoTrackProbe = Readonly<{
   kind: 'click' | 'change'
   eventName: unknown
   elementType?: unknown
+  /** picker 的受限模式；缺省沿用 v2 selector，null 表示无法安全确认的动态模式。仅用于归一化。 */
+  pickerMode?: unknown
   pickerRange?: unknown
   pickerRangeKey?: unknown
   textValue?: unknown

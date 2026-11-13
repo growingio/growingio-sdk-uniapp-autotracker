@@ -10,8 +10,8 @@ export type AutoTrackTransformWarning = Readonly<{
 }>
 export type AutoTrackTemplateTransform = Readonly<{ code: string; warnings: readonly AutoTrackTransformWarning[]; changed: boolean }>
 export type AutoTrackTransformOptions = Readonly<{
-  /** 目标编译器会把成员表达式监听器缓存为 `ref && ref(...args)` 时才改写函数引用，目前仅 App。 */
-  references?: boolean
+  /** true 对应 App 的缓存引用；render 对应小程序渲染时单次读取的原生引用。 */
+  references?: boolean | 'render'
 }>
 export type VueSfcTransform = AutoTrackTemplateTransform
 
@@ -26,6 +26,14 @@ const npmRuntimeImport = 'gio-uniapp-sdk/autotrack'
 function literal(value: string): string { return JSON.stringify(value) }
 /** 转义模板属性中的特殊字符，避免生成的监听器破坏 HTML 语法。 */
 function attribute(value: string): string { return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;') }
+/** 名称冲突检查也覆盖转义标识符；只解码用于比对，不改写业务源码。 */
+function bindingNames(source: string): Set<string> {
+  const decoded = source.replace(/\\u(?:\{([a-f\d]{1,6})\}|([a-f\d]{4}))/gi, (escape, point: string | undefined, unit: string | undefined) => {
+    const value = Number.parseInt(point ?? unit!, 16)
+    return value <= 0x10ffff ? String.fromCodePoint(value) : escape
+  })
+  return new Set(decoded.match(/[$_\p{ID_Start}][$_\u200C\u200D\p{ID_Continue}]*/gu) ?? [])
+}
 /** 按源码偏移分段拼接，避免每个监听器替换都复制整份 SFC。 */
 function apply(source: string, replacements: Replacement[]): string {
   const chunks: string[] = []
@@ -93,7 +101,7 @@ function password(element: ElementNode): boolean {
   if (element.tag !== 'input' && element.tag !== 'textarea') return false
   return hasBound(element, 'password') || element.props.some((prop) => prop.type === NodeTypes.ATTRIBUTE
     && ((prop.name === 'type' && ['password', 'safe-password'].includes(prop.value?.content.toLowerCase() ?? ''))
-      || (prop.name === 'password' && prop.value?.content !== 'false')))
+      || prop.name === 'password'))
 }
 /** 递归提取确定会显示的 view/text 文字；动态或条件渲染时返回 null。 */
 function staticText(element: ElementNode): string | null {
@@ -151,7 +159,7 @@ function pickerColumns(element: ElementNode): { range: string; key: string | nul
   return { range: dynamic ? `()=>([${ranges.join(',')}])` : `[${ranges.join(',')}]`, key: keys[0] ?? null }
 }
 /** 按组件和事件种类生成受限探针字段，不重新求值业务动态绑定。 */
-function probeFields(element: ElementNode, kind: 'click' | 'change', name: string): string {
+function probeFields(element: ElementNode, kind: 'click' | 'change', name: string, capture: (value: string) => string = value => value): string {
   const fields = ['schemaVersion:2', 'source:"template"', `kind:${literal(kind)}`, `eventName:${literal(name)}`, `elementType:${literal(element.tag)}`]
   const excluded = sensitive(element) || (kind === 'click' && password(element))
   const names = { 'data-title': 'textValue', 'data-index': 'index', 'data-src': 'hyperlink', 'data-growing-ignore': 'ignored', 'data-growing-track': 'trackValue', 'data-growing-sensitive': 'sensitive' }
@@ -170,12 +178,16 @@ function probeFields(element: ElementNode, kind: 'click' | 'change', name: strin
     // 动态 range / range-key 只接受成员路径，并以函数延迟到通过隐私与授权检查后再读取。
     const range = bound(element, 'range', false, true)
     const key = bound(element, 'range-key', false, true)
-    if (range !== null) fields.push(`pickerRange:${range}`)
-    if (key !== null) fields.push(`pickerRangeKey:${key}`)
+    const mode = bound(element, 'mode', false, true)
+    // 绑定存在但无法安全读取时，不可把未知动态模式误当作默认 selector。
+    if (mode !== null) fields.push(`pickerMode:${capture(mode)}`)
+    else if (hasBound(element, 'mode')) fields.push('pickerMode:null')
+    if (range !== null) fields.push(`pickerRange:${capture(range)}`)
+    if (key !== null) fields.push(`pickerRangeKey:${capture(key)}`)
   }
   if (kind === 'change' && element.tag === 'picker-view') {
     const columns = pickerColumns(element)
-    if (columns !== null) { fields.push(`pickerRange:${columns.range}`); if (columns.key !== null) fields.push(`pickerRangeKey:${literal(columns.key)}`) }
+    if (columns !== null) { fields.push(`pickerRange:${capture(columns.range)}`); if (columns.key !== null) fields.push(`pickerRangeKey:${literal(columns.key)}`) }
   }
   return `{${fields.join(',')}}`
 }
@@ -202,7 +214,8 @@ function scopeNames(element: ElementNode): string[] {
 }
 type VisitContext = Readonly<{
   dispatcher: string
-  references: boolean
+  locals: string
+  references: boolean | 'render'
   /** 外层 v-for / v-slot 引入的作用域变量；Vue 不缓存引用这些变量的监听器。 */
   scope: ReadonlySet<string>
   /** v-once 内的监听器不缓存，引用值固定为首次渲染时的结果。 */
@@ -240,13 +253,31 @@ function visit(nodes: readonly TemplateChildNode[], context: VisitContext, repla
       if (!click && (element.tag === 'input' || element.tag === 'textarea') && nativeName !== selected) continue
       // 修饰符包裹在 handler 外层，探针位于其内，只随业务 handler 实际执行。
       // 只有 Vue 会缓存的引用才改写；作用域变量与 v-once 内的引用按渲染时取值，保持原样。
-      const cached = context.references && !once && !(prop.exp.content.match(/[A-Za-z_$][\w$]*/g) ?? []).some((name) => scope.has(name))
-      const reference = cached ? { args: `${dispatcher}Args`, handler: `${dispatcher}Handler` } : undefined
-      const rewritten = rewriteHandler(prop.exp.content, nativeName, dispatcher, (name, event = '$event') => `try{${dispatcher}(${probeFields(element, click ? 'click' : 'change', name)},${event})}catch{}`, reference)
+      const cached = context.references === true && !once && !(prop.exp.content.match(/[A-Za-z_$][\w$]*/g) ?? []).some((name) => scope.has(name))
+      const reference = cached || context.references === 'render'
+        ? { args: `${context.locals}Args`, handler: `${context.locals}Handler`, mode: context.references === 'render' ? 'render' as const : 'cached' as const } : undefined
+      const parameters = new Set<string>()
+      if (parsed?.type === 'ArrowFunctionExpression' || parsed?.type === 'FunctionExpression') walk(parsed.params, entry => {
+        if (entry.type === 'Identifier') parameters.add(String(entry.name))
+      })
+      const captures = new Map<string, string>()
+      // 元数据 thunk 的词法作用域应属于模板，而不是业务 listener 的参数。
+      // 只提升会被遮蔽的 thunk；创建闭包不读取 getter，实际读取仍在授权检查之后。
+      const capture = (value: string): string => {
+        if (!value.startsWith('()=>') || ![...bindingNames(value)].some(name => parameters.has(name))) return value
+        const name = captures.get(value) ?? `${context.locals}Binding${captures.size}`
+        captures.set(value, name)
+        return name
+      }
+      const rewritten = rewriteHandler(prop.exp.content, nativeName, dispatcher, (name, event = '$event') => `try{${dispatcher}(${probeFields(element, click ? 'click' : 'change', name, capture)},${event})}catch{}`, reference)
       if (rewritten === null) { warn('complex_handler'); continue }
       if (rewritten.fallback) warn('event_name_fallback')
       const before = element.loc.source[prop.exp.loc.start.offset - element.loc.start.offset - 1]
-      const escaped = attribute(rewritten.code)
+      // 用转发箭头保持普通函数的裸调用 this、arguments 和全部业务参数，末尾成员访问保留渲染时闭包绑定。
+      const forward = `${context.locals}ForwardArgs`
+      const code = captures.size === 0 ? rewritten.code
+        : `((${[...captures.values()].join(',')})=>({listener:(...${forward})=>(${rewritten.code})(...${forward})}))(${[...captures.keys()].join(',')}).listener`
+      const escaped = attribute(code)
       replacements.push({ start: prop.exp.loc.start.offset, end: prop.exp.loc.end.offset, value: before === '"' || before === "'" ? escaped : `"${escaped}"` })
     }
     if (element.tag === 'uni-link' && !hasClick && !hasDynamic) {
@@ -268,7 +299,10 @@ export function transformAutoTrackTemplate(template: string, dispatcher = 'gioAu
   catch { return { code: template, warnings: [{ code: 'template_parse_error', offset: 0 }], changed: false } }
   if (warnings.length > 0) return { code: template, warnings, changed: false }
   const replacements: Replacement[] = []
-  visit(root.children, { dispatcher, references: options.references === true, scope: new Set(), once: false }, replacements, warnings)
+  const names = bindingNames(template)
+  let locals = dispatcher
+  for (let suffix = 1; [...names].some(name => name.startsWith(locals)); suffix++) locals = `${dispatcher}${suffix}`
+  visit(root.children, { dispatcher, locals, references: options.references ?? false, scope: new Set(), once: false }, replacements, warnings)
   return { code: apply(template, replacements), warnings, changed: replacements.length > 0 }
 }
 
@@ -282,13 +316,7 @@ export function transformAutoTrackSfc(source: string, runtimeImport = npmRuntime
   let existing: string | null = null
   let methodsInsertion: { offset: number; existing: boolean } | null = null
   let unsafeOptions = false
-  // 模板别名也可能使用转义标识符，仅在名称冲突检查时解码。
-  // 业务源码及其偏移保持不变。
-  const bindingSource = source.replace(/\\u(?:\{([a-f\d]{1,6})\}|([a-f\d]{4}))/gi, (escape, point: string | undefined, unit: string | undefined) => {
-    const value = Number.parseInt(point ?? unit!, 16)
-    return value <= 0x10ffff ? String.fromCodePoint(value) : escape
-  })
-  const names = new Set(bindingSource.match(/[A-Za-z_$][\w$]*/g) ?? [])
+  const names = bindingNames(source)
   try {
     for (const block of [scriptSetup, script]) {
       if (block === null) continue
@@ -360,8 +388,9 @@ export function gioUniappAutoTrack(options?: string | UniAppAutoTrackViteOptions
       if (typeof options !== 'string' && options?.enabled === false) return null
       if (id.endsWith('.nvue')) { this?.warn?.(`[gio-uniapp-autotrack] ${id}:0 .nvue_not_instrumented`); return null }
       if (!id.endsWith('.vue')) return null
-      // App 端模板编译固定开启 cacheHandlers；小程序编译器按渲染时取值，不改写函数引用。
-      const references = ['app', 'app-plus', 'app-harmony'].includes(process.env.UNI_PLATFORM ?? '')
+      // App 固定开启 cacheHandlers；小程序由 _o 在渲染时接收单次读取的引用。
+      const platform = process.env.UNI_PLATFORM ?? ''
+      const references = ['app', 'app-plus', 'app-harmony'].includes(platform) ? true : platform.startsWith('mp-') ? 'render' : false
       const result = transformAutoTrackSfc(source, runtimeImport, { references })
       for (const warning of result.warnings) this?.warn?.(`[gio-uniapp-autotrack] ${id}:${warning.offset} ${warning.code}`)
       return result.changed ? { code: result.code } : null

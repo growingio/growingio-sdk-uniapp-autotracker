@@ -87,7 +87,8 @@ describe('schema v2 Vue instrumentation', () => {
       fixture.fire(0, 'onChange', { currentTarget: { dataset: { growingTrack: true } }, detail: { value: 1 } })
       expect(dispatch.mock.results.map(result => result.value)).toEqual([
         { kind: 'click', xpath: '#save', textValue: null, index: null, hyperlink: null },
-        { kind: 'change', xpath: '#save', textValue: '1' },
+        // 展开绑定也可能改变 mode；无法确认实际模式时不能按 selector 解释值。
+        { kind: 'change', xpath: '#save', textValue: null },
       ])
     } finally { fixture.unmount() }
   })
@@ -450,10 +451,10 @@ describe('schema v2 Vue instrumentation', () => {
     ])('keeps references Vue does not cache: %s', (template) => {
       expect(transformAutoTrackTemplate(template, 'gioAutoTrack', app)).toMatchObject({ code: template, changed: false, warnings: [{ code: 'complex_handler' }] })
     })
-    it('only rewrites references for App builds', () => {
+    it('selects reference rewriting for App and mini-program builds', () => {
       const previous = process.env.UNI_PLATFORM
       try {
-        for (const [platform, changed] of [['app', true], ['app-harmony', true], ['mp-weixin', false], [undefined, false]] as const) {
+        for (const [platform, changed] of [['app', true], ['app-harmony', true], ['mp-weixin', true], [undefined, false]] as const) {
           if (platform === undefined) delete process.env.UNI_PLATFORM
           else process.env.UNI_PLATFORM = platform
           expect(gioUniappAutoTrack().transform.call(undefined, source('<button @tap="save"/>'), 'page.vue') !== null).toBe(changed)

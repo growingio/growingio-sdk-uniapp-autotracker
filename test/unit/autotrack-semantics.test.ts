@@ -1,8 +1,32 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mountAutoTrackSfc } from '../support/autotrack-fixture.js'
 import { transformAutoTrackSfc } from '../../src/compiler/vite.js'
+import { normalizeAutoTrackCall } from '../../src/plugins/gioEventAutoTracking/index.js'
 
 describe('无埋点不得改变 Vue listener 的业务语义', () => {
+  it('keeps App cached listeners and function arguments when lazy picker bindings shadow parameters', () => {
+    const run = (instrument: boolean) => {
+      const receivers: unknown[] = []
+      const received: unknown[][] = []
+      const reads = vi.fn(() => ['zero', 'one'])
+      const dispatch = vi.fn(normalizeAutoTrackCall)
+      const model = { get items() { return reads() } }
+      const done = function(receiver: unknown, ...args: unknown[]) { receivers.push(receiver); received.push(args); return args[0] }
+      const fixture = mountAutoTrackSfc(`<script setup>import { model, done } from 'fixture'</script><template><picker :range="model.items" data-growing-track @change="function(model,second) { return done(this,arguments[0],arguments[1]) }"/></template>`, dispatch, { fixture: { model, done } }, instrument, [], { references: true })
+      try {
+        expect(reads).toHaveBeenCalledOnce()
+        reads.mockClear()
+        const event = { detail: { value: 1 } }
+        expect(fixture.fire(0, 'onChange', event, 'business-second')).toBe(event)
+        expect(receivers).toEqual([undefined])
+        expect(received).toEqual([[event, 'business-second']])
+        expect(reads).toHaveBeenCalledTimes(instrument ? 1 : 0)
+        if (instrument) expect(dispatch.mock.results[0]?.value?.textValue).toBe('one')
+      } finally { fixture.unmount() }
+    }
+    run(false)
+    run(true)
+  })
   it('keeps the dispatcher distinct from escaped v-for aliases', () => {
     const source = `<script setup>import { business } from 'fixture'; const items = [1, 2]</script><template><button v-for="\\u0067ioAutoTrack of items" @tap="business($event)"/></template>`
     for (const instrument of [false, true]) {

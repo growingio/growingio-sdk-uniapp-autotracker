@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { gioUniappAutoTrack } from '../../src/compiler/vite.js'
 import { normalizeAutoTrackCall } from '../../src/plugins/gioEventAutoTracking/index.js'
 import { mountAutoTrackSfc } from '../support/autotrack-fixture.js'
+import { compileMiniAutoTrack } from '../support/miniprogram-autotrack-fixture.js'
 
 const pagePath = resolve(import.meta.dirname, '../../demo/pages/autotrack/autotrack.vue')
 const pageSource = readFileSync(pagePath, 'utf8')
@@ -48,7 +49,7 @@ function mountButton(dispatch: (...args: unknown[]) => unknown, template = condi
 }
 
 describe('demo 条件 handler 代码回归', () => {
-  it.each([['app', ['event_name_fallback']], ['mp-weixin', ['complex_handler', 'event_name_fallback']]] as const)('真实页面经过 %s Vite 插件时正常插桩，只产生预期告警', (platform, expected) => {
+  it.each([['app', ['event_name_fallback']], ['mp-weixin', ['event_name_fallback']]] as const)('真实页面经过 %s Vite 插件时正常插桩，只产生预期告警', (platform, expected) => {
     vi.stubEnv('UNI_PLATFORM', platform)
     try {
       const warn = vi.fn()
@@ -56,6 +57,32 @@ describe('demo 条件 handler 代码回归', () => {
       expect(result).not.toBeNull()
       expect(result?.code).not.toBe(pageSource)
       expect(warn.mock.calls.map(([message]) => String(message).split(' ').at(-1))).toEqual(expected)
+    } finally { vi.unstubAllEnvs() }
+  })
+
+  it('真实 demo 的裸函数引用经过小程序 Vite 插桩后执行探针和原业务方法', () => {
+    vi.stubEnv('UNI_PLATFORM', 'mp-weixin')
+    try {
+      const result = gioUniappAutoTrack().transform.call(undefined, pageSource, pagePath)
+      const { descriptor } = parseSfc(result!.code)
+      const root = parseTemplate(descriptor.template!.content)
+      let button: string | null = null
+      const visit = (children: typeof root.children): void => {
+        for (const child of children) {
+          if (child.type !== NodeTypes.ELEMENT) continue
+          if (child.props.some(prop => prop.type === NodeTypes.ATTRIBUTE && prop.name === 'id' && prop.value?.content === 'reference-action')) button = child.loc.source
+          visit(child.children)
+        }
+      }
+      visit(root.children)
+      expect(button).not.toBeNull()
+      const business = vi.fn((event: unknown) => event)
+      const dispatch = vi.fn(normalizeAutoTrackCall)
+      const fixture = compileMiniAutoTrack(button!, { onReferenceAction: business, gioAutoTrack: dispatch }, false)
+      const event = { type: 'tap', target: { dataset: { eventsync: true } }, currentTarget: { id: 'reference-action' } }
+      expect(fixture.fire(event)).toBe(event)
+      expect(business).toHaveBeenCalledExactlyOnceWith(event)
+      expect(dispatch.mock.results[0]?.value).toMatchObject({ kind: 'click', xpath: 'reference-action#onReferenceAction' })
     } finally { vi.unstubAllEnvs() }
   })
 
