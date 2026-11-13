@@ -25,7 +25,7 @@ describe('AppRequestPort', () => {
     const port = new AppRequestPort({ request: (options) => { received = options; options.success({ statusCode: 500, data: 'failure' }); return { abort: () => undefined } } })
     const results: TransportResult[] = []
     const handle = port.dispatch(request, (result) => results.push(result))
-    expect(received).toMatchObject({ url: request.url, method: 'POST', header: request.headers, data: '[]', timeout: 5_000 })
+    expect(received).toMatchObject({ url: request.url, method: 'POST', header: request.headers, data: '[]', dataType: 'text', timeout: 5_000 })
     expect(results).toStrictEqual([{ kind: 'success', status: 500 }])
     expect(typeof handle?.abort).toBe('function')
   })
@@ -38,6 +38,27 @@ describe('AppRequestPort', () => {
     options?.fail({ errMsg: 'request:fail timeout' })
     options?.success({ statusCode: 200 })
     expect(results).toStrictEqual([{ kind: 'timeout', message: 'request:fail timeout' }])
+  })
+
+  it.each([100, 200, 204, 400, 422, 500, 599])('preserves HTTP %s reported through fail for collector classification', statusCode => {
+    let options!: Parameters<AppRequestApi['request']>[0]
+    const results: TransportResult[] = []
+    const port = new AppRequestPort({ request: value => { options = value } })
+    port.dispatch(request, result => results.push(result))
+    options.fail({ statusCode, errMsg: 'request:fail JSON parse data error' })
+    options.complete()
+    options.success({ statusCode: 204 })
+    options.fail({ errMsg: 'request:fail timeout' })
+    expect(results).toEqual([{ kind: 'success', status: statusCode }])
+  })
+
+  it.each([undefined, null, 0, 99, 600, 200.5, NaN, Infinity, '200', {}])('keeps invalid failure status %s as network or timeout', statusCode => {
+    for (const errMsg of ['request:fail offline', 'request:fail timeout']) {
+      const results: TransportResult[] = []
+      new AppRequestPort({ request: options => { options.fail({ statusCode, errMsg }) } })
+        .dispatch(request, result => results.push(result))
+      expect(results).toEqual([{ kind: errMsg.endsWith('timeout') ? 'timeout' : 'network', message: errMsg }])
+    }
   })
 
   it('returns network for a synchronous host throw and allows a host without abort', () => {

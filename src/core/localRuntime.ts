@@ -19,7 +19,7 @@ import { appCapabilityProfile, miniProgramCapabilityProfile, type AutoTrackCapab
 
 declare const __GIO_AUTOTRACK_VERIFICATION__: boolean
 
-const APP_NETWORK_RECOVERY_INTERVAL_MS = 2_000
+const NETWORK_RECOVERY_INTERVAL_MS = 2_000
 
 export type WebRuntimeState = Readonly<{
   identity: SharedIdentityPersistence
@@ -508,7 +508,7 @@ export class LocalTrackerRuntime {
       () => !this.awaitingInitialConsent && !this.awaitingIdentify && !this.identityWriteBlocked
         && (web === undefined || this.lifecycle.config()?.dataCollect === true) && this.dependencies.network?.isConnected() !== false,
       config.miniprogram?.uploadIntervalMs ?? 0,
-      () => { if (isApp) refreshNetwork(true) },
+      () => { if (isApp || config.miniprogram !== undefined) refreshNetwork(true) },
       // App 持久队列对可恢复失败退避重试，小程序内存队列维持有限重试。
       isApp ? 'retain' : 'bounded',
       web === undefined ? undefined : events => {
@@ -532,8 +532,8 @@ export class LocalTrackerRuntime {
       clock: this.dependencies.clock,
       /** 同时检查当前开关和正在回放意图的采集状态。 */
       canCollect: () => this.collecting(),
-      /** 读取当前可见页面，供关闭事件补充页面上下文。 */
-      currentPage: () => pages.current(),
+      /** 小程序页面可能先隐藏；关闭事件仍关联最后可见页。 */
+      currentPage: () => config.miniprogram === undefined ? pages.current() : pages.lastVisible(),
       /** 仅在存在快照时尽力保存会话。 */
       persistSession: (snapshot) => { if (snapshot !== null) void sessionPersistence?.persist(snapshot) },
       /** 后台切换时尽力刷新队列，不阻塞宿主生命周期。 */
@@ -546,7 +546,7 @@ export class LocalTrackerRuntime {
     const scheduler = this.dependencies.upload?.runtime
     /** 用一个可取消的定时器弥补宿主未送达的联网通知，不在后台或空队列时轮询。 */
     const scheduleNetworkRecovery = (): void => {
-      const needed = isApp && this.foreground && !this.awaitingIdentify
+      const needed = (isApp || config.miniprogram !== undefined) && this.foreground && !this.awaitingIdentify
         && queue.size() > 0 && this.dependencies.network?.isConnected() === false
       if (!needed) {
         if (recoveryPending) scheduler?.clearTimeout(recoveryTimer)
@@ -559,7 +559,7 @@ export class LocalTrackerRuntime {
         recoveryPending = false
         refreshNetwork(true)
         scheduleNetworkRecovery()
-      }, APP_NETWORK_RECOVERY_INTERVAL_MS)
+      }, NETWORK_RECOVERY_INTERVAL_MS)
     }
     /** 应用最新网络状态并优先保护通知版本，恢复连接时重新派发待传事件。 */
     const updateNetwork = (next: NetworkState): void => {
@@ -609,7 +609,7 @@ export class LocalTrackerRuntime {
       synchronizePageTitle,
       autoTrackProfile: this.dependencies.autoTrackProfile ?? (web !== undefined ? null : config.miniprogram === undefined
         ? appCapabilityProfile(hydrated.state.systemContext.platform, typeof __GIO_AUTOTRACK_VERIFICATION__ !== 'undefined' && __GIO_AUTOTRACK_VERIFICATION__ === true)
-        : miniProgramCapabilityProfile(config.miniprogram.target, typeof __GIO_AUTOTRACK_VERIFICATION__ !== 'undefined' && __GIO_AUTOTRACK_VERIFICATION__ === true)),
+        : miniProgramCapabilityProfile(config.miniprogram.target)),
     }
     if (this.lifecycle.config()?.dataCollect === true) nativeIdentifiers?.refresh()
     this.log('success', '[GrowingIO]：Gio uni-app SDK 初始化完成！')
@@ -767,7 +767,7 @@ export class LocalTrackerRuntime {
   }
 
   private currentIdentity(state: RuntimeState): Identity | null {
-    try { return state.sharedIdentity?.current() ?? state.identity.value }
+    try { return state.sharedIdentity?.current(state.identity.value.deviceId) ?? state.identity.value }
     catch { this.blockIdentityWrites(); return null }
   }
 

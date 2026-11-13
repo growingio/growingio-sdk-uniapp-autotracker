@@ -64,7 +64,7 @@ export type AppRequestTask = Readonly<{
   abort?: () => void
 }>
 export type AppRequestResponse = Readonly<{ statusCode: number; data?: unknown }>
-export type AppRequestFailure = Readonly<{ errMsg?: string }>
+export type AppRequestFailure = Readonly<{ errMsg?: string; statusCode?: unknown }>
 
 export interface AppRequestApi {
   /** 按 uni.request 约定发送请求，底层任务可选提供 abort。 */
@@ -73,10 +73,12 @@ export interface AppRequestApi {
     method: 'POST'
     header: Readonly<Record<string, string>>
     data: string
+    /** 采集响应只看 HTTP 状态，不要求宿主把响应体解析成 JSON。 */
+    dataType: 'text'
     timeout: number
     /** 收到 HTTP 响应；是否为采集服务成功状态仍由核心判断。 */
     success: (response: AppRequestResponse) => void
-    /** 报告网络或超时失败。 */
+    /** 部分宿主会通过 fail 报告带状态码的 HTTP 响应。 */
     fail: (failure: AppRequestFailure) => void
     /** 通知宿主请求结束，不作为第二次权威结果。 */
     complete: () => void
@@ -103,11 +105,17 @@ export class AppRequestPort implements TransportPort {
         method: request.method,
         header: request.headers,
         data: request.body,
+        dataType: 'text',
         timeout: request.timeoutMs,
         /** 透传 HTTP 状态码，由采集服务规则判断是否真正接收成功。 */
         success: (response) => finish({ kind: 'success', status: response.statusCode }),
-        /** 区分宿主超时与普通网络错误，保留可诊断的失败信息。 */
+        /** 优先保留有效 HTTP 状态，只有未收到响应时才按网络或超时失败处理。 */
         fail: (failure) => {
+          const status = failure.statusCode
+          if (typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599) {
+            finish({ kind: 'success', status })
+            return
+          }
           const message = failure.errMsg
           finish(/timeout/i.test(message ?? '') ? { kind: 'timeout', message } : { kind: 'network', message })
         },

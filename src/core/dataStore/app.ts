@@ -122,7 +122,8 @@ export class AppLifecycle {
       ? this.dependencies.composer.compose({
         eventType: 'APP_CLOSED',
         appState: 'BACKGROUND',
-        fields: page === null ? {} : { path: page.route, query: page.query },
+        fields: page === null ? {} : { path: page.route, query: page.query,
+          ...(this.dependencies.miniprogram === undefined ? {} : { title: page.title }) },
       }).ok
       : false
     this.persistSession(session)

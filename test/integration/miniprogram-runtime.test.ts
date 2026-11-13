@@ -225,8 +225,8 @@ describe.each(miniTargets)('%s complete runtime', target => {
     expect(callbacks).toHaveLength(3)
     expect(f.tracker.queuedEvents()).toHaveLength(0)
   })
-  it('runs compiled event listeners through the mini protocol while preserving privacy and business calls', async () => {
-    vi.stubGlobal('__GIO_AUTOTRACK_VERIFICATION__', true)
+  it.each([undefined, false])('runs production listeners with verification=%s while preserving privacy and business calls', async verification => {
+    if (verification !== undefined) vi.stubGlobal('__GIO_AUTOTRACK_VERIFICATION__', verification)
     const f = miniHost(target)
     f.tracker.registerPlugins({ name: 'gioEventAutoTracking' })
     f.init(); await f.tracker.whenReady(); f.show()

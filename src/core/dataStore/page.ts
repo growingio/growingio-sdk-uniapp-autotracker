@@ -25,6 +25,7 @@ export class PageStore {
   private readonly automaticReferrals = new Set<string>()
   private lastShownRoute: string | null = null
   private lastShownPageKey: string | null = null
+  private lastHiddenPage: PageSnapshot | null = null
 
   /** 冻结 onLoad query 与显式来源；自动来源在真实页面切换时更新。 */
   public onLoad(input: PageLoadInput, entryReferral: string | null = null): PageSnapshot | null {
@@ -89,11 +90,15 @@ export class PageStore {
 
   /** 页面隐藏只解除该实例的当前页关联，不推断 App 进入后台。 */
   public onHide(instanceId: string): void {
-    if (this.currentInstanceId === instanceId) this.currentInstanceId = null
+    if (this.currentInstanceId === instanceId) {
+      this.lastHiddenPage = this.current()
+      this.currentInstanceId = null
+    }
   }
 
   /** 移除页面快照及自动来源标记，并清理指向该实例的当前页引用。 */
   public onUnload(instanceId: string): void {
+    if (this.currentInstanceId === instanceId) this.lastHiddenPage = this.current()
     this.pages.delete(instanceId)
     this.automaticReferrals.delete(instanceId)
     if (this.currentInstanceId === instanceId) this.currentInstanceId = null
@@ -103,6 +108,11 @@ export class PageStore {
   public current(): PageSnapshot | null {
     if (this.currentInstanceId === null) return null
     return this.pages.get(this.currentInstanceId) ?? null
+  }
+
+  /** 关闭事件可使用最后可见页；普通行为仍只能通过 current 关联当前可见页。 */
+  public lastVisible(): PageSnapshot | null {
+    return this.current() ?? this.lastHiddenPage
   }
 
   /** 恢复采集时刷新 PAGE 显示时间，不模拟导航或修改来源页面。 */

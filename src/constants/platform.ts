@@ -17,9 +17,9 @@ export type AppCapabilityProfile = Readonly<{
 
 export type AutoTrackCapabilityProfile = Omit<AppCapabilityProfile, 'platform'> & Readonly<{ platform: AppPlatform | MiniProgramPlatform }>
 
-/** 小程序能力与 App 分开验收；验证构建不修改生产矩阵。 */
-export function miniProgramCapabilityProfile(target: MiniProgramTarget, verificationBuild = false): AutoTrackCapabilityProfile {
-  return { ...appProfile('Android', verificationBuild), platform: MINI_PROGRAM_PROFILES[target].platform }
+/** 八端小程序默认开放生产自动交互，不依赖 App 专用的验证构建标志。 */
+export function miniProgramCapabilityProfile(target: MiniProgramTarget): AutoTrackCapabilityProfile {
+  return { ...appProfile('Android', true), platform: MINI_PROGRAM_PROFILES[target].platform }
 }
 
 /** 构造平台的自动交互开关，生产配置和验证构建使用相同的组件范围。 */

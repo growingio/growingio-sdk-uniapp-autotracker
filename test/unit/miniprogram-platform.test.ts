@@ -113,11 +113,35 @@ describe.each(miniTargets)('%s platform and protocol', target => {
     host.getWindowInfo = () => ({ pixelRatio: 3, screenWidth: Number.MAX_VALUE, screenHeight: Number.MAX_VALUE })
     expect(await new MiniProgramSystemContextPort(host, config.config, '0.1.0').load()).toMatchObject({ screenWidth: 0, screenHeight: 0 })
   })
-  it('keeps production automatic interaction gates separate from verification and App', () => {
-    expect(miniProgramCapabilityProfile(target).autoClick).toBe(false)
-    expect(miniProgramCapabilityProfile(target, true).autoClick).toBe(true)
-    expect(Object.values(miniProgramCapabilityProfile(target, true).autoChange).every(Boolean)).toBe(true)
+  it('enables production mini interactions independently of App verification', () => {
+    const profile = miniProgramCapabilityProfile(target)
+    expect(profile).toMatchObject({ platform: miniCases[target].platform, autoClick: true, changeInput: true, changePicker: true, tabBar: true })
+    expect(Object.values(profile.autoChange)).toHaveLength(9)
+    expect(Object.values(profile.autoChange).every(Boolean)).toBe(true)
     expect(appCapabilityProfile('Android')?.autoClick).toBe(false)
+    expect(appCapabilityProfile('iOS')?.autoClick).toBe(false)
+    expect(appCapabilityProfile('HarmonyOS')?.autoClick).toBe(true)
+  })
+})
+
+describe('Baidu system pixel ratio fallback', () => {
+  it.each([
+    { windowRatio: 2, deviceRatio: 3, systemRatio: 4, legacyDeviceRatio: 5, width: 780, height: 1688 },
+    { windowRatio: NaN, deviceRatio: 3, systemRatio: 4, legacyDeviceRatio: 5, width: 1170, height: 2532 },
+    { windowRatio: NaN, deviceRatio: 0, systemRatio: 4, legacyDeviceRatio: 5, width: 1560, height: 3376 },
+    { windowRatio: NaN, deviceRatio: 0, systemRatio: undefined, legacyDeviceRatio: 3, width: 1170, height: 2532 },
+    ...[undefined, null, 0, -1, NaN, Infinity, '3'].map(legacyDeviceRatio => ({ windowRatio: NaN, deviceRatio: 0, systemRatio: -1, legacyDeviceRatio, width: 390, height: 844 })),
+  ])('validates pixel ratio priority: $windowRatio / $deviceRatio / $systemRatio / $legacyDeviceRatio', async ({ windowRatio, deviceRatio, systemRatio, legacyDeviceRatio, width, height }) => {
+    const fixture = miniHost('mp-baidu')
+    const host: MiniProgramHost = {
+      ...fixture.host,
+      getWindowInfo: () => ({ pixelRatio: windowRatio }),
+      getDeviceInfo: () => ({ devicePixelRatio: deviceRatio }),
+      getSystemInfoSync: () => ({ pixelRatio: systemRatio, devicePixelRatio: legacyDeviceRatio, screenWidth: 390, screenHeight: 844 }),
+    }
+    const config = normalizeInitOptions(input, 'mp-baidu')
+    if (!config.ok) throw new Error('invalid_fixture')
+    expect(await new MiniProgramSystemContextPort(host, config.config, '0.1.0').load()).toMatchObject({ screenWidth: width, screenHeight: height })
   })
 })
 

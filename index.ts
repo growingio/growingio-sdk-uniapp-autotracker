@@ -90,6 +90,8 @@ function record(value: unknown): Readonly<Record<string, unknown>> | null {
 type ResolvedHost = Readonly<{ host: AppRuntimeHost | MiniProgramHost; target: Exclude<RuntimeTarget, 'web'> }>
   | Readonly<{ host: Readonly<Record<string, unknown>> | null; target: 'web'; browser: Window }>
 
+let retryContext: Readonly<{ app: UniAppVueApp; runtime: ResolvedHost }> | null = null
+
 /** 优先识别构建平台和 uni 宿主，仅在浏览器入口中使用 DOM。 */
 function runtimeHost(): ResolvedHost | null {
   const candidate = record(typeof uni === 'undefined' ? (globalThis as Readonly<Record<string, unknown>>).uni : uni)
@@ -158,8 +160,14 @@ export const gdp = ((command: unknown, ...args: readonly unknown[]): boolean | s
       // 上次初始化在异步恢复阶段失败：复用已安装的生命周期与插件，只重新校验配置并恢复状态。
       if (typeof args[0] !== 'string' || typeof args[1] !== 'string') return false
       const input = record(args[2])
-      if (input === null || !isUniVueApp(input.uniVue) || input.runtime === 'unimp') return false
+      if (input === null || !isUniVueApp(input.uniVue) || input.runtime === 'unimp' || input.uniVue !== retryContext?.app) return false
+      const runtime = runtimeHost()
+      if (runtime === null || runtime.target !== retryContext.runtime.target || runtime.host !== retryContext.runtime.host
+        || runtime.target === 'web' && retryContext.runtime.target === 'web' && runtime.browser !== retryContext.runtime.browser) return false
       const { uniVue: _app, sdkVersion: _ignoredVersion, ...init } = input
+      const config = normalizeInitOptions({ ...init, accountId: args[0], dataSourceId: args[1] }, runtime.target === 'app' ? undefined : runtime.target)
+      if (!config.ok || runtime.target !== 'web' && config.config.miniprogram !== undefined
+        && !matchesMiniProgramAppId(runtime.host, config.config.miniprogram.appId)) return false
       return gdpTracker.init({ ...init, accountId: args[0], dataSourceId: args[1] })
     }
     if (gdpTracker !== null) {
@@ -201,6 +209,7 @@ export const gdp = ((command: unknown, ...args: readonly unknown[]): boolean | s
     const registered = new Set(tracker.registeredPluginNames())
     const builtinPlugins = pendingGdpPlugins.filter(isBuiltinPlugin).filter((plugin) => !registered.has(plugin.name))
     if (!tracker.registerPlugins(...builtinPlugins) || !tracker.init({ ...init, accountId: args[0], dataSourceId: args[1] })) return false
+    retryContext = { app: uniVue, runtime }
     if (runtime.target === 'web') {
       const { browser } = runtime
       const hashtag = config.config.web?.hashtag

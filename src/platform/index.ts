@@ -55,11 +55,17 @@ export function createUniTracker(host: UniRuntimeHost, options: AppRuntimeOption
       sharedIdentity: (config: ResolvedGioConfig) => {
         const { plugin, storagePrefix = '' } = config.miniprogram!.storage
         const prefix = plugin ? '_growing_plugin_' : '_growing_'
+        const keys = {
+          deviceId: `${prefix}uid_`, userId: `${storagePrefix}${prefix}userId_`,
+          userKey: `${storagePrefix}${prefix}userKey_`, lastUserId: `${storagePrefix}${prefix}gioId_`,
+        }
         return new SharedIdentityPersistence({
           read: key => {
             try {
               const value = host.getStorageSync(key)
               if (value === undefined || value === null) return { kind: 'missing' }
+              // Mini hosts return '' for absent keys; only the device cannot use '' as a stored value.
+              if (key === keys.deviceId && value === '') return { kind: 'missing' }
               return typeof value === 'string' ? { kind: 'value', value } : { kind: 'corrupt' }
             } catch { return { kind: 'unavailable' } }
           },
@@ -69,10 +75,7 @@ export function createUniTracker(host: UniRuntimeHost, options: AppRuntimeOption
           remove: key => {
             try { host.removeStorageSync(key); return { kind: 'ok' } } catch { return { kind: 'failed' } }
           },
-        }, {
-          deviceId: `${prefix}uid_`, userId: `${storagePrefix}${prefix}userId_`,
-          userKey: `${storagePrefix}${prefix}userKey_`, lastUserId: `${storagePrefix}${prefix}gioId_`,
-        })
+        }, keys, true)
       },
     }),
     /** 按当前配置创建系统读取端口，显式应用版本由初始化参数提供。 */

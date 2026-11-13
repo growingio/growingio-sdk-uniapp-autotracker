@@ -72,6 +72,78 @@ beforeEach(() => {
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers() })
 
 describe('ordinary H5 runtime', () => {
+  it('keeps uni-app H5 entry and title callbacks working through the public command entry', async () => {
+    vi.resetModules()
+    const host = webHost()
+    vi.stubGlobal('window', host.browser)
+    vi.stubGlobal('uni', { getSystemInfoSync: () => ({ uniPlatform: 'h5' }) })
+    try {
+      const { default: gdp } = await import('../../index.js')
+      let tracker!: import('../../index.js').GioPluginRuntime
+      let hooks!: Record<string, (this: Record<string, unknown>, options?: unknown) => void>
+      gdp('registerPlugins', [{ name: 'web-compatibility', install: value => { tracker = value } }])
+      expect(gdp('init', 'account', 'source', { uniVue: { mixin: value => { hooks = value as typeof hooks } }, storageType: 'localstorage' })).toBe(true)
+      const app = { $mpType: 'app' }, page = { $mpType: 'page', $page: { route: 'offers' } }
+      hooks.onLaunch!.call(app)
+      hooks.onShow!.call(app)
+      hooks.onLoad!.call(page)
+      hooks.onShow!.call(page)
+      expect(await tracker.whenReady()).toBe(true)
+      expect(tracker.queuedEvents().map(event => event.eventType)).toEqual(['VISIT', 'PAGE'])
+      expect(tracker.queuedEvents()[1]).toMatchObject({ platform: 'web', path: '/offers', title: 'Offers' })
+      host.browser.document.title = 'Updated offers'
+      expect(gdp('track', 'public_web_event')).toBe(true)
+      expect(tracker.queuedEvents().at(-1)).toMatchObject({ eventName: 'public_web_event', path: '/offers', title: 'Updated offers' })
+    } finally { vi.unstubAllGlobals() }
+  })
+
+  it('keeps malformed business query keys and an external referrer query in the page snapshot', () => {
+    const host = webHost(new Map(), '?%broken=1&campaign=first')
+    host.browser.location.hash = '#/details?sku=2'
+    Object.defineProperty(host.browser.document, 'referrer', { value: 'https://external.example/inbound?utm_source=outside' })
+    expect(webEntrySnapshot(host.browser, true)).toEqual({ path: '/details', query: '%broken=1&campaign=first&sku=2', referralPage: 'https://external.example/inbound?utm_source=outside' })
+  })
+
+  it('deduplicates unchanged navigation and restores a page from the browser back-forward cache', async () => {
+    const host = webHost()
+    const tracker = initialize(host)
+    expect(await tracker.whenReady()).toBe(true)
+    const sessionId = tracker.queuedEvents()[0]!.sessionId
+    host.browser.dispatchEvent(new Event('hashchange'))
+    host.browser.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: false }))
+    expect(tracker.queuedEvents().map(event => event.eventType)).toEqual(['VISIT', 'PAGE'])
+    host.browser.dispatchEvent(new Event('pagehide'))
+    host.browser.document.title = 'Restored offers'
+    host.browser.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true }))
+    expect(tracker.queuedEvents().map(event => event.eventType)).toEqual(['VISIT', 'PAGE', 'PAGE'])
+    expect(tracker.queuedEvents().at(-1)).toMatchObject({ sessionId, path: '/offers', title: 'Restored offers' })
+  })
+
+  it('recovers queued H5 events on online notification and preserves ignored user-key and debug behavior', async () => {
+    const host = webHost()
+    Object.assign(host.browser.navigator, { onLine: false })
+    const uploaded: Array<Record<string, unknown>> = []
+    vi.spyOn(host.browser, 'fetch').mockImplementation(async (_url, options) => {
+      uploaded.push(...JSON.parse(options!.body as string))
+      return new Response(null, { status: 204 })
+    })
+    vi.spyOn(console, 'debug').mockImplementation(() => undefined)
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const tracker = initialize(host, { idMapping: false, debug: true })
+    expect(await tracker.whenReady()).toBe(true)
+    expect(tracker.track('while_offline')).toBe(true)
+    expect(uploaded).toEqual([])
+    Object.assign(host.browser.navigator, { onLine: true })
+    host.browser.dispatchEvent(new Event('online'))
+    await settlePersistence()
+    expect(uploaded.map(event => event.eventType)).toEqual(['VISIT', 'PAGE', 'CUSTOM'])
+    expect(tracker.queuedEvents()).toEqual([])
+    expect(tracker.setUserId('debug-user', 'ignored-key')).toBe(true)
+    expect(tracker.track('after_online')).toBe(true)
+    expect(uploaded.at(-1)).toMatchObject({ eventType: 'CUSTOM', eventName: 'after_online', userId: 'debug-user' })
+    expect(uploaded.at(-1)).not.toHaveProperty('userKey')
+  })
+
   it('uses the previous H5 page as referral after an external landing in the browser lifecycle', async () => {
     const host = webHost()
     Object.defineProperty(host.browser.document, 'referrer', { value: 'https://external.example/inbound' })

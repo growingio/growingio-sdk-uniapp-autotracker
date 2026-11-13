@@ -47,7 +47,7 @@ export class MiniProgramSystemContextPort implements SystemContextPort {
     const normalizedOs = rawOs.toLowerCase()
     const os = normalizedOs === 'android' ? 'Android' : normalizedOs === 'ios' ? 'iOS'
       : normalizedOs === 'harmonyos' || normalizedOs === 'ohos' ? 'HarmonyOS' : rawOs
-    const ratio = positive([window.pixelRatio, device.devicePixelRatio, system.pixelRatio], 1)
+    const ratio = positive([window.pixelRatio, device.devicePixelRatio, system.pixelRatio, system.devicePixelRatio], 1)
     const version = text(app.hostVersion, text(system.hostVersion, text(system.version)))
     return {
       platform: profile.platform, platformVersion: profile.name + (version === '' ? '' : ` ${version}`),
